@@ -153,6 +153,7 @@ namespace Linalab.UnityAiBridge.Editor
                     Port = ((IPEndPoint)listener.LocalEndpoint).Port;
                     WriteDiscoveryFile();
                     acceptTask = Task.Run(() => AcceptLoop(cancellationTokenSource.Token));
+                    TryInvokeLuxCompileWatcher("StartIfBridgeRunning", null);
                 }
                 catch (Exception exception)
                 {
@@ -449,9 +450,28 @@ namespace Linalab.UnityAiBridge.Editor
 
             MainThreadActionQueue.Enqueue(() =>
             {
-                Linalab.Lux.Editor.LuxCompileWatcher.TriggerCompileRefresh("manual trigger_compile command");
+                TryInvokeLuxCompileWatcher("TriggerCompileRefresh", new object[] { "manual trigger_compile command" });
             });
             return UnityAiBridgeProtocol.CreateOkResponse(request.requestId, null);
+        }
+
+        private static void TryInvokeLuxCompileWatcher(string methodName, object[] args)
+        {
+            var watcherType = Type.GetType("Linalab.Lux.Editor.LuxCompileWatcher, Linalab.Lux.Editor");
+            var method = watcherType?.GetMethod(methodName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (method == null)
+            {
+                return;
+            }
+
+            try
+            {
+                method.Invoke(null, args);
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceWarning($"Unity AI Bridge failed to invoke Lux compile watcher {methodName}: {exception.Message}");
+            }
         }
 
         private static string[] SplitEventTypes(string eventTypes)

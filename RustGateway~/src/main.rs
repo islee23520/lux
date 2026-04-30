@@ -3,7 +3,7 @@ mod server;
 
 use std::{
     fs,
-    io::{ErrorKind, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
@@ -31,6 +31,7 @@ enum Command {
     Unity(UnityArgs),
     Skill(SkillArgs),
     Compile(CompileArgs),
+    Bridge(BridgeArgs),
     RunTests(RunTestsArgs),
     Schema,
     /// Generate shell completion scripts
@@ -435,6 +436,23 @@ struct CompileArgs {
 }
 
 #[derive(Parser, Debug)]
+struct BridgeArgs {
+    #[command(subcommand)]
+    action: BridgeAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum BridgeAction {
+    Watch(BridgeWatchArgs),
+}
+
+#[derive(Parser, Debug)]
+struct BridgeWatchArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
 struct RunTestsArgs {
     #[arg(long)]
     project_path: Option<PathBuf>,
@@ -481,6 +499,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Skill(args) => run_skill_command(args),
         Command::Compile(args) => run_batch_compile(args),
+        Command::Bridge(args) => run_bridge_command(args),
         Command::RunTests(args) => run_batch_tests(args),
         Command::Schema => {
             println!(
@@ -2048,6 +2067,58 @@ fn send_unity_tcp_line_with_timeout(
     }
 
     bail!("Unity TCP connection closed before sending a response")
+}
+
+fn run_bridge_command(args: BridgeArgs) -> anyhow::Result<()> {
+    match args.action {
+        BridgeAction::Watch(watch_args) => watch_unity_bridge_events(watch_args),
+    }
+}
+
+fn watch_unity_bridge_events(args: BridgeWatchArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let discovery = read_unity_bridge_discovery(&project_root)?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stream = connect_unity_tcp_with_retry(&discovery, deadline)?;
+    stream.set_read_timeout(Some(Duration::from_millis(250)))?;
+    stream.set_write_timeout(Some(Duration::from_millis(250)))?;
+
+    let subscribe = json!({
+        "schemaVersion": 1,
+        "requestId": uuid::Uuid::new_v4().to_string(),
+        "command": "subscribe_events",
+        "token": discovery.token,
+        "params": {
+            "eventTypes": "compile_started,compile_result"
+        }
+    });
+    let subscribe_line = format!("{}\n", serde_json::to_string(&subscribe)?);
+    write_unity_tcp_with_retry(&mut stream, subscribe_line.as_bytes(), deadline)?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {
+                let trimmed = line.trim_end();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let value: Value = serde_json::from_str(trimmed)
+                    .context("Unity AI Bridge watch received invalid JSON")?;
+                if value.get("type").and_then(Value::as_str) == Some("event") {
+                    println!("{}", serde_json::to_string(&value)?);
+                } else if value.get("ok").and_then(Value::as_bool) == Some(false) {
+                    bail!("Unity AI Bridge event subscription failed: {}", value);
+                }
+            }
+            Err(error) if is_transient_socket_error(&error) => continue,
+            Err(error) => return Err(error).context("Unity AI Bridge watch read failed"),
+        }
+    }
 }
 
 fn connect_unity_tcp_with_retry(
