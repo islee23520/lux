@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using Debug = UnityEngine.Debug;
 using System.IO;
 using System.Net.Sockets;
 using System.Net.WebSockets;
