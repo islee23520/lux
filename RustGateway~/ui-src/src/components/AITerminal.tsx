@@ -19,6 +19,8 @@ export function AITerminal({
 
   const [activeTool, setActiveTool] = useState<string>('claude-code')
   const [toolSessions, setToolSessions] = useState<Map<string, ToolSession>>(new Map())
+  const [toolBuffers, setToolBuffers] = useState<Map<string, string[]>>(new Map())
+  const [toolHistories, setToolHistories] = useState<Map<string, string[]>>(new Map())
   const { createSession, executeCommand, executeSkill } = useToolApi()
 
   const activeToolRef = useRef(activeTool)
@@ -31,6 +33,16 @@ export function AITerminal({
     toolSessionsRef.current = toolSessions
   }, [toolSessions])
 
+  const toolBuffersRef = useRef(toolBuffers)
+  useEffect(() => {
+    toolBuffersRef.current = toolBuffers
+  }, [toolBuffers])
+
+  const toolHistoriesRef = useRef(toolHistories)
+  useEffect(() => {
+    toolHistoriesRef.current = toolHistories
+  }, [toolHistories])
+
   const endpoint = useMemo(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${protocol}//${window.location.host}/events?role=ui-terminal&client_id=lux-ui`
@@ -40,13 +52,46 @@ export function AITerminal({
     term.write(`\r\n\x1b[38;5;141m[${activeToolRef.current}]\x1b[0m > `)
   }, [])
 
+  const readTerminalLines = useCallback((term: Terminal) => {
+    const buffer = term.buffer.active
+    const lines: string[] = []
+    for (let i = 0; i < buffer.length; i += 1) {
+      const line = buffer.getLine(i)?.translateToString(true)
+      if (line) lines.push(line)
+    }
+    return lines
+  }, [])
+
+  const setHistoryForTool = useCallback((toolType: string, command: string) => {
+    setToolHistories(prev => {
+      const next = new Map(prev)
+      next.set(toolType, [...(next.get(toolType) || []), command])
+      return next
+    })
+  }, [])
+
   const handleSelectTool = useCallback(async (toolType: string) => {
-    setActiveTool(toolType)
+    const previousTool = activeToolRef.current
+    if (toolType === previousTool) return
+
     const term = termRef.current
     if (term) {
-      term.writeln(`\r\nSwitched to tool: ${toolType}`)
-      writePrompt(term)
+      const currentLines = readTerminalLines(term)
+      const nextBuffers = new Map(toolBuffersRef.current)
+      nextBuffers.set(previousTool, currentLines)
+      toolBuffersRef.current = nextBuffers
+      setToolBuffers(nextBuffers)
+
+      const savedLines = nextBuffers.get(toolType) || []
+      const previousCommands = toolHistoriesRef.current.get(toolType)?.length || 0
+      term.clear()
+      savedLines.forEach(line => term.writeln(line))
+      term.writeln(`\r\n[${toolType}] Restored session (${previousCommands} previous commands)`)
     }
+
+    activeToolRef.current = toolType
+    setActiveTool(toolType)
+    if (term) writePrompt(term)
     
     if (!toolSessionsRef.current.has(toolType)) {
       try {
@@ -61,7 +106,7 @@ export function AITerminal({
         if (term) writePrompt(term)
       }
     }
-  }, [createSession, writePrompt])
+  }, [createSession, readTerminalLines, writePrompt])
 
   const handleDispatchSkill = useCallback(async (skillName: string) => {
     const term = termRef.current
@@ -174,11 +219,16 @@ export function AITerminal({
     writePrompt(term)
 
     let command = ''
+    let historyIndex: number | null = null
+    const redrawCommand = () => {
+      term.write(`\r\x1b[2K\x1b[38;5;141m[${activeToolRef.current}]\x1b[0m > ${command}`)
+    }
     const disposable = term.onData((data) => {
       if (data === '\r') {
         const input = command.trim()
         const inputLower = input.toLowerCase()
         command = ''
+        historyIndex = null
         if (inputLower === 'connect') connect()
         else if (inputLower === 'demo') sendDemoEnvelope()
         else if (inputLower === 'clear') term.clear()
@@ -196,7 +246,13 @@ export function AITerminal({
         }
         else if (inputLower === 'history') {
           const session = toolSessionsRef.current.get(activeToolRef.current)
-          if (session && session.commandHistory.length > 0) {
+          const localHistory = toolHistoriesRef.current.get(activeToolRef.current) || []
+          if (localHistory.length > 0) {
+            term.writeln(`\r\nHistory for ${activeToolRef.current}:`)
+            localHistory.forEach(entry => {
+              term.writeln(`\r\n${entry}`)
+            })
+          } else if (session && session.commandHistory.length > 0) {
             term.writeln(`\r\nHistory for ${activeToolRef.current}:`)
             session.commandHistory.forEach(entry => {
               term.writeln(`\r\n[${entry.timestamp}] ${entry.command}`)
@@ -207,14 +263,32 @@ export function AITerminal({
         }
         else if (inputLower.startsWith('run ')) {
           const cmd = input.substring(4).trim()
+          const toolType = activeToolRef.current
+          setHistoryForTool(toolType, cmd)
           term.writeln(`\r\nRunning command: ${cmd}`)
-          const session = toolSessionsRef.current.get(activeToolRef.current)
-          executeCommand(activeToolRef.current, cmd, session?.id).then(res => {
-            term.writeln(`\r\nExecution started: ${res.id}`)
-            writePrompt(term)
+          const session = toolSessionsRef.current.get(toolType)
+          executeCommand(toolType, cmd, session?.id).then(res => {
+            if (activeToolRef.current === toolType) {
+              term.writeln(`\r\nExecution started: ${res.id}`)
+              writePrompt(term)
+              return
+            }
+
+            const nextBuffers = new Map(toolBuffersRef.current)
+            nextBuffers.set(toolType, [...(nextBuffers.get(toolType) || []), `Execution started: ${res.id}`])
+            toolBuffersRef.current = nextBuffers
+            setToolBuffers(nextBuffers)
           }).catch(e => {
-            term.writeln(`\r\nFailed to execute command: ${e}`)
-            writePrompt(term)
+            if (activeToolRef.current === toolType) {
+              term.writeln(`\r\nFailed to execute command: ${e}`)
+              writePrompt(term)
+              return
+            }
+
+            const nextBuffers = new Map(toolBuffersRef.current)
+            nextBuffers.set(toolType, [...(nextBuffers.get(toolType) || []), `Failed to execute command: ${e}`])
+            toolBuffersRef.current = nextBuffers
+            setToolBuffers(nextBuffers)
           })
           return
         }
@@ -228,15 +302,39 @@ export function AITerminal({
         writePrompt(term)
         return
       }
+      if (data === '\x1b[A' || data === '\x1b[B') {
+        const history = toolHistoriesRef.current.get(activeToolRef.current) || []
+        if (history.length === 0) return
+
+        if (data === '\x1b[A') {
+          historyIndex = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1)
+        } else if (historyIndex !== null) {
+          historyIndex = historyIndex + 1
+          if (historyIndex >= history.length) {
+            historyIndex = null
+            command = ''
+            redrawCommand()
+            return
+          }
+        } else {
+          return
+        }
+
+        command = history[historyIndex]
+        redrawCommand()
+        return
+      }
       if (data === '\u007F') {
         if (command.length > 0) {
           command = command.slice(0, -1)
+          historyIndex = null
           term.write('\b \b')
         }
         return
       }
       if (data >= ' ') {
         command += data
+        historyIndex = null
         term.write(data)
       }
     })
@@ -251,7 +349,7 @@ export function AITerminal({
       term.dispose()
       termRef.current = null
     }
-  }, [connect, sendDemoEnvelope, writePrompt, handleSelectTool, handleDispatchSkill, executeCommand])
+  }, [connect, sendDemoEnvelope, writePrompt, handleSelectTool, handleDispatchSkill, executeCommand, setHistoryForTool])
 
   return (
     <div className="terminal-view">
