@@ -52,6 +52,9 @@ struct SkillArgs {
 enum SkillAction {
     List(SkillListArgs),
     Info(SkillInfoArgs),
+    Install(SkillInstallArgs),
+    Remove(SkillRemoveArgs),
+    Update(SkillUpdateArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -65,6 +68,36 @@ struct SkillInfoArgs {
     name: String,
     #[arg(long, default_value_t = false)]
     json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct SkillInstallArgs {
+    /// Skill name (e.g. my-skill)
+    name: String,
+    /// Source URL or path to install from
+    #[arg(short, long)]
+    source: String,
+    /// Install to project scope (.lux/skills/) instead of global
+    #[arg(short, long)]
+    project: bool,
+}
+
+#[derive(Parser, Debug)]
+struct SkillRemoveArgs {
+    /// Skill name to remove
+    name: String,
+    /// Remove from project scope
+    #[arg(short, long)]
+    project: bool,
+    /// Remove from global scope
+    #[arg(short, long)]
+    global: bool,
+}
+
+#[derive(Parser, Debug)]
+struct SkillUpdateArgs {
+    /// Skill name to update
+    name: String,
 }
 
 #[derive(Parser, Debug)]
@@ -427,6 +460,9 @@ struct ServeArgs {
     token: String,
     #[arg(long, env = "LUX_GATEWAY_HISTORY", default_value_t = 256)]
     history_capacity: usize,
+    /// Minutes without HTTP or WebSocket activity before graceful shutdown (0 disables)
+    #[arg(long, env = "LUX_GATEWAY_IDLE_TIMEOUT", default_value_t = 30)]
+    idle_timeout: u64,
 }
 
 #[derive(Parser, Debug)]
@@ -561,6 +597,7 @@ struct SkillAuthor {
 struct SkillEntry {
     manifest: SkillManifest,
     directory_path: PathBuf,
+    scope: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -575,6 +612,9 @@ fn run_skill_command(args: SkillArgs) -> anyhow::Result<()> {
     match args.action {
         SkillAction::List(list_args) => print_skill_list(list_args),
         SkillAction::Info(info_args) => print_skill_info(info_args),
+        SkillAction::Install(install_args) => install_skill(install_args),
+        SkillAction::Remove(remove_args) => remove_skill(remove_args),
+        SkillAction::Update(update_args) => update_skill(update_args),
     }
 }
 
@@ -597,7 +637,7 @@ fn print_skill_list(args: SkillListArgs) -> anyhow::Result<()> {
             "{:20} {:10} {:8} {}",
             entry.manifest.name,
             entry.manifest.version,
-            entry.manifest.skill_type,
+            entry.scope,
             entry.manifest.description
         );
     }
@@ -683,13 +723,250 @@ fn print_skill_info(args: SkillInfoArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
+    let target_root = if args.project {
+        project_skills_dir().context("failed to determine project skills directory")?
+    } else {
+        global_skills_dir().context("failed to determine global skills directory")?
+    };
+    let target_dir = target_root.join(&args.name);
+
+    if target_dir.exists() {
+        eprintln!("Error: skill '{}' already exists at {}", args.name, target_dir.display());
+        std::process::exit(1);
+    }
+
+    fs::create_dir_all(&target_dir)
+        .with_context(|| format!("failed to create skill directory {}", target_dir.display()))?;
+
+    let result = install_skill_from_source(&args.source, &target_dir);
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&target_dir);
+        return Err(error);
+    }
+
+    println!(
+        "Installed skill '{}' to {}",
+        args.name,
+        target_dir.display()
+    );
+    Ok(())
+}
+
+fn remove_skill(args: SkillRemoveArgs) -> anyhow::Result<()> {
+    if args.project && args.global {
+        eprintln!("Error: choose either --project or --global, not both");
+        std::process::exit(1);
+    }
+
+    if discover_skills()?
+        .iter()
+        .any(|entry| entry.scope == "core" && entry.manifest.name == args.name)
+    {
+        eprintln!("Error: refusing to remove core skill '{}'", args.name);
+        std::process::exit(1);
+    }
+
+    let target_dir = if args.project {
+        project_skills_dir()
+            .context("failed to determine project skills directory")?
+            .join(&args.name)
+    } else if args.global {
+        global_skills_dir()
+            .context("failed to determine global skills directory")?
+            .join(&args.name)
+    } else {
+        let project_dir = project_skills_dir()
+            .context("failed to determine project skills directory")?
+            .join(&args.name);
+        if project_dir.exists() {
+            project_dir
+        } else {
+            global_skills_dir()
+                .context("failed to determine global skills directory")?
+                .join(&args.name)
+        }
+    };
+
+    if !target_dir.exists() {
+        eprintln!("Error: skill '{}' not found", args.name);
+        std::process::exit(1);
+    }
+
+    fs::remove_dir_all(&target_dir)
+        .with_context(|| format!("failed to remove skill directory {}", target_dir.display()))?;
+    println!("Removed skill '{}' from {}", args.name, target_dir.display());
+    Ok(())
+}
+
+fn update_skill(args: SkillUpdateArgs) -> anyhow::Result<()> {
+    let entries = discover_skills()?;
+    let Some(entry) = find_skill_for_update(&entries, &args.name) else {
+        eprintln!("Error: skill '{}' not found", args.name);
+        std::process::exit(1);
+    };
+
+    let Some(source) = entry.manifest.source.as_deref() else {
+        eprintln!("Error: Skill has no source URL configured");
+        std::process::exit(1);
+    };
+
+    install_skill_from_source(source, &entry.directory_path)?;
+    println!(
+        "Updated skill '{}' at {}",
+        args.name,
+        entry.directory_path.display()
+    );
+    Ok(())
+}
+
+fn find_skill_for_update<'a>(entries: &'a [SkillEntry], name: &str) -> Option<&'a SkillEntry> {
+    entries
+        .iter()
+        .find(|entry| entry.manifest.name == name && entry.scope == "project")
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| entry.manifest.name == name && entry.scope == "global")
+        })
+        .or_else(|| entries.iter().find(|entry| entry.manifest.name == name))
+}
+
+fn install_skill_from_source(source: &str, target_dir: &Path) -> anyhow::Result<()> {
+    if is_url_source(source) {
+        eprintln!("Note: URL-based skill install/update is a placeholder");
+        download_skill_file(source, "manifest.json", target_dir, true)?;
+        download_skill_file(source, "SKILL.md", target_dir, false)?;
+        return Ok(());
+    }
+
+    let source_dir = Path::new(source);
+    if !source_dir.is_dir() {
+        bail!("source is not a directory: {}", source_dir.display());
+    }
+
+    copy_required_skill_file(source_dir, target_dir, "manifest.json")?;
+    copy_required_skill_file(source_dir, target_dir, "SKILL.md")?;
+
+    let references_dir = source_dir.join("references");
+    if references_dir.is_dir() {
+        let target_references_dir = target_dir.join("references");
+        if target_references_dir.exists() {
+            fs::remove_dir_all(&target_references_dir).with_context(|| {
+                format!(
+                    "failed to replace references directory {}",
+                    target_references_dir.display()
+                )
+            })?;
+        }
+        copy_dir_recursive(&references_dir, &target_references_dir)?;
+    }
+
+    Ok(())
+}
+
+fn copy_required_skill_file(source_dir: &Path, target_dir: &Path, file_name: &str) -> anyhow::Result<()> {
+    let source_path = source_dir.join(file_name);
+    let target_path = target_dir.join(file_name);
+    fs::copy(&source_path, &target_path).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            source_path.display(),
+            target_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn copy_dir_recursive(source_dir: &Path, target_dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(target_dir)
+        .with_context(|| format!("failed to create directory {}", target_dir.display()))?;
+
+    for entry in fs::read_dir(source_dir)
+        .with_context(|| format!("failed to read directory {}", source_dir.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target_dir.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn is_url_source(source: &str) -> bool {
+    source.starts_with("http://") || source.starts_with("https://")
+}
+
+fn download_skill_file(
+    source: &str,
+    file_name: &str,
+    target_dir: &Path,
+    required: bool,
+) -> anyhow::Result<()> {
+    let url = format!("{}/{}", source.trim_end_matches('/'), file_name);
+    let target_path = target_dir.join(file_name);
+    let output = ProcessCommand::new("curl")
+        .args(["--fail", "--silent", "--show-error", "--location", "--output"])
+        .arg(&target_path)
+        .arg(&url)
+        .output()
+        .with_context(|| format!("failed to start curl for {url}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let _ = fs::remove_file(&target_path);
+    if required {
+        bail!(
+            "failed to download {url}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    eprintln!("Warning: failed to download optional {file_name} from {url}");
+    Ok(())
+}
+
 fn discover_skills() -> anyhow::Result<Vec<SkillEntry>> {
-    let skills_dir = core_skills_dir();
     let mut entries = Vec::new();
 
+    scan_skill_scope(&core_skills_dir(), "core", &mut entries)?;
+    if let Some(skills_dir) = project_skills_dir() {
+        scan_skill_scope(&skills_dir, "project", &mut entries)?;
+    }
+    if let Some(skills_dir) = global_skills_dir() {
+        scan_skill_scope(&skills_dir, "global", &mut entries)?;
+    }
+
+    entries.sort_by(|left, right| {
+        left.manifest
+            .name
+            .cmp(&right.manifest.name)
+            .then_with(|| left.scope.cmp(&right.scope))
+    });
+    Ok(entries)
+}
+
+fn scan_skill_scope(
+    skills_dir: &Path,
+    scope: &str,
+    entries: &mut Vec<SkillEntry>,
+) -> anyhow::Result<()> {
     let read_dir = match fs::read_dir(&skills_dir) {
         Ok(read_dir) => read_dir,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(entries),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => {
             return Err(error).with_context(|| {
                 format!("failed to read skills directory {}", skills_dir.display())
@@ -743,15 +1020,30 @@ fn discover_skills() -> anyhow::Result<Vec<SkillEntry>> {
         entries.push(SkillEntry {
             manifest,
             directory_path,
+            scope: scope.to_string(),
         });
     }
 
-    entries.sort_by(|left, right| left.manifest.name.cmp(&right.manifest.name));
-    Ok(entries)
+    Ok(())
 }
 
 fn core_skills_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../Skills")
+}
+
+fn project_skills_dir() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".lux").join("skills"))
+}
+
+fn global_skills_dir() -> Option<PathBuf> {
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").ok()
+    } else {
+        std::env::var("HOME").ok()
+    };
+    home.map(|h| PathBuf::from(h).join(".lux").join("skills"))
 }
 
 fn read_skill_references(directory_path: &Path) -> Vec<String> {
@@ -2528,20 +2820,40 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         token: args.token,
         history_capacity: args.history_capacity,
     });
-    let app = server::router(state);
+    let idle_timeout = args
+        .idle_timeout
+        .checked_mul(60)
+        .map(Duration::from_secs);
+    let app = server::router(state.clone());
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind Lux gateway at {addr}"))?;
 
     tracing::info!(%addr, "Lux gateway listening");
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(state, idle_timeout))
         .await
         .context("Lux gateway stopped with an error")
 }
 
-async fn shutdown_signal() {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::warn!(%error, "failed to listen for shutdown signal");
+async fn shutdown_signal(state: server::GatewayState, idle_timeout: Option<Duration>) {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(%error, "failed to listen for shutdown signal");
+        }
+    };
+
+    if let Some(timeout) = idle_timeout.filter(|duration| !duration.is_zero()) {
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = state.wait_for_idle_timeout(timeout) => {
+                eprintln!(
+                    "Lux gateway graceful shutdown: idle timeout reached after {} minutes without activity",
+                    timeout.as_secs() / 60
+                );
+            }
+        }
+    } else {
+        ctrl_c.await;
     }
 }

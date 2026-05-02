@@ -101,6 +101,215 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
 }
 
 #[test]
+fn skill_list_shows_lux_unity() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list"])
+        .output()
+        .expect("run lux skill list");
+
+    assert!(
+        output.status.success(),
+        "lux skill list failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("lux-unity"));
+}
+
+#[test]
+fn skill_list_json_is_parseable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list", "--json"])
+        .output()
+        .expect("run lux skill list --json");
+
+    assert!(
+        output.status.success(),
+        "lux skill list --json failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("skill list JSON");
+    assert!(parsed
+        .as_array()
+        .expect("skill list array")
+        .iter()
+        .any(|skill| skill["manifest"]["name"] == "lux-unity"));
+}
+
+#[test]
+fn skill_info_shows_lux_unity() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "info", "lux-unity"])
+        .output()
+        .expect("run lux skill info lux-unity");
+
+    assert!(
+        output.status.success(),
+        "lux skill info failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Name:") || stdout.contains("Version:"));
+}
+
+#[test]
+fn skill_info_json_is_parseable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "info", "lux-unity", "--json"])
+        .output()
+        .expect("run lux skill info lux-unity --json");
+
+    assert!(
+        output.status.success(),
+        "lux skill info --json failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("skill info JSON");
+    assert_eq!(parsed["manifest"]["name"], "lux-unity");
+}
+
+#[test]
+fn skill_info_nonexistent_exits_1() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "info", "nonexistent-skill-xyz"])
+        .output()
+        .expect("run lux skill info nonexistent-skill-xyz");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn skill_help_shows_subcommands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "--help"])
+        .output()
+        .expect("run lux skill --help");
+
+    assert!(
+        output.status.success(),
+        "lux skill --help failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("info"));
+}
+
+#[test]
+fn skill_install_creates_skill_in_global_scope() {
+    let home = create_temp_dir("lux-skill-install-home");
+    let source = create_test_skill_source("smoke-install-skill");
+
+    let install = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-install-skill",
+            "--source",
+            source.to_str().expect("source path UTF-8"),
+        ])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install");
+
+    assert_command_success(&install, "lux skill install");
+
+    let list = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list"])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill list");
+
+    assert_command_success(&list, "lux skill list");
+    assert!(String::from_utf8_lossy(&list.stdout).contains("smoke-install-skill"));
+}
+
+#[test]
+fn skill_install_refuses_core_removal() {
+    let home = create_temp_dir("lux-skill-core-remove-home");
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "remove", "lux-unity"])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill remove lux-unity");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn skill_remove_deletes_installed_skill() {
+    let home = create_temp_dir("lux-skill-remove-home");
+    let source = create_test_skill_source("smoke-remove-skill");
+
+    let install = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-remove-skill",
+            "--source",
+            source.to_str().expect("source path UTF-8"),
+        ])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install");
+    assert_command_success(&install, "lux skill install");
+
+    let remove = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "remove", "smoke-remove-skill", "--global"])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill remove");
+    assert_command_success(&remove, "lux skill remove");
+
+    let list = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list"])
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill list");
+    assert_command_success(&list, "lux skill list");
+    assert!(!String::from_utf8_lossy(&list.stdout).contains("smoke-remove-skill"));
+}
+
+#[test]
+fn skill_install_refuses_duplicate() {
+    let home = create_temp_dir("lux-skill-duplicate-home");
+    let source = create_test_skill_source("smoke-duplicate-skill");
+
+    let first = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-duplicate-skill",
+            "--source",
+            source.to_str().expect("source path UTF-8"),
+        ])
+        .env("HOME", &home)
+        .output()
+        .expect("run first lux skill install");
+    assert_command_success(&first, "first lux skill install");
+
+    let second = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-duplicate-skill",
+            "--source",
+            source.to_str().expect("source path UTF-8"),
+        ])
+        .env("HOME", &home)
+        .output()
+        .expect("run second lux skill install");
+
+    assert!(!second.status.success());
+    assert_eq!(second.status.code(), Some(1));
+}
+
+#[test]
 fn rust_lux_unity_status_reads_lux_bridge_settings_without_external_settings() {
     let temp_dir = create_temp_dir("lux-unity-status");
     let project_root = temp_dir.join("Project");
@@ -1868,6 +2077,45 @@ fn assert_command_help_contains(args: &[&str], expected: &str) {
         stdout.contains(expected),
         "expected help output to contain {expected:?}, got:\n{stdout}"
     );
+}
+
+fn assert_command_success(output: &std::process::Output, label: &str) {
+    assert!(
+        output.status.success(),
+        "{label} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn create_test_skill_source(name: &str) -> std::path::PathBuf {
+    let source = create_temp_dir(&format!("lux-skill-source-{name}"));
+    fs::write(
+        source.join("manifest.json"),
+        format!(
+            r#"{{
+  "name": "{name}",
+  "version": "0.1.0",
+  "description": "Smoke test skill",
+  "displayName": "Smoke Test Skill",
+  "luxVersion": "0.1.0",
+  "author": {{ "name": "Lux Tests" }},
+  "keywords": ["smoke"],
+  "type": "test",
+  "source": "{}"
+}}"#,
+            source.display()
+        ),
+    )
+    .expect("write test skill manifest");
+    fs::write(source.join("SKILL.md"), format!("# {name}\n\nSmoke test skill.\n"))
+        .expect("write test skill body");
+
+    let references = source.join("references");
+    fs::create_dir_all(&references).expect("create references dir");
+    fs::write(references.join("usage.md"), "# Usage\n").expect("write reference");
+
+    source
 }
 
 fn make_executable(path: &Path) {
