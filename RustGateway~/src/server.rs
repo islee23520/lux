@@ -2,14 +2,17 @@ use std::{
     collections::{HashMap, VecDeque},
     path::Path,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path as AxumPath, Query, State,
+        Request,
     },
     http::{HeaderMap, StatusCode, Uri},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -42,6 +45,8 @@ pub struct GatewayState {
     remote_sessions: Arc<Mutex<HashMap<String, RemoteSession>>>,
     signaling_peers: Arc<Mutex<HashMap<String, SignalingPeer>>>,
     signaling_queues: Arc<Mutex<HashMap<String, VecDeque<QueuedSignalingMessage>>>>,
+    started_at: Instant,
+    last_activity: Arc<Mutex<Instant>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +67,13 @@ struct HealthResponse {
     protocol_version: u32,
     websocket_path: &'static str,
     history_capacity: usize,
+    uptime_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct HeartbeatResponse {
+    status: &'static str,
+    uptime_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -282,6 +294,7 @@ struct CreateToolSessionRequest {
 impl GatewayState {
     pub fn new(config: GatewayConfig) -> Self {
         let (events, _) = broadcast::channel(config.history_capacity.max(1));
+        let now = Instant::now();
         Self {
             config: Arc::new(config),
             events,
@@ -294,6 +307,30 @@ impl GatewayState {
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             signaling_peers: Arc::new(Mutex::new(HashMap::new())),
             signaling_queues: Arc::new(Mutex::new(HashMap::new())),
+            started_at: now,
+            last_activity: Arc::new(Mutex::new(now)),
+        }
+    }
+
+    pub fn uptime_seconds(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
+    }
+
+    pub async fn touch_activity(&self) {
+        *self.last_activity.lock().await = Instant::now();
+    }
+
+    pub async fn idle_for(&self) -> Duration {
+        self.last_activity.lock().await.elapsed()
+    }
+
+    pub async fn wait_for_idle_timeout(&self, timeout: Duration) {
+        loop {
+            let idle_for = self.idle_for().await;
+            if idle_for >= timeout {
+                return;
+            }
+            tokio::time::sleep(timeout - idle_for).await;
         }
     }
 
@@ -321,6 +358,8 @@ pub fn router(state: GatewayState) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/api/health", get(health))
+        .route("/api/heartbeat", post(heartbeat))
         .route("/schema", get(schema))
         .route("/events", get(events_socket))
         .route("/remote/signaling/:session_id", get(signaling_socket))
@@ -375,7 +414,20 @@ pub fn router(state: GatewayState) -> Router {
             ServeDir::new(ui_dir).append_index_html_on_directories(true),
         )
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            record_http_activity,
+        ))
         .with_state(state)
+}
+
+async fn record_http_activity(
+    State(state): State<GatewayState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    state.touch_activity().await;
+    next.run(request).await
 }
 
 async fn health(State(state): State<GatewayState>) -> Json<HealthResponse> {
@@ -384,6 +436,15 @@ async fn health(State(state): State<GatewayState>) -> Json<HealthResponse> {
         protocol_version: PROTOCOL_VERSION,
         websocket_path: "/events",
         history_capacity: state.config.history_capacity,
+        uptime_seconds: state.uptime_seconds(),
+    })
+}
+
+async fn heartbeat(State(state): State<GatewayState>) -> Json<HeartbeatResponse> {
+    state.touch_activity().await;
+    Json(HeartbeatResponse {
+        status: "alive",
+        uptime_seconds: state.uptime_seconds(),
     })
 }
 
@@ -1135,6 +1196,7 @@ async fn handle_signaling_socket(
     while let Some(message) = receiver.next().await {
         match message {
             Ok(Message::Text(text)) => {
+                state.touch_activity().await;
                 if text.len() > 64 * 1024 {
                     tracing::warn!(%session_id, "Lux gateway ignored oversized signaling message");
                     continue;
@@ -1304,6 +1366,7 @@ async fn handle_socket(state: GatewayState, socket: WebSocket, role: String, cli
             message = receiver.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
+                        state.touch_activity().await;
                         if text.len() > 64 * 1024 {
                             tracing::warn!("Lux gateway ignored oversized event envelope");
                             continue;
@@ -1509,6 +1572,18 @@ mod tests {
         serde_json::from_slice(&body).unwrap()
     }
 
+    async fn post_empty(app: Router, uri: &str) -> Response {
+        app.oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
     async fn delete_request(app: Router, uri: &str) -> Response {
         app.oneshot(
             Request::builder()
@@ -1675,6 +1750,29 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].event_id, "event-1");
         assert_eq!(history[1].event_id, "event-2");
+    }
+
+    #[tokio::test]
+    async fn api_health_reports_uptime() {
+        let response = test_app()
+            .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["ok"], true);
+        assert!(json["uptime_seconds"].is_number());
+    }
+
+    #[tokio::test]
+    async fn heartbeat_returns_alive_and_uptime() {
+        let response = post_empty(test_app(), "/api/heartbeat").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["status"], "alive");
+        assert!(json["uptime_seconds"].is_number());
     }
 
     #[tokio::test]

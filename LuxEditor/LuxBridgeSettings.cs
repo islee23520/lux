@@ -9,6 +9,7 @@ namespace Linalab.Lux.Editor
     {
         public const string Protocol = "lux.unity.bridge.v1";
         public const string SettingsRelativePath = "UserSettings/LuxBridgeSettings.json";
+        public const string DefaultGatewayBaseUrl = "http://127.0.0.1:17340";
 
         [MenuItem("Tools/Linalab/Lux/Unity Bridge/Write Lux Bridge Settings")]
         public static void WriteSettingsFromMenu()
@@ -34,6 +35,30 @@ namespace Linalab.Lux.Editor
             return assetsDirectory.Parent == null ? Directory.GetCurrentDirectory() : assetsDirectory.Parent.FullName;
         }
 
+        public static string GetGatewayBaseUrl()
+        {
+            string configured = ReadGatewayUrlFromSettings();
+            if (!string.IsNullOrEmpty(configured))
+            {
+                return configured.TrimEnd('/');
+            }
+
+            string environmentUrl = Environment.GetEnvironmentVariable("LUX_GATEWAY_URL");
+            if (!string.IsNullOrEmpty(environmentUrl))
+            {
+                return environmentUrl.TrimEnd('/');
+            }
+
+            string host = Environment.GetEnvironmentVariable("LUX_GATEWAY_HOST");
+            string port = Environment.GetEnvironmentVariable("LUX_GATEWAY_PORT");
+            if (!string.IsNullOrEmpty(host) || !string.IsNullOrEmpty(port))
+            {
+                return $"http://{(string.IsNullOrEmpty(host) ? "127.0.0.1" : host)}:{(string.IsNullOrEmpty(port) ? "17340" : port)}";
+            }
+
+            return DefaultGatewayBaseUrl;
+        }
+
         static string BuildJson(string projectRoot)
         {
             var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(LuxBridgeSettings).Assembly);
@@ -51,9 +76,36 @@ namespace Linalab.Lux.Editor
                 + $"  \"package_version\": \"{Escape(packageVersion)}\",\n"
                 + $"  \"project_root\": \"{Escape(projectRoot)}\",\n"
                 + $"  \"rust_gateway_path\": \"{Escape(rustGatewayPath)}\",\n"
+                + $"  \"gateway_url\": \"{Escape(GetGatewayBaseUrl())}\",\n"
                 + $"  \"unity_server_port\": null,\n"
                 + $"  \"generated_at_utc\": \"{Escape(DateTime.UtcNow.ToString("o"))}\"\n"
                 + "}\n";
+        }
+
+        static string ReadGatewayUrlFromSettings()
+        {
+            string settingsPath = Path.Combine(GetProjectRoot(), SettingsRelativePath);
+            if (!File.Exists(settingsPath))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                var settings = JsonUtility.FromJson<BridgeSettingsFile>(File.ReadAllText(settingsPath));
+                return settings == null ? string.Empty : settings.gateway_url;
+            }
+            catch (Exception error)
+            {
+                Debug.LogWarning($"Failed to read Lux gateway URL from bridge settings: {error.Message}");
+                return string.Empty;
+            }
+        }
+
+        [Serializable]
+        sealed class BridgeSettingsFile
+        {
+            public string gateway_url;
         }
 
         static string Escape(string value)
