@@ -4,7 +4,6 @@
   "references": [
     "nunit.framework",
     "Linalab.Lux.Editor",
-    "Linalab.UnityGit.Editor",
     "Linalab.UnityAiBridge.Editor"
   ],
   "optionalUnityReferences": [
