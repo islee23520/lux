@@ -9,7 +9,7 @@ namespace Linalab.Lux.Editor
     [InitializeOnLoad]
     public static class LuxCompileEventBroadcaster
     {
-        static readonly Regex CompilerErrorPattern = new Regex(
+        internal static readonly Regex CompilerErrorPattern = new Regex(
             @"(?<file>[^\r\n]+\.cs)\((?<line>\d+)(?:,\d+)?\):\s+error\s+(?<code>[A-Z]+\d+):\s+(?<message>.+)",
             RegexOptions.Compiled);
 

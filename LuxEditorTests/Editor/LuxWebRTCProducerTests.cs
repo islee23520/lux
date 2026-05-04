@@ -66,6 +66,8 @@ namespace Linalab.LuxEditor.Tests
                 Assert.That(signalingSocket.ConnectUri.AbsolutePath, Is.EqualTo("/remote/signaling/session-c"));
                 Assert.That(signalingSocket.ConnectUri.Query, Is.EqualTo("?role=unity"));
                 Assert.That(eventsSocket.ConnectUri.AbsolutePath, Is.EqualTo("/events"));
+                Assert.That(eventsSocket.ConnectUri.Query, Does.Contain("token=token"));
+                Assert.That(eventsSocket.ConnectUri.Query, Does.Contain("role=unity"));
                 Assert.That(signalingSocket.Token, Is.EqualTo("token"));
             }
         }
@@ -139,6 +141,14 @@ namespace Linalab.LuxEditor.Tests
                 InitializeCallCount++;
             }
 
+            public void StartUpdatePump()
+            {
+            }
+
+            public void StopUpdatePump()
+            {
+            }
+
             public object CreatePeerConnection(IReadOnlyList<LuxIceServer> iceServers)
             {
                 CreatePeerConnectionCallCount++;
@@ -175,8 +185,9 @@ namespace Linalab.LuxEditor.Tests
             {
             }
 
-            public void SetRemoteDescription(object peerConnection, string type, string sdp)
+            public Task SetRemoteDescriptionAsync(object peerConnection, string type, string sdp)
             {
+                return Task.CompletedTask;
             }
 
             public Task<string> CreateAnswerAsync(object peerConnection, CancellationToken cancellationToken)
@@ -184,8 +195,9 @@ namespace Linalab.LuxEditor.Tests
                 return Task.FromResult("answer-sdp");
             }
 
-            public void SetLocalDescription(object peerConnection, string type, string sdp)
+            public Task SetLocalDescriptionAsync(object peerConnection, string type, string sdp)
             {
+                return Task.CompletedTask;
             }
 
             public void AddIceCandidate(object peerConnection, string candidate, string sdpMid, int sdpMLineIndex)

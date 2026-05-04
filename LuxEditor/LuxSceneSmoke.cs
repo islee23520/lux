@@ -21,6 +21,7 @@ namespace Linalab.Lux.Editor
         const string RootName = "LuxSkillTestObjects";
         const string ObjectPrefix = "LuxSkillTestObject_";
         const double TimeoutSeconds = 30.0d;
+        const double PlayerFindTimeoutSeconds = 10.0d;
         const double InputHoldSeconds = 1.0d;
 
         static State _state;
@@ -31,9 +32,11 @@ namespace Linalab.Lux.Editor
         static string _message;
         static bool _objectsCreated;
         static bool _playModeEntered;
+        static double _playerFindDeadline;
         static bool _playerFound;
         static bool _keyboardAvailable;
         static bool _movementObserved;
+        static bool _playerOnlySuccess;
         static string _playerObjectName;
         static Vector3 _initialPosition;
         static Vector3 _finalPosition;
@@ -140,6 +143,7 @@ namespace Linalab.Lux.Editor
                 CreateTestObjects(_objectCount);
                 _objectsCreated = true;
                 _message = $"Created {_objectCount} GameObjects in {_scenePath}.";
+                SetHostProjectDebugTargetScene(_scenePath);
 
                 EditorApplication.update -= OnUpdate;
                 EditorApplication.update += OnUpdate;
@@ -172,7 +176,17 @@ namespace Linalab.Lux.Editor
                     var player = FindPlayerObject();
                     if (player == null)
                     {
-                        Fail("PlayMode entered, but no FpsPlayerController or CharacterController player object was found.");
+                        if (_playerFindDeadline <= 0.0d)
+                        {
+                            _playerFindDeadline = EditorApplication.timeSinceStartup + PlayerFindTimeoutSeconds;
+                        }
+
+                        if (EditorApplication.timeSinceStartup < _playerFindDeadline)
+                        {
+                            return;
+                        }
+
+                        Fail("PlayMode entered, but no FpsPlayerController or CharacterController player object was found before the player wait timeout.");
                         return;
                     }
 
@@ -182,6 +196,15 @@ namespace Linalab.Lux.Editor
                     _keyboardAvailable = Keyboard.current != null;
                     if (!_keyboardAvailable)
                     {
+                        if (Application.isBatchMode)
+                        {
+                            _playerOnlySuccess = true;
+                            _message = "PlayMode entered and player found; keyboard input smoke skipped because batch mode has no Keyboard.current.";
+                            EditorApplication.ExitPlaymode();
+                            _state = State.ExitingPlayMode;
+                            break;
+                        }
+
                         Fail("PlayMode entered and player found, but Input System Keyboard.current is unavailable.");
                         return;
                     }
@@ -226,7 +249,7 @@ namespace Linalab.Lux.Editor
                         return;
                     }
 
-                    Complete(_movementObserved);
+                    Complete(_movementObserved || _playerOnlySuccess);
                     break;
             }
         }
@@ -250,6 +273,24 @@ namespace Linalab.Lux.Editor
             }
 
             Selection.activeObject = root;
+        }
+
+        static void SetHostProjectDebugTargetScene(string scenePath)
+        {
+            string sceneName = Path.GetFileNameWithoutExtension(scenePath);
+            if (string.IsNullOrEmpty(sceneName))
+            {
+                return;
+            }
+
+            Type bootstrapType = Type.GetType("NG.Gameplay.Controllers.BootstrapSceneController, NG.Gameplay");
+            var setDebugTargetScene = bootstrapType?.GetMethod("SetDebugTargetScene", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (setDebugTargetScene == null)
+            {
+                return;
+            }
+
+            setDebugTargetScene.Invoke(null, new object[] { sceneName });
         }
 
         static GameObject FindSceneRootObject(string rootName)
@@ -326,9 +367,11 @@ namespace Linalab.Lux.Editor
             _message = string.Empty;
             _objectsCreated = false;
             _playModeEntered = false;
+            _playerFindDeadline = 0.0d;
             _playerFound = false;
             _keyboardAvailable = false;
             _movementObserved = false;
+            _playerOnlySuccess = false;
             _playerObjectName = string.Empty;
             _initialPosition = Vector3.zero;
             _finalPosition = Vector3.zero;

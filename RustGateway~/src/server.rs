@@ -53,6 +53,7 @@ pub struct GatewayState {
 struct SocketQuery {
     role: Option<String>,
     client_id: Option<String>,
+    token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,7 +125,9 @@ pub enum RemoteSessionStatus {
 pub struct SignalingPeer {
     pub session_id: String,
     pub role: SignalingRole,
+    pub peer_id: Uuid,
     pub sender: futures_util::stream::SplitSink<WebSocket, Message>,
+
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1108,11 +1111,12 @@ async fn events_socket(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let token = headers
+    let header_token = headers
         .get("x-lux-token")
         .and_then(|value| value.to_str().ok());
+    let supplied = header_token.or(query.token.as_deref());
 
-    if !state.accepts_token(token) {
+    if !state.accepts_token(supplied) {
         return (
             StatusCode::UNAUTHORIZED,
             "invalid or missing Lux gateway token",
@@ -1181,12 +1185,14 @@ async fn handle_signaling_socket(
 ) {
     let (sender, mut receiver) = socket.split();
     let key = signaling_peer_key(&session_id, &role);
+    let peer_id = Uuid::new_v4();
 
     state.signaling_peers.lock().await.insert(
         key.clone(),
         SignalingPeer {
             session_id: session_id.clone(),
             role: role.clone(),
+            peer_id,
             sender,
         },
     );
@@ -1212,7 +1218,7 @@ async fn handle_signaling_socket(
         }
     }
 
-    remove_signaling_peer(&state, &session_id, &role, &key).await;
+    remove_signaling_peer(&state, &session_id, &role, &key, peer_id).await;
 }
 
 async fn relay_or_queue_signaling(
@@ -1306,8 +1312,30 @@ async fn remove_signaling_peer(
     session_id: &str,
     role: &SignalingRole,
     key: &str,
+    expected_peer_id: Uuid,
 ) {
-    state.signaling_peers.lock().await.remove(key);
+    let removed = {
+        let mut peers = state.signaling_peers.lock().await;
+        if let Some(peer) = peers.get(key) {
+            if peer.peer_id == expected_peer_id {
+                peers.remove(key);
+                true
+            } else {
+                tracing::warn!(
+                    %session_id,
+                    "Lux gateway signaling peer remove skipped: peer_id mismatch (reconnected)"
+                );
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    if !removed {
+        return;
+    }
+
     update_remote_session_for_peer(state, session_id, role, false).await;
 
     let notification = serde_json::json!({
@@ -2435,5 +2463,138 @@ mod tests {
             let response = app.clone().oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
+    }
+
+    #[tokio::test]
+    async fn events_socket_accepts_query_token_auth() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+        });
+        let (address, handle) = start_test_server(state).await;
+
+        let result = tokio::task::spawn_blocking(move || {
+            let mut stream = websocket_connect(
+                address,
+                "/events?role=test&token=secret",
+            );
+            websocket_send_text(
+                &mut stream,
+                r#"{"schema_version":1,"event_id":"q1","category":"tool","source":"test","session_id":"s","captured_at_utc":"t","payload":{}}"#
+            );
+            stream
+        })
+        .await
+        .unwrap();
+
+        handle.abort();
+        drop(result);
+    }
+
+    #[tokio::test]
+    async fn events_socket_rejects_invalid_query_token() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+        });
+        let (address, handle) = start_test_server(state).await;
+
+        let status = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(address).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let request = format!(
+                "GET /events?token=wrong HTTP/1.1\r\nHost: {address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            );
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut response = Vec::new();
+            let mut buffer = [0; 1];
+            while !response.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut buffer).unwrap();
+                response.push(buffer[0]);
+            }
+            let response = String::from_utf8(response).unwrap();
+            response.split_whitespace().nth(1).unwrap().to_string()
+        })
+        .await
+        .unwrap();
+
+        handle.abort();
+        assert_eq!(status, "401");
+    }
+
+    #[tokio::test]
+    async fn signaling_guarded_remove_skips_mismatched_peer_id() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+        });
+        state
+            .remote_sessions
+            .lock()
+            .await
+            .insert("session-1".to_string(), test_remote_session("session-1"));
+
+        let wrong_peer_id = Uuid::new_v4();
+        let key = signaling_peer_key("session-1", &SignalingRole::Unity);
+
+        let (address, handle) = start_test_server(state.clone()).await;
+
+        let actual_peer_id = tokio::task::spawn_blocking(move || {
+            let mut _unity = websocket_connect(
+                address,
+                "/remote/signaling/session-1?role=unity&token=secret",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            _unity
+        })
+        .await
+        .unwrap();
+
+        let actual_peer_id = state
+            .signaling_peers
+            .lock()
+            .await
+            .get(&key)
+            .map(|p| p.peer_id);
+        assert!(actual_peer_id.is_some());
+
+        remove_signaling_peer(
+            &state,
+            "session-1",
+            &SignalingRole::Unity,
+            &key,
+            wrong_peer_id,
+        )
+        .await;
+        assert!(
+            state.signaling_peers.lock().await.contains_key(&key),
+            "peer should remain after wrong peer_id remove attempt"
+        );
+
+        remove_signaling_peer(
+            &state,
+            "session-1",
+            &SignalingRole::Unity,
+            &key,
+            actual_peer_id.unwrap(),
+        )
+        .await;
+        assert!(
+            !state.signaling_peers.lock().await.contains_key(&key),
+            "peer should be removed after correct peer_id"
+        );
+
+        handle.abort();
+    }
+
+    #[test]
+    fn signaling_peer_key_format() {
+        let key_unity = signaling_peer_key("abc-123", &SignalingRole::Unity);
+        let key_web = signaling_peer_key("abc-123", &SignalingRole::Web);
+        assert_eq!(key_unity, "abc-123:unity");
+        assert_eq!(key_web, "abc-123:web");
     }
 }

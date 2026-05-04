@@ -23,6 +23,8 @@ namespace Linalab.LuxEditor
         private const string AiCommandChannelLabel = "lux-ai-commands";
         private const int DefaultBackoffMilliseconds = 500;
         private const int MaximumBackoffMilliseconds = 5000;
+        private const int MaximumStartAttempts = 3;
+        private static readonly int MainThreadId = Thread.CurrentThread.ManagedThreadId;
 
         private readonly IWebRTCBackend webRtc;
         private readonly Func<WebRTCSignalingClient> signalingFactory;
@@ -32,6 +34,7 @@ namespace Linalab.LuxEditor
         private CancellationTokenSource cancellation;
         private WebRTCSignalingClient signaling;
         private LuxGatewayEventsClient eventsClient;
+        private IReadOnlyList<LuxIceServer> iceServers = Array.Empty<LuxIceServer>();
         private object peerConnection;
         private object videoTrack;
         private object inputDataChannel;
@@ -78,8 +81,9 @@ namespace Linalab.LuxEditor
 
             Stop();
             SessionId = sessionId;
+            iceServers = Array.Empty<LuxIceServer>();
             cancellation = new CancellationTokenSource();
-            _ = StartAsync(sessionId, gatewayUrl, token, cancellation.Token);
+            ObserveTask(StartAsync(sessionId, gatewayUrl, token, cancellation.Token), "Lux WebRTC startup task failed");
         }
 
         public void Stop()
@@ -107,6 +111,8 @@ namespace Linalab.LuxEditor
             }
 
             DisposeWebRTCResources();
+            webRtc.StopUpdatePump();
+            iceServers = Array.Empty<LuxIceServer>();
 
             if (wasStreaming)
             {
@@ -122,7 +128,7 @@ namespace Linalab.LuxEditor
 
         private async Task StartAsync(string sessionId, string gatewayUrl, string token, CancellationToken cancellationToken)
         {
-            while (!cancellationToken.IsCancellationRequested)
+            for (var attempt = 1; attempt <= MaximumStartAttempts && !cancellationToken.IsCancellationRequested; attempt++)
             {
                 try
                 {
@@ -137,6 +143,17 @@ namespace Linalab.LuxEditor
                 catch (Exception exception)
                 {
                     RaiseError("Lux WebRTC producer failed: " + exception.Message);
+                    await RunOnMainThreadAsync(() =>
+                    {
+                        DisposeWebRTCResources();
+                        webRtc.StopUpdatePump();
+                    }, CancellationToken.None);
+                    if (attempt >= MaximumStartAttempts)
+                    {
+                        RaiseError("Lux WebRTC producer startup stopped after " + MaximumStartAttempts + " attempts.");
+                        return;
+                    }
+
                     await Task.Delay(retryBackoffMilliseconds, cancellationToken);
                     retryBackoffMilliseconds = Math.Min(retryBackoffMilliseconds * 2, MaximumBackoffMilliseconds);
                 }
@@ -145,43 +162,17 @@ namespace Linalab.LuxEditor
 
         private async Task StartOnceAsync(string sessionId, string gatewayUrl, string token, CancellationToken cancellationToken)
         {
-            webRtc.Initialize();
-            var iceServers = await LuxRemoteSessionConfigClient.GetIceServersAsync(gatewayUrl, sessionId, token, cancellationToken);
-            peerConnection = webRtc.CreatePeerConnection(iceServers);
-            webRtc.OnIceCandidate(peerConnection, (candidate, sdpMid, sdpMLineIndex) =>
-            {
-                if (signaling != null)
-                {
-                    _ = signaling.SendIceCandidate(candidate, sdpMid, sdpMLineIndex);
-                }
-            });
-
-            videoTrack = webRtc.CaptureEditorCamera(LuxWebRTCSettings.Width, LuxWebRTCSettings.Height, LuxWebRTCSettings.FrameRate);
-            webRtc.AddTrack(peerConnection, videoTrack);
-
-            // As answerer, receive DataChannels created by the remote web client (offerer)
-            webRtc.OnDataChannel(peerConnection, channel =>
-            {
-                var label = webRtc.ReadDataChannelLabel(channel);
-                if (label == InputChannelLabel)
-                {
-                    inputDataChannel = channel;
-                    webRtc.OnDataChannelMessage(channel, json => inputReceiver.ReceiveJson(json));
-                }
-                else if (label == AiCommandChannelLabel)
-                {
-                    aiDataChannel = channel;
-                    webRtc.OnDataChannelMessage(channel, commandJson => _ = ForwardAiCommandAsync(commandJson, sessionId, cancellationToken));
-                }
-            });
+            iceServers = await LuxRemoteSessionConfigClient.GetIceServersAsync(gatewayUrl, sessionId, token, cancellationToken);
 
             eventsClient = eventsFactory();
-            await eventsClient.Connect(BuildEventsUrl(gatewayUrl), token, cancellationToken);
+            await eventsClient.Connect(BuildEventsUrl(gatewayUrl, token), token, cancellationToken);
 
             signaling = signalingFactory();
-            signaling.OnOfferReceived += sdp => _ = HandleOfferAsync(sdp, cancellationToken);
-            signaling.OnIceCandidateReceived += (candidate, sdpMid, sdpMLineIndex) => webRtc.AddIceCandidate(peerConnection, candidate, sdpMid, sdpMLineIndex);
-            await signaling.Connect(BuildSignalingUrl(gatewayUrl, sessionId), token, cancellationToken);
+            signaling.OnOfferReceived += sdp => ObserveTask(HandleOfferAsync(sdp, cancellationToken), "Lux WebRTC offer task failed");
+            signaling.OnIceCandidateReceived += (candidate, sdpMid, sdpMLineIndex) => ObserveTask(
+                RunOnMainThreadAsync(() => webRtc.AddIceCandidate(peerConnection, candidate, sdpMid, sdpMLineIndex), cancellationToken),
+                "Lux WebRTC ICE candidate receive failed");
+            await signaling.Connect(BuildSignalingUrl(gatewayUrl, sessionId, token), token, cancellationToken);
 
             IsStreaming = true;
             EditorApplication.delayCall += () => OnStreamStarted?.Invoke();
@@ -191,10 +182,15 @@ namespace Linalab.LuxEditor
         {
             try
             {
-                webRtc.SetRemoteDescription(peerConnection, "offer", sdp);
-                var answer = await webRtc.CreateAnswerAsync(peerConnection, cancellationToken);
-                webRtc.SetLocalDescription(peerConnection, "answer", answer);
-                if (signaling != null)
+                await EnsurePeerConnectionAsync(cancellationToken);
+                string answer = null;
+                await RunOnMainThreadAsync(async () =>
+                {
+                    await webRtc.SetRemoteDescriptionAsync(peerConnection, "offer", sdp);
+                    answer = await webRtc.CreateAnswerAsync(peerConnection, cancellationToken);
+                    await webRtc.SetLocalDescriptionAsync(peerConnection, "answer", answer);
+                }, cancellationToken);
+                if (signaling != null && !string.IsNullOrEmpty(answer))
                 {
                     await signaling.SendAnswer(answer);
                 }
@@ -203,6 +199,60 @@ namespace Linalab.LuxEditor
             {
                 RaiseError("Lux WebRTC offer handling failed: " + exception.Message);
             }
+        }
+
+        private Task EnsurePeerConnectionAsync(CancellationToken cancellationToken)
+        {
+            if (peerConnection != null)
+            {
+                return Task.FromResult(true);
+            }
+
+            return RunOnMainThreadAsync(() =>
+            {
+                var camera = Camera.main;
+                if (camera == null)
+                {
+                    camera = UnityEngine.Object.FindObjectOfType<Camera>();
+                }
+
+                if (camera == null)
+                {
+                    throw new InvalidOperationException("No Unity camera was found to capture for Lux WebRTC streaming.");
+                }
+
+                webRtc.Initialize();
+                webRtc.StartUpdatePump();
+                peerConnection = webRtc.CreatePeerConnection(iceServers);
+                webRtc.OnIceCandidate(peerConnection, (candidate, sdpMid, sdpMLineIndex) =>
+                {
+                    if (signaling != null)
+                    {
+                        ObserveTask(signaling.SendIceCandidate(candidate, sdpMid, sdpMLineIndex), "Lux WebRTC ICE candidate send failed");
+                    }
+                });
+
+                videoTrack = webRtc.CaptureEditorCamera(LuxWebRTCSettings.Width, LuxWebRTCSettings.Height, LuxWebRTCSettings.FrameRate);
+                webRtc.AddTrack(peerConnection, videoTrack);
+
+                webRtc.OnDataChannel(peerConnection, channel =>
+                {
+                    ObserveTask(RunOnMainThreadAsync(() =>
+                    {
+                        var label = webRtc.ReadDataChannelLabel(channel);
+                        if (label == InputChannelLabel)
+                        {
+                            inputDataChannel = channel;
+                            webRtc.OnDataChannelMessage(channel, json => inputReceiver.ReceiveJson(json));
+                        }
+                        else if (label == AiCommandChannelLabel)
+                        {
+                            aiDataChannel = channel;
+                            webRtc.OnDataChannelMessage(channel, commandJson => ObserveTask(ForwardAiCommandAsync(commandJson, SessionId, cancellationToken), "Lux WebRTC AI command forwarding failed"));
+                        }
+                    }, cancellationToken), "Lux WebRTC data channel setup failed");
+                });
+            }, cancellationToken);
         }
 
         private async Task ForwardAiCommandAsync(string commandJson, string sessionId, CancellationToken cancellationToken)
@@ -230,28 +280,155 @@ namespace Linalab.LuxEditor
 
         private void RaiseError(string message)
         {
-            Debug.LogWarning(message);
-            OnError?.Invoke(message);
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadId)
+            {
+                Debug.LogWarning(message);
+                OnError?.Invoke(message);
+                return;
+            }
+
+            EditorApplication.delayCall += () =>
+            {
+                Debug.LogWarning(message);
+                OnError?.Invoke(message);
+            };
         }
 
-        private static string BuildSignalingUrl(string gatewayUrl, string sessionId)
+        private Task RunOnMainThreadAsync(Action action, CancellationToken cancellationToken)
+        {
+            if (action == null)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadId)
+            {
+                action();
+                return Task.CompletedTask;
+            }
+
+            var completion = new TaskCompletionSource<object>();
+            EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    action();
+                    completion.TrySetResult(null);
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            };
+
+            return completion.Task;
+        }
+
+        private Task RunOnMainThreadAsync(Func<Task> asyncAction, CancellationToken cancellationToken)
+        {
+            if (asyncAction == null)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadId)
+            {
+                return asyncAction();
+            }
+
+            var completion = new TaskCompletionSource<object>();
+            EditorApplication.delayCall += async () =>
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await asyncAction();
+                    completion.TrySetResult(null);
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            };
+
+            return completion.Task;
+        }
+
+        private Task<T> RunOnMainThreadAsync<T>(Func<T> action, CancellationToken cancellationToken)
+        {
+            if (action == null)
+            {
+                throw new ArgumentNullException(nameof(action));
+            }
+
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadId)
+            {
+                return Task.FromResult(action());
+            }
+
+            var completion = new TaskCompletionSource<T>();
+            EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    completion.TrySetResult(action());
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            };
+
+            return completion.Task;
+        }
+
+        private void ObserveTask(Task task, string errorPrefix)
+        {
+            if (task == null)
+            {
+                return;
+            }
+
+            task.ContinueWith(completedTask =>
+            {
+                var exception = completedTask.Exception?.GetBaseException();
+                if (exception != null && !(exception is OperationCanceledException))
+                {
+                    RaiseError(errorPrefix + ": " + exception.Message);
+                }
+            }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        }
+
+        private static string BuildSignalingUrl(string gatewayUrl, string sessionId, string token)
         {
             var builder = new UriBuilder(gatewayUrl);
             builder.Scheme = builder.Scheme == "https" || builder.Scheme == "wss" ? "wss" : "ws";
             builder.Path = "/remote/signaling/" + Uri.EscapeDataString(sessionId);
-            builder.Query = "role=unity";
+            var query = "role=unity";
+            if (!string.IsNullOrEmpty(token))
+            {
+                query += "&token=" + Uri.EscapeDataString(token);
+            }
+            builder.Query = query;
             return builder.Uri.ToString();
         }
 
-        private static string BuildEventsUrl(string gatewayUrl)
+        private static string BuildEventsUrl(string gatewayUrl, string token)
         {
             var builder = new UriBuilder(gatewayUrl);
             builder.Scheme = builder.Scheme == "https" || builder.Scheme == "wss" ? "wss" : "ws";
             builder.Path = "/events";
-            builder.Query = "role=unity&client_id=lux-webrtc-producer";
+            var query = "role=unity&client_id=lux-webrtc-producer";
+            if (!string.IsNullOrEmpty(token))
+            {
+                query += "&token=" + Uri.EscapeDataString(token);
+            }
+            builder.Query = query;
             return builder.Uri.ToString();
         }
-    }
 
+    }
 
 }

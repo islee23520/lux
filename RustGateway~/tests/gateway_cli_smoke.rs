@@ -39,6 +39,10 @@ fn cli_server_starts_and_enforces_header_auth_and_origin_policy() {
     );
     assert_eq!(
         websocket_status(port, "/events?token=lux-cli-smoke-token", &[]),
+        101
+    );
+    assert_eq!(
+        websocket_status(port, "/events?token=wrong-token", &[]),
         401
     );
     assert_eq!(

@@ -1,0 +1,193 @@
+metadata:
+  name: lux-webrtc-live-e2e
+  version: "1.0.0"
+  author: sisyphus
+  created: "2026-05-04"
+  description: Verify LUX WebRTC live end-to-end streaming from Unity Editor to browser UI
+
+ambiguity_score: 0.0
+ambiguity_rationale: |
+  Scope, branch policy, Unity restart policy, known repo facts, hypotheses,
+  acceptance criteria, and explicit non-goals are user-confirmed. The lineage
+  must validate the specified WebRTC live path only and must fail fast if the
+  browser path or Playwright MCP is unreachable.
+
+goal: |
+  Deliver WebRTC E2E live streaming verified for LUX. The lineage finishes only
+  when Unity Editor's WebRTC producer streams real video frames over a peer
+  connection to a browser-rendered <video> in the Rust gateway UI, and
+  StopStreaming cleans up cleanly. Playwright MCP must drive
+  http://127.0.0.1:<port>/ui/ against the local Rust gateway, observe the
+  <video> element in RemoteViewer.tsx, and assert videoWidth > 0,
+  readyState >= 2, and a non-zero inbound-rtp bytesReceived from
+  pc.getStats(). The lineage fails if the browser path is unreachable.
+
+constraints:
+  - Stay on branch feature/webrtc-remote-access.
+  - Commit once per generation after that generation's acceptance checks pass.
+  - Push only after final acceptance using git push origin feature/webrtc-remote-access.
+  - Adopt or supersede existing uncommitted package work; do not lose it.
+  - Pending uncommitted files include Addons/webrtc/Editor/LuxWebRTCBackend.cs, Addons/webrtc/Editor/LuxWebRTCGatewayEventsClient.cs, Addons/webrtc/Editor/LuxWebRTCProducer.cs, Addons/webrtc/Editor/LuxWebRTCSignalingClient.cs, Addons/webrtc/Tests/Editor/LuxWebRTCProducerTests.cs, AiBridgeEditor/UnityAiBridgeTcpServer.cs, and LuxEditor/LuxSceneSmoke.cs.
+  - Use Axum 0.7 patterns in RustGateway~/src/server.rs; extend existing routes instead of replacing gateway structure.
+  - /events must retain x-lux-token header auth and add query-token fallback.
+  - /remote/signaling/:session_id already accepts x-lux-token or ?token= and must remain compatible.
+  - Origin validation must remain enforced for WebSocket upgrades.
+  - Unity policy allows auto-restart when bridge becomes unresponsive: kill the Editor pid for /Users/ilseoblee/workspace/linalab/neon-glitch, remove /Users/ilseoblee/workspace/linalab/neon-glitch/Library/UnityAiBridge/server.json, and reopen with open -a /Applications/Unity/Hub/Editor/6000.3.13f1/Unity.app --args -projectPath /Users/ilseoblee/workspace/linalab/neon-glitch.
+  - Active Unity build target during testing is WebGL.
+  - Define LUX_WEBRTC must be present in the WebGL NamedBuildTarget before addon assemblies are compiled; set it idempotently.
+  - Use lux serve --token <T> --idle-timeout <S> for fresh gateway runs.
+  - Use lux unity execute-dynamic-code --file <path> for Editor-side StartStreaming, StopStreaming, IsStreaming, and liveness probes.
+  - Use lux unity backend-status, lux unity status, lux compile, and Playwright MCP as required by acceptance criteria.
+  - Do not add mock or fallback data to API hooks.
+  - Do not add TURN server provisioning; keep STUN-only stun:stun.l.google.com:19302.
+  - Do not add audio tracks; video-only.
+  - Do not expand to multi-peer or multi-session.
+  - Do not implement iOS or PWA companion scope.
+  - Do not harden production auth beyond existing x-lux-token/query-token compatibility required for local WebSocket clients.
+  - Do not add as any, @ts-ignore, empty catch blocks, suppressed warnings, TODO/FIXME/HACK comments, or skipped tests.
+  - Do not delete or weaken existing tests in Addons/webrtc/Tests/Editor/LuxWebRTCProducerTests.cs.
+
+acceptance_criteria:
+  - "AC1. cargo test passes 100% in RustGateway~. Includes new test for /events query-token auth."
+  - "AC2. npx tsc --noEmit passes in RustGateway~/ui-src."
+  - "AC3. lux compile --project-path /Users/ilseoblee/workspace/linalab/neon-glitch returns ok: true, error_count: 0 against the live Editor."
+  - "AC4. After auto-restart-as-needed Unity flow, lux unity backend-status reports running: true."
+  - "AC5. Dynamic-code-driven StartStreaming produces a Unity log 'Lux WebRTC remote streaming starting for session <id>' AND within 15s producer.IsStreaming == true (queried via dynamic-code reading the static producer field)."
+  - "AC6. Bridge stays responsive after Start: a trivial execute-dynamic-code returning 'alive' succeeds within 3s, with no single_flight_busy or main_thread_dispatch_timeout."
+  - "AC7. Playwright MCP loads http://127.0.0.1:<gateway-port>/ui/, finds the existing session for the running stream, calls Connect, and within 30s the <video> reports readyState >= 2 AND videoWidth > 0 AND pc.getStats() shows an inbound-rtp report with bytesReceived > 0."
+  - "AC8. StopStreaming returns 'stopped', producer.IsStreaming == false, video element srcObject is null in the browser, and bridge remains responsive."
+  - "AC9. C# LSP diagnostics on every changed file are clean."
+  - "AC10. Existing tests in Addons/webrtc/Tests/Editor/LuxWebRTCProducerTests.cs still pass; if signature changes, tests are updated, NOT deleted."
+  - "AC11. No 'as any', @ts-ignore, empty catch blocks, suppressed warnings, TODO/FIXME/HACK, or skipped tests added by the lineage."
+  - "AC12. git push origin feature/webrtc-remote-access succeeds at the end. All commits on this branch only."
+
+ontology_schema:
+  name: LuxWebRTCLiveE2E
+  description: Represents end-to-end WebRTC live streaming readiness from Unity Editor producer to browser RemoteViewer
+  fields:
+    - name: events_auth_query_token
+      type: boolean
+      description: Whether /events accepts valid query-token auth and rejects missing or invalid tokens
+    - name: unity_events_url_uses_query_token
+      type: boolean
+      description: Whether Unity events WebSocket URL includes an encoded token query parameter
+    - name: update_pump_active
+      type: boolean
+      description: Whether Unity.WebRTC update pump runs for the lifetime of an active producer
+    - name: capture_stream_reflection_valid
+      type: boolean
+      description: Whether CameraExtension.CaptureStream reflection resolves supported overloads
+    - name: unity_bridge_responsive
+      type: boolean
+      description: Whether live Unity bridge commands remain responsive before, during, and after streaming
+    - name: browser_video_ready
+      type: boolean
+      description: Whether RemoteViewer video has readyState >= 2 and videoWidth > 0
+    - name: inbound_rtp_bytes_received
+      type: boolean
+      description: Whether browser RTCPeerConnection stats report inbound-rtp bytesReceived > 0
+    - name: stop_streaming_clean
+      type: boolean
+      description: Whether StopStreaming resets producer state, clears browser srcObject, and preserves bridge liveness
+    - name: tests_passing
+      type: boolean
+      description: Whether Rust, TypeScript, C# diagnostics, and WebRTC tests pass
+    - name: pushed_to_remote
+      type: boolean
+      description: Whether final accepted branch was pushed to origin feature/webrtc-remote-access
+
+evaluation_principles:
+  - name: real_e2e_video
+    description: Browser must receive real video frames from Unity over WebRTC, not simulated state
+    weight: 0.35
+  - name: deterministic_verification
+    description: Playwright MCP and dynamic-code assertions must be explicit, timed, and fail fast
+    weight: 0.2
+  - name: auth_compatibility
+    description: WebSocket auth must work with Unity Mono and preserve existing token/origin behavior
+    weight: 0.15
+  - name: cleanup_reliability
+    description: StopStreaming must release Unity and browser resources and preserve bridge responsiveness
+    weight: 0.15
+  - name: no_regressions
+    description: Existing tests, C# diagnostics, TypeScript strict checks, and Rust tests must remain clean
+    weight: 0.15
+
+exit_conditions:
+  - name: e2e_video_confirmed
+    description: Playwright observes video readyState >= 2, videoWidth > 0, and inbound-rtp bytesReceived > 0
+    criteria: browser_video_ready equals true and inbound_rtp_bytes_received equals true
+  - name: stop_cleanup_confirmed
+    description: StopStreaming returns stopped, producer IsStreaming is false, browser srcObject is null, and bridge remains alive
+    criteria: stop_streaming_clean equals true
+  - name: verification_complete
+    description: cargo test, npx tsc --noEmit, lux compile, C# LSP diagnostics, and WebRTC tests are clean
+    criteria: tests_passing equals true
+  - name: branch_published
+    description: Final accepted commits are pushed to the feature branch
+    criteria: pushed_to_remote equals true
+  - name: max_iterations
+    description: Safety exit
+    criteria: total_iterations >= 5
+
+project_type: brownfield
+
+context_references:
+  - path: AGENTS.md
+    role: primary
+    summary: LUX repository conventions, Unity/Rust/TypeScript rules, and verification commands
+  - path: RustGateway~/src/server.rs
+    role: primary
+    summary: Axum gateway routes, /events WebSocket auth, /remote/signaling query-token pattern, and Rust tests
+  - path: RustGateway~/ui-src/src/hooks/useWebRTC.ts
+    role: primary
+    summary: Browser WebRTC connection, signaling WebSocket, ICE config fetch, and RTCPeerConnection lifecycle
+  - path: RustGateway~/ui-src/src/components/RemoteViewer.tsx
+    role: primary
+    summary: Browser-rendered video element and remote input surface
+  - path: Addons/webrtc/Editor/LuxWebRTCProducer.cs
+    role: primary
+    summary: Unity WebRTC producer lifecycle, lazy peer setup, Start/Stop, and event forwarding
+  - path: Addons/webrtc/Editor/LuxWebRTCGatewayEventsClient.cs
+    role: primary
+    summary: Unity /events WebSocket client and Mono ClientWebSocket auth behavior
+  - path: Addons/webrtc/Editor/LuxWebRTCBackend.cs
+    role: primary
+    summary: Reflection backend, Unity.WebRTC update pump, CameraExtension.CaptureStream lookup
+  - path: Addons/webrtc/Editor/LuxWebRTCSignalingClient.cs
+    role: reference
+    summary: Unity signaling client and token-bearing WebSocket transport
+  - path: Addons/webrtc/Editor/LuxWebRTCProducerIntegration.cs
+    role: primary
+    summary: Menu-driven StartStreaming and StopStreaming static producer integration
+  - path: Addons/webrtc/Tests/Editor/LuxWebRTCProducerTests.cs
+    role: primary
+    summary: Existing NUnit test patterns for producer behavior
+  - path: docs/references/unity-cli-loop.md
+    role: reference
+    summary: Unity CLI loop and live Editor command verification patterns
+  - path: docs/scenarios/testing.md
+    role: reference
+    summary: Testing checklist and freeze-prevention practices
+
+existing_patterns:
+  - Rust gateway uses Axum 0.7, tokio, serde, and tower tests in RustGateway~/src/server.rs.
+  - Signaling WebSocket already accepts x-lux-token header or query token.
+  - /events currently accepts only x-lux-token and should mirror signaling auth compatibility.
+  - Browser useWebRTC stores token in localStorage.lux-gateway-token and connects to signaling with role=web&token=...
+  - RemoteViewer renders the video element and auto-connects when mounted.
+  - Unity producer lazy-initializes the peer connection after browser SDP offer.
+  - Unity WebRTC reflection backend starts EditorApplication.update pump for WebRTC.Update.
+  - WebRTC addon tests use NUnit [Test] in Addons/webrtc/Tests/Editor.
+  - C# namespace is Linalab.LuxEditor for WebRTC addon code in this branch.
+  - No TODO/FIXME/HACK comments are allowed.
+
+existing_dependencies:
+  - Unity Editor 6000.3.13f1
+  - Unity project path /Users/ilseoblee/workspace/linalab/neon-glitch
+  - Package working dir /Users/ilseoblee/workspace/linalab/neon-glitch/Packages/com.linalab.lux
+  - RustGateway Axum 0.7 and tokio 1
+  - React 19 and TypeScript strict in RustGateway~/ui-src
+  - com.unity.webrtc 3.0.0 optional addon dependency
+  - Playwright MCP for browser E2E proof
+  - STUN server stun:stun.l.google.com:19302

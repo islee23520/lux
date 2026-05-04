@@ -44,7 +44,7 @@ namespace Linalab.LuxEditor
             cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             socket = socketFactory();
             await socket.ConnectAsync(new Uri(url), token, cancellation.Token);
-            _ = ReceiveLoopAsync(cancellation.Token);
+            ObserveTask(ReceiveLoopAsync(cancellation.Token), "Lux WebRTC signaling receive loop failed");
         }
 
         public Task SendOffer(string sdp)
@@ -116,6 +116,23 @@ namespace Linalab.LuxEditor
                         LuxWebRTCJson.ExtractInt(payload, "sdpMLineIndex"));
                 }
             }
+        }
+
+        private static void ObserveTask(Task task, string errorPrefix)
+        {
+            if (task == null)
+            {
+                return;
+            }
+
+            task.ContinueWith(completedTask =>
+            {
+                var exception = completedTask.Exception?.GetBaseException();
+                if (exception != null && !(exception is OperationCanceledException))
+                {
+                    Debug.LogWarning(errorPrefix + ": " + exception.Message);
+                }
+            }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
     }
 }

@@ -289,6 +289,165 @@ namespace Linalab.Lux.Editor
             return CreateAutomationResponse(request.requestId, result);
         }
 
+
+        static UnityAiBridgeProtocolResponse CompileLuxProject(UnityAiBridgeProtocolRequest request)
+        {
+            var success = false;
+            var errorCount = 0;
+            var message = string.Empty;
+
+            try
+            {
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                success = !EditorUtility.scriptCompilationFailed;
+                errorCount = CountCompilerErrors();
+                if (errorCount > 0)
+                {
+                    success = false;
+                }
+                else if (!success)
+                {
+                    UnityEngine.Debug.LogWarning("LuxAutomationGateway: scriptCompilationFailed is true but no compiler errors found in console logs.");
+                }
+                message = success
+                    ? "Compilation succeeded."
+                    : $"Script compilation failed with {errorCount} error(s). Check Unity console for details.";
+            }
+            catch (Exception exception)
+            {
+                success = false;
+                message = $"Compilation threw an exception: {exception.Message}";
+            }
+
+            return UnityAiBridgeProtocol.CreateOkResponse(
+                request.requestId,
+                new UnityAiBridgeProtocolResponsePayload
+                {
+                    compileResult = new UnityAiBridgeCompileResultPayload
+                    {
+                        ok = success,
+                        error_count = errorCount,
+                        message = message,
+                        timestamp_utc = DateTime.UtcNow.ToString("O")
+                    }
+                });
+        }
+
+        static int CountCompilerErrors()
+        {
+            var count = 0;
+            foreach (var log in LuxUnityContext.GetRecentLogsSnapshot())
+            {
+                if (!string.Equals(log.Type, "Error", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (LuxCompileEventBroadcaster.CompilerErrorPattern.Match(log.Message).Success
+                    || LuxCompileEventBroadcaster.CompilerErrorPattern.Match(log.StackTrace).Success)
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        static UnityAiBridgeProtocolResponse RunLuxTests(UnityAiBridgeProtocolRequest request)
+        {
+            var parameters = request.@params ?? new UnityAiBridgeProtocolRequestParameters();
+            var testPlatform = string.IsNullOrWhiteSpace(parameters.testPlatform) ? "EditMode" : parameters.testPlatform;
+
+            try
+            {
+                var testId = StartLuxTestRun(testPlatform);
+                return UnityAiBridgeProtocol.CreateOkResponse(
+                    request.requestId,
+                    new UnityAiBridgeProtocolResponsePayload
+                    {
+                        testRunResult = new UnityAiBridgeTestRunResultPayload
+                        {
+                            ok = true,
+                            status = "started",
+                            testId = testId,
+                            testPlatform = testPlatform,
+                            testResults = parameters.testResults,
+                            message = "Unity Test Runner started."
+                        }
+                    });
+            }
+            catch (Exception exception)
+            {
+                return UnityAiBridgeProtocol.CreateErrorResponse(
+                    request.requestId,
+                    UnityAiBridgeProtocol.ErrorCodeInvalidParams,
+                    $"Failed to start Unity Test Runner: {exception.Message}");
+            }
+        }
+
+        static string StartLuxTestRun(string testPlatform)
+        {
+            var apiType = FindLuxEditorType("UnityEditor.TestTools.TestRunner.Api.TestRunnerApi");
+            var filterType = FindLuxEditorType("UnityEditor.TestTools.TestRunner.Api.Filter");
+            var settingsType = FindLuxEditorType("UnityEditor.TestTools.TestRunner.Api.ExecutionSettings");
+            var testModeType = FindLuxEditorType("UnityEditor.TestTools.TestRunner.Api.TestMode");
+            if (apiType == null || filterType == null || settingsType == null || testModeType == null)
+            {
+                throw new InvalidOperationException("Unity Test Runner API is not available in this Editor session.");
+            }
+
+            var normalizedPlatform = string.Equals(testPlatform, "PlayMode", StringComparison.OrdinalIgnoreCase)
+                ? "PlayMode"
+                : "EditMode";
+            var filter = Activator.CreateInstance(filterType);
+            var testMode = Enum.Parse(testModeType, normalizedPlatform);
+            filterType.GetField("testMode")?.SetValue(filter, testMode);
+            filterType.GetProperty("testMode")?.SetValue(filter, testMode, null);
+
+            var settings = CreateLuxTestExecutionSettings(settingsType, filterType, filter);
+            var api = Activator.CreateInstance(apiType);
+            var executeMethod = apiType.GetMethod("Execute", new[] { settingsType });
+            if (executeMethod == null)
+            {
+                throw new InvalidOperationException("Unity Test Runner Execute method was not found.");
+            }
+
+            var result = executeMethod.Invoke(api, new[] { settings });
+            return string.IsNullOrWhiteSpace(result?.ToString()) ? Guid.NewGuid().ToString("N") : result.ToString();
+        }
+
+        static object CreateLuxTestExecutionSettings(Type settingsType, Type filterType, object filter)
+        {
+            foreach (var constructor in settingsType.GetConstructors())
+            {
+                var parameters = constructor.GetParameters();
+                if (parameters.Length != 1)
+                {
+                    continue;
+                }
+
+                if (parameters[0].ParameterType == filterType)
+                {
+                    return constructor.Invoke(new[] { filter });
+                }
+
+                if (parameters[0].ParameterType.IsArray && parameters[0].ParameterType.GetElementType() == filterType)
+                {
+                    var filters = Array.CreateInstance(filterType, 1);
+                    filters.SetValue(filter, 0);
+                    return constructor.Invoke(new object[] { filters });
+                }
+            }
+
+            throw new InvalidOperationException("Unity Test Runner ExecutionSettings constructor was not found.");
+        }
+
+        static Type FindLuxEditorType(string fullName)
+        {
+            return AppDomain.CurrentDomain
+                .GetAssemblies()
+                .Select(assembly => assembly.GetType(fullName, false))
+                .FirstOrDefault(type => type != null);
+        }
     }
 
 

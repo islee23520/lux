@@ -2573,6 +2573,110 @@ fn print_lux_unity_status(args: UnityStatusArgs) -> anyhow::Result<()> {
 
 fn run_batch_compile(args: CompileArgs) -> anyhow::Result<()> {
     let project_root = resolve_project_root(&args.project_path)?;
+
+    if let Ok(discovery) = read_unity_bridge_discovery(&project_root) {
+        // Try dedicated compile command first
+        let request = json!({
+            "schemaVersion": 1,
+            "requestId": uuid::Uuid::new_v4().to_string(),
+            "command": "compile_lux_project",
+            "token": discovery.token,
+            "params": {}
+        });
+        match send_unity_tcp_line(
+            &discovery,
+            &format!("{}\n", serde_json::to_string(&request)?),
+        ) {
+            Ok(response) => {
+                let response_json: Value = serde_json::from_str(&response)
+                    .context("compile TCP response was not valid JSON")?;
+                // If command is registered, use its result
+                if response_json.get("errorCode").and_then(Value::as_str) != Some("unknown_command")
+                {
+                    let compile_ok = response_json.get("ok").and_then(Value::as_bool) == Some(true);
+                    if let Some(payload) = response_json
+                        .get("payload")
+                        .and_then(|payload| payload.get("compileResult"))
+                    {
+                        println!("{}", serde_json::to_string_pretty(payload)?);
+                        if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+                            std::process::exit(1);
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&response_json)?);
+                    }
+                    if !compile_ok {
+                        std::process::exit(1);
+                    }
+                    return Ok(());
+                }
+                // compile_lux_project not registered — fall through to dynamic code
+                eprintln!(
+                    "compile_lux_project not registered, trying execute-dynamic-code fallback..."
+                );
+            }
+            Err(error) => {
+                eprintln!("Live Unity Editor compile failed to connect, falling back to batch mode: {error}");
+            }
+        }
+
+        // Fallback: use execute-dynamic-code to compile in live Editor
+        let compile_code = "UnityEngine.Debug.Log(\"LUX compile fallback: counting errors from console\"); UnityEditor.AssetDatabase.Refresh(UnityEditor.ImportAssetOptions.ForceUpdate); var errorCount = 0; foreach (var log in Linalab.Lux.Editor.LuxUnityContext.GetRecentLogsSnapshot()) { if (string.Equals(log.Type, \"Error\", System.StringComparison.OrdinalIgnoreCase)) { errorCount++; } } var ok = !UnityEditor.EditorUtility.scriptCompilationFailed && errorCount == 0; return new { ok, error_count = errorCount, message = ok ? \"Compilation succeeded.\" : $\"Script compilation failed with {errorCount} error(s).\", timestamp_utc = System.DateTime.UtcNow.ToString(\"O\") };";
+        let dynamic_request = json!({
+            "schemaVersion": 1,
+            "requestId": uuid::Uuid::new_v4().to_string(),
+            "command": "execute_lux_dynamic_code",
+            "token": discovery.token,
+            "params": { "dynamicCode": compile_code }
+        });
+        match send_unity_tcp_line(
+            &discovery,
+            &format!("{}\n", serde_json::to_string(&dynamic_request)?),
+        ) {
+            Ok(response) => {
+                let response_json: Value = serde_json::from_str(&response)
+                    .context("dynamic code compile response was not valid JSON")?;
+                let compile_ok = response_json.get("ok").and_then(Value::as_bool) == Some(true);
+                if let Some(payload) = response_json
+                    .get("payload")
+                    .and_then(|p| p.get("dynamicCodeResult"))
+                {
+                    let _success = payload
+                        .get("success")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let result_str = payload.get("result").and_then(Value::as_str).unwrap_or("");
+                    let ok = result_str.contains("ok = True") || result_str.contains("ok=True");
+                    println!(
+                        "{{\"ok\": {}, \"message\": \"{}\", \"source\": \"dynamic-code\"}}",
+                        ok,
+                        if ok {
+                            "Compilation succeeded."
+                        } else {
+                            "Script compilation failed. Check Unity console for errors."
+                        }
+                    );
+                    if !ok {
+                        std::process::exit(1);
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&response_json)?);
+                }
+                if !compile_ok {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!(
+                    "Dynamic code compile also failed: {error}, falling back to batch mode..."
+                );
+            }
+        }
+    } else {
+        eprintln!("No live Unity Editor detected, falling back to batch mode...");
+    }
+
     let launch_target = resolve_unity_launch_target(&project_root)?;
 
     eprintln!(

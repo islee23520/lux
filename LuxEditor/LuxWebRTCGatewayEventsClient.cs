@@ -60,6 +60,7 @@ namespace Linalab.LuxEditor
 
     internal sealed class LuxClientWebSocketTransport : ILuxWebSocketClient
     {
+        private const int ConnectTimeoutMilliseconds = 5000;
         private readonly ClientWebSocket webSocket = new ClientWebSocket();
 
         public bool IsConnected => webSocket.State == WebSocketState.Open;
@@ -71,7 +72,11 @@ namespace Linalab.LuxEditor
                 webSocket.Options.SetRequestHeader("x-lux-token", token);
             }
 
-            await webSocket.ConnectAsync(uri, cancellationToken);
+            using (var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                connectCancellation.CancelAfter(ConnectTimeoutMilliseconds);
+                await webSocket.ConnectAsync(uri, connectCancellation.Token);
+            }
         }
 
         public async Task<string> ReceiveTextAsync(CancellationToken cancellationToken)
