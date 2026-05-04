@@ -8,7 +8,7 @@ namespace Linalab.UnityAiBridge.Editor
 {
     public static class UnityAiBridge
     {
-        public const string DefaultContextDirectory = ".ai-context";
+        public const string DefaultContextDirectory = ".lux/context";
         public const string DefaultContextFileName = "unity-context.json";
 
         public static UnityAiContext CaptureContext(AiToolKind toolKind)
