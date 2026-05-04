@@ -7,6 +7,7 @@ import { NodeEditor } from './components/NodeEditor'
 import type { ConnectionState, LuxEventEnvelope, ViewMode } from './types'
 import { SessionManager } from './components/SessionManager'
 import { RemoteViewer } from './components/RemoteViewer'
+import { AITimeline } from './components/AITimeline'
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>('nodes')
   const [events, setEvents] = useState<LuxEventEnvelope[]>([])
@@ -37,6 +38,9 @@ function App() {
         <button className={activeView === 'remote' ? 'active' : ''} onClick={() => setActiveView('remote')}>
           Remote
         </button>
+        <button className={activeView === 'timeline' ? 'active' : ''} onClick={() => setActiveView('timeline')}>
+          Timeline
+        </button>
       </nav>
 
       <section className="workspace-card">
@@ -55,6 +59,9 @@ function App() {
           ) : (
             <SessionManager onSessionSelect={setActiveSessionId} />
           )
+        )}
+        {activeView === 'timeline' && (
+          <AITimeline />
         )}
       </section>
     </main>
