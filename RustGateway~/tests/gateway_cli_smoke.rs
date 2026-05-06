@@ -1,9 +1,9 @@
 use serde_json::Value;
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    os::unix::fs::PermissionsExt,
     path::Path,
     process::{Child, Command, Stdio},
     thread,
@@ -14,6 +14,13 @@ const TOKEN: &str = "lux-cli-smoke-token";
 
 struct GatewayProcess {
     child: Child,
+}
+
+#[test]
+fn cli_help_shows_correctly_on_all_platforms() {
+    assert_command_help_contains(&["--help"], "Lux CLI");
+    assert_command_help_contains(&["screenshot", "--help"], "--baseline");
+    assert_command_help_contains(&["screenshot", "--help"], "--compare");
 }
 
 impl Drop for GatewayProcess {
@@ -66,11 +73,13 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
     assert_command_help_contains(&["run-tests", "--help"], "--test-platform");
     assert_command_help_contains(&["run-tests", "--help"], "--test-results");
     assert_command_help_contains(&["run-tests", "--help"], "--log-file");
+    assert_command_help_contains(&["screenshot", "--help"], "--project-path");
     assert_command_help_contains(&["ai-log", "recent", "--help"], "--project-path");
     assert_command_help_contains(&["ai-log", "recent", "--help"], "--event-type");
     assert_command_help_contains(&["ai-log", "tail", "--help"], "--follow");
     assert_command_help_contains(&["ai-log", "context", "--help"], "--json");
     assert_command_help_contains(&["ai-log", "compact", "--help"], "--max-lines");
+    assert_command_help_contains(&["ai-log", "work-step", "--help"], "--name");
     assert_command_help_contains(&["unity", "status", "--help"], "--project-path");
     assert_command_help_contains(&["unity", "context", "--help"], "--refresh");
     assert_command_help_contains(&["unity", "backend-status", "--help"], "--project-path");
@@ -221,6 +230,56 @@ fn ai_log_tail_follow_prints_snapshot_and_exits() {
     assert_eq!(parsed["follow"], true);
     assert_eq!(parsed["count"], 1);
     assert_eq!(parsed["entries"][0]["value"]["summary"], "opencode review");
+}
+
+#[test]
+fn lux_ai_log_work_step_writes_and_reads_back() {
+    let project_root = create_temp_dir("lux-ai-log-work-step").join("Project");
+    fs::create_dir_all(&project_root).expect("create project root");
+
+    let write = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "ai-log",
+            "work-step",
+            "--name",
+            "compile",
+            "--status",
+            "completed",
+            "--tool",
+            "opencode",
+            "--action",
+            "compile",
+            "--summary",
+            "cargo build completed",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux ai-log work-step");
+    assert_command_success(&write, "lux ai-log work-step");
+
+    let recent = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "ai-log",
+            "recent",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--limit",
+            "1",
+            "--json",
+        ])
+        .output()
+        .expect("run lux ai-log recent after work-step");
+    assert_command_success(&recent, "lux ai-log recent after work-step");
+
+    let parsed: Value = serde_json::from_slice(&recent.stdout).expect("recent JSON");
+    assert_eq!(parsed["count"], 1);
+    let value = &parsed["entries"][0]["value"];
+    assert_eq!(value["stepName"], "compile");
+    assert_eq!(value["status"], "completed");
+    assert_eq!(value["tool"], "opencode");
+    assert_eq!(value["action"], "compile");
+    assert_eq!(value["summary"], "cargo build completed");
 }
 
 #[test]
@@ -2518,4 +2577,581 @@ fn request_status(port: u16, path: &str, headers: &[(&str, &str)]) -> Option<u16
         .nth(1)?
         .parse()
         .ok()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 AC7: Project-adapting skill smoke tests
+// ---------------------------------------------------------------------------
+
+/// Helper: create a Unity project with URP and ProjectVersion.txt
+fn create_test_unity_project_with_urp(prefix: &str) -> std::path::PathBuf {
+    let project = create_temp_dir(prefix);
+    fs::create_dir_all(project.join("Assets")).expect("create Assets dir");
+    fs::create_dir_all(project.join("ProjectSettings")).expect("create ProjectSettings dir");
+    fs::create_dir_all(project.join("Packages")).expect("create Packages dir");
+
+    // ProjectVersion.txt for Unity version detection
+    fs::write(
+        project.join("ProjectSettings/ProjectVersion.txt"),
+        "m_EditorVersion: 2022.3.20f1\nm_EditorVersionWithRevision: 2022.3.20f1\n",
+    )
+    .expect("write ProjectVersion.txt");
+
+    // Packages/manifest.json with URP + LUX
+    let manifest = serde_json::json!({
+        "dependencies": {
+            "com.unity.render-pipelines.universal": "14.0.8",
+            "com.linalab.lux": "file:Packages/com.linalab.lux",
+            "com.unity.textmeshpro": "3.0.6"
+        }
+    });
+    fs::write(
+        project.join("Packages/manifest.json"),
+        serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write Packages/manifest.json");
+
+    project
+}
+
+/// Helper: create a skill source with compatibility + slimming metadata
+fn create_test_skill_source_with_compatibility(name: &str) -> std::path::PathBuf {
+    let source = create_temp_dir(&format!("lux-skill-compat-{name}"));
+    let manifest = serde_json::json!({
+        "name": name,
+        "version": "0.2.0",
+        "description": "Compatibility test skill",
+        "displayName": "Compat Test Skill",
+        "luxVersion": "0.1.0",
+        "author": { "name": "Lux Tests" },
+        "keywords": ["compat"],
+        "type": "test",
+        "source": source.display().to_string(),
+        "requiredPackages": ["com.unity.render-pipelines.universal"],
+        "compatibleRenderPipelines": ["urp"],
+        "contextSlimRules": {
+            "maxReferences": 5,
+            "maxSkillMdLines": 100,
+            "excludeTags": ["hdrp-only", "advanced"]
+        }
+    });
+    fs::write(
+        source.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write compat skill manifest");
+
+    // SKILL.md with known line count
+    let skill_md = "# Compat Skill\n\nLine 3.\nLine 4.\nLine 5.\n";
+    fs::write(source.join("SKILL.md"), skill_md).expect("write SKILL.md");
+
+    // references with tagged files
+    let references = source.join("references");
+    fs::create_dir_all(&references).expect("create references dir");
+    fs::write(references.join("usage.md"), "# Usage\n").expect("write usage ref");
+    fs::write(references.join("getting-started.md"), "# Getting Started\n")
+        .expect("write getting-started ref");
+    fs::write(
+        references.join("hdrp-only-post-processing.md"),
+        "# HDRP Post FX\n",
+    )
+    .expect("write hdrp-only ref");
+    fs::write(
+        references.join("advanced-shaders.md"),
+        "# Advanced Shaders\n",
+    )
+    .expect("write advanced ref");
+
+    source
+}
+
+/// Helper: create a skill source that requires HDRP (incompatible with URP project)
+fn create_test_skill_source_hdrp_only(name: &str) -> std::path::PathBuf {
+    let source = create_temp_dir(&format!("lux-skill-hdrp-{name}"));
+    let manifest = serde_json::json!({
+        "name": name,
+        "version": "0.1.0",
+        "description": "HDRP-only test skill",
+        "displayName": "HDRP Test Skill",
+        "luxVersion": "0.1.0",
+        "author": { "name": "Lux Tests" },
+        "keywords": ["hdrp"],
+        "type": "test",
+        "source": source.display().to_string(),
+        "compatibleRenderPipelines": ["hdrp"]
+    });
+    fs::write(
+        source.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write hdrp skill manifest");
+    fs::write(source.join("SKILL.md"), "# HDRP Skill\n\nHDRP only.\n").expect("write SKILL.md");
+    let references = source.join("references");
+    fs::create_dir_all(&references).expect("create references dir");
+    fs::write(references.join("usage.md"), "# Usage\n").expect("write usage ref");
+    source
+}
+
+/// Helper: create a skill source that requires a missing package
+fn create_test_skill_source_missing_pkg(name: &str) -> std::path::PathBuf {
+    let source = create_temp_dir(&format!("lux-skill-misspkg-{name}"));
+    let manifest = serde_json::json!({
+        "name": name,
+        "version": "0.1.0",
+        "description": "Missing package test skill",
+        "displayName": "Missing Pkg Skill",
+        "luxVersion": "0.1.0",
+        "author": { "name": "Lux Tests" },
+        "keywords": ["missing"],
+        "type": "test",
+        "source": source.display().to_string(),
+        "requiredPackages": ["com.unity.does-not-exist", "com.unity.render-pipelines.universal"]
+    });
+    fs::write(
+        source.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write missing-pkg skill manifest");
+    fs::write(
+        source.join("SKILL.md"),
+        "# Missing Pkg Skill\n\nNeeds phantom package.\n",
+    )
+    .expect("write SKILL.md");
+    let references = source.join("references");
+    fs::create_dir_all(&references).expect("create references dir");
+    fs::write(references.join("usage.md"), "# Usage\n").expect("write usage ref");
+    source
+}
+
+#[test]
+fn skill_install_adapt_detects_project_metadata() {
+    let home = create_temp_dir("lux-adapt-meta-home");
+    let project = create_test_unity_project_with_urp("lux-adapt-meta-project");
+    let source = create_test_skill_source_with_compatibility("smoke-meta-skill");
+
+    let install = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-meta-skill",
+            "--source",
+            source.to_str().expect("source path"),
+            "--project",
+            "--adapt",
+            "--json",
+        ])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install --adapt with URP project");
+
+    assert_command_success(&install, "lux skill install --adapt metadata");
+    let json: Value = serde_json::from_slice(&install.stdout).expect("install JSON");
+
+    // Verify adaptation metadata
+    assert_eq!(json["adapted"], true);
+
+    // Verify project metadata detection
+    let pm = &json["adaptation_metadata"]["project_metadata"];
+    assert_eq!(
+        pm["unity_version"].as_str().expect("unity version"),
+        "2022.3.20f1"
+    );
+    assert_eq!(
+        pm["render_pipeline"].as_str().expect("render pipeline"),
+        "urp"
+    );
+    assert!(pm["has_lux_package"].as_bool().expect("has lux"));
+
+    // Verify URP package was detected in installed_packages
+    let installed = pm["installed_packages"]
+        .as_array()
+        .expect("installed packages");
+    let pkg_names: Vec<&str> = installed.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        pkg_names.contains(&"com.unity.render-pipelines.universal"),
+        "URP package should be detected: {pkg_names:?}"
+    );
+}
+
+#[test]
+fn skill_install_adapt_context_slimming_filters_references() {
+    let home = create_temp_dir("lux-adapt-slim-home");
+    let project = create_test_unity_project_with_urp("lux-adapt-slim-project");
+    let source = create_test_skill_source_with_compatibility("smoke-slim-skill");
+
+    let install = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-slim-skill",
+            "--source",
+            source.to_str().expect("source path"),
+            "--project",
+            "--adapt",
+            "--json",
+        ])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install --adapt slimming");
+
+    assert_command_success(&install, "lux skill install --adapt slimming");
+    let json: Value = serde_json::from_slice(&install.stdout).expect("install JSON");
+    let slim = &json["adaptation_metadata"]["context_slimming"];
+
+    // 4 references total: usage.md, getting-started.md, hdrp-only-post-processing.md, advanced-shaders.md
+    assert_eq!(slim["total_references"], 4);
+
+    // hdrp-only-post-processing.md and advanced-shaders.md should be excluded
+    let excluded = slim["excluded_references"]
+        .as_array()
+        .expect("excluded refs");
+    let excluded_names: Vec<&str> = excluded.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        excluded_names.contains(&"hdrp-only-post-processing.md"),
+        "hdrp-only reference should be excluded: {excluded_names:?}"
+    );
+    assert!(
+        excluded_names.contains(&"advanced-shaders.md"),
+        "advanced reference should be excluded: {excluded_names:?}"
+    );
+
+    // usage.md and getting-started.md should remain included
+    let included = slim["included_references"]
+        .as_array()
+        .expect("included refs");
+    let included_names: Vec<&str> = included.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        included_names.contains(&"usage.md"),
+        "usage.md should be included: {included_names:?}"
+    );
+    assert!(
+        included_names.contains(&"getting-started.md"),
+        "getting-started.md should be included: {included_names:?}"
+    );
+
+    // slimmed_references = 2 (only usage + getting-started after filtering)
+    assert_eq!(slim["slimmed_references"], 2);
+}
+
+#[test]
+fn skill_install_adapt_render_pipeline_incompatible_exits_1() {
+    let home = create_temp_dir("lux-adapt-pipeline-home");
+    let project = create_test_unity_project_with_urp("lux-adapt-pipeline-project");
+    let source = create_test_skill_source_hdrp_only("smoke-hdrp-skill");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-hdrp-skill",
+            "--source",
+            source.to_str().expect("source path"),
+            "--project",
+            "--adapt",
+            "--json",
+        ])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install --adapt pipeline incompatible");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("error JSON");
+    assert_eq!(parsed["installed"], false);
+    let error_msg = parsed["error"].as_str().expect("error string");
+    assert!(
+        error_msg.contains("incompatible"),
+        "error should mention incompatibility: {error_msg}"
+    );
+    assert!(
+        error_msg.contains("render pipeline") || error_msg.contains("hdrp"),
+        "error should mention render pipeline mismatch: {error_msg}"
+    );
+}
+
+#[test]
+fn skill_install_adapt_missing_required_packages_exits_1() {
+    let home = create_temp_dir("lux-adapt-misspkg-home");
+    let project = create_test_unity_project_with_urp("lux-adapt-misspkg-project");
+    let source = create_test_skill_source_missing_pkg("smoke-misspkg-skill");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "skill",
+            "install",
+            "smoke-misspkg-skill",
+            "--source",
+            source.to_str().expect("source path"),
+            "--project",
+            "--adapt",
+            "--json",
+        ])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .output()
+        .expect("run lux skill install --adapt missing package");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("error JSON");
+    assert_eq!(parsed["installed"], false);
+    let error_msg = parsed["error"].as_str().expect("error string");
+    assert!(
+        error_msg.contains("missing required packages"),
+        "error should mention missing packages: {error_msg}"
+    );
+    assert!(
+        error_msg.contains("com.unity.does-not-exist"),
+        "error should name the missing package: {error_msg}"
+    );
+}
+
+fn create_session_project(prefix: &str) -> std::path::PathBuf {
+    let project_root = create_temp_dir(prefix);
+    let assets = project_root.join("Assets");
+    let settings = project_root.join("ProjectSettings");
+    fs::create_dir_all(&assets).expect("create Assets");
+    fs::create_dir_all(&settings).expect("create ProjectSettings");
+    project_root
+}
+
+fn append_test_event(project_root: &Path, session_id: &str) {
+    let sessions_dir = project_root.join(".lux").join("sessions");
+    let session_file = sessions_dir.join(format!("{session_id}.jsonl"));
+    let event = serde_json::json!({
+        "recordType": "session_event",
+        "event": {
+            "timestampUtc": "2026-05-06T12:00:00Z",
+            "eventType": "test-event",
+            "category": "test",
+            "source": "smoke",
+            "summary": "smoke test event",
+            "payload": {}
+        }
+    });
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&session_file)
+        .and_then(|mut f| writeln!(f, "{}", event))
+        .expect("append test event");
+}
+
+#[test]
+fn session_help_shows_subcommands() {
+    assert_command_help_contains(&["session", "--help"], "record");
+    assert_command_help_contains(&["session", "--help"], "stop");
+    assert_command_help_contains(&["session", "--help"], "replay");
+    assert_command_help_contains(&["session", "--help"], "timeline");
+    assert_command_help_contains(&["session", "--help"], "report");
+}
+
+#[test]
+fn session_record_and_stop_cycle() {
+    let project = create_session_project("lux-session-record-stop");
+
+    let record_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "record",
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session record");
+    assert_command_success(&record_output, "session record");
+
+    let parsed: Value = serde_json::from_slice(&record_output.stdout).expect("record JSON");
+    let session_id = parsed["sessionId"].as_str().expect("session id");
+    assert!(!session_id.is_empty());
+
+    let jsonl = project
+        .join(".lux")
+        .join("sessions")
+        .join(format!("{session_id}.jsonl"));
+    assert!(jsonl.exists(), "session JSONL should exist");
+
+    let stop_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "stop",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session stop");
+    assert_command_success(&stop_output, "session stop");
+
+    let stop_parsed: Value = serde_json::from_slice(&stop_output.stdout).expect("stop JSON");
+    assert_eq!(stop_parsed["ok"], true);
+    assert_eq!(stop_parsed["eventCount"], 0);
+}
+
+#[test]
+fn session_timeline_json_output() {
+    let project = create_session_project("lux-session-timeline");
+
+    let record_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "record",
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session record");
+    assert_command_success(&record_output, "session record");
+
+    let parsed: Value = serde_json::from_slice(&record_output.stdout).expect("record JSON");
+    let session_id = parsed["sessionId"].as_str().expect("session id");
+
+    append_test_event(&project, session_id);
+
+    let stop_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "stop",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session stop");
+    assert_command_success(&stop_output, "session stop");
+
+    let timeline_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "timeline",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("run lux session timeline");
+    assert_command_success(&timeline_output, "session timeline");
+
+    let timeline: Value = serde_json::from_slice(&timeline_output.stdout).expect("timeline JSON");
+    assert_eq!(timeline["sessionId"].as_str(), Some(session_id));
+    let events = timeline["events"].as_array().expect("events array");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["eventType"], "test-event");
+}
+
+#[test]
+fn session_report_json_output() {
+    let project = create_session_project("lux-session-report");
+
+    let record_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "record",
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session record");
+    assert_command_success(&record_output, "session record");
+
+    let parsed: Value = serde_json::from_slice(&record_output.stdout).expect("record JSON");
+    let session_id = parsed["sessionId"].as_str().expect("session id");
+
+    append_test_event(&project, session_id);
+
+    let stop_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "stop",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session stop");
+    assert_command_success(&stop_output, "session stop");
+
+    let report_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "report",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("run lux session report");
+    assert_command_success(&report_output, "session report");
+
+    let report: Value = serde_json::from_slice(&report_output.stdout).expect("report JSON");
+    assert_eq!(report["sessionId"].as_str(), Some(session_id));
+    assert_eq!(report["totalEvents"], 1);
+    assert_eq!(report["errorCount"], 0);
+}
+
+#[test]
+fn session_full_replay_cycle() {
+    let project = create_session_project("lux-session-replay");
+
+    let record_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "record",
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session record");
+    assert_command_success(&record_output, "session record");
+
+    let parsed: Value = serde_json::from_slice(&record_output.stdout).expect("record JSON");
+    let session_id = parsed["sessionId"].as_str().expect("session id");
+
+    append_test_event(&project, session_id);
+
+    let stop_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "stop",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run lux session stop");
+    assert_command_success(&stop_output, "session stop");
+
+    let replay_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "session",
+            "replay",
+            "--session-id",
+            session_id,
+            "--project-path",
+            project.to_str().unwrap(),
+            "--speed",
+            "1000",
+        ])
+        .output()
+        .expect("run lux session replay");
+    assert_command_success(&replay_output, "session replay");
+
+    let stdout = String::from_utf8(replay_output.stdout).expect("replay output");
+    let json_start = stdout.find('{').expect("replay JSON start");
+    let replay: Value = serde_json::from_str(&stdout[json_start..]).expect("replay JSON");
+    assert_eq!(replay["totalEvents"], 1);
+    assert_eq!(replay["replayedEvents"], 1);
+    assert_eq!(replay["errors"].as_array().map(|a| a.len()), Some(0));
 }

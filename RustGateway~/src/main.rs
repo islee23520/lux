@@ -1,6 +1,14 @@
+pub mod addon_auth;
+pub mod addon_routes;
+pub mod addon_store;
+pub mod unity_launch;
 pub mod ai_log;
+pub mod cross_platform;
+mod mcp;
 mod protocol;
 mod server;
+pub mod session;
+pub mod visual_regression;
 
 use std::{
     fs,
@@ -8,7 +16,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Context};
@@ -32,9 +40,14 @@ enum Command {
     Unity(UnityArgs),
     Skill(SkillArgs),
     AiLog(AiLogArgs),
+    Mcp(McpArgs),
     Compile(CompileArgs),
     Bridge(BridgeArgs),
     RunTests(RunTestsArgs),
+    Screenshot(ScreenshotArgs),
+    Session(SessionArgs),
+    Install(InstallArgs),
+    Addon(AddonArgs),
     Schema,
     /// Generate shell completion scripts
     Completion {
@@ -57,6 +70,40 @@ enum SkillAction {
     Install(SkillInstallArgs),
     Remove(SkillRemoveArgs),
     Update(SkillUpdateArgs),
+}
+#[derive(Parser, Debug)]
+struct InstallArgs {
+    name: String,
+    #[arg(short, long)]
+    project: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct AddonArgs {
+    #[command(subcommand)]
+    action: AddonAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum AddonAction {
+    List(AddonListArgs),
+    Auth(AddonAuthArgs),
+}
+
+#[derive(Parser, Debug)]
+struct AddonListArgs {
+    #[arg(long, default_value_t = false)]
+    public: bool,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct AddonAuthArgs {
+    #[arg(long, default_value_t = false)]
+    status: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -114,12 +161,90 @@ struct AiLogArgs {
     action: AiLogAction,
 }
 
+#[derive(Parser, Debug)]
+struct McpArgs {
+    #[command(subcommand)]
+    action: McpAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// Run the LUX MCP server over newline-delimited JSON-RPC stdio
+    Serve,
+}
+
+#[derive(Parser, Debug)]
+struct SessionArgs {
+    #[command(subcommand)]
+    action: SessionAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionAction {
+    Record(SessionRecordArgs),
+    Stop(SessionStopArgs),
+    Replay(SessionReplayArgs),
+    Timeline(SessionTimelineArgs),
+    Report(SessionReportArgs),
+}
+
+#[derive(Parser, Debug)]
+struct SessionRecordArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct SessionStopArgs {
+    #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct SessionReplayArgs {
+    #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long, default_value_t = 1.0)]
+    speed: f64,
+    #[arg(long)]
+    filter_type: Option<String>,
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct SessionTimelineArgs {
+    #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long)]
+    filter_type: Option<String>,
+    #[arg(long)]
+    limit: Option<usize>,
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct SessionReportArgs {
+    #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum AiLogAction {
     Recent(AiLogRecentArgs),
     Tail(AiLogTailArgs),
     Context(AiLogContextArgs),
     Compact(AiLogCompactArgs),
+    WorkStep(AiLogWorkStepArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -175,6 +300,22 @@ struct AiLogCompactArgs {
     json: bool,
     #[arg(long, default_value_t = false)]
     yes: bool,
+}
+
+#[derive(Parser, Debug)]
+struct AiLogWorkStepArgs {
+    #[arg(long = "name")]
+    name: String,
+    #[arg(long)]
+    status: String,
+    #[arg(long)]
+    tool: Option<String>,
+    #[arg(long)]
+    action: Option<String>,
+    #[arg(long)]
+    summary: Option<String>,
+    #[arg(long)]
+    project_path: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -580,6 +721,18 @@ struct RunTestsArgs {
     log_file: Option<PathBuf>,
 }
 
+#[derive(Parser, Debug)]
+struct ScreenshotArgs {
+    /// Capture a named visual regression baseline
+    #[arg(long, conflicts_with = "compare")]
+    baseline: Option<String>,
+    /// Compare this baseline path against the current screenshot
+    #[arg(long, conflicts_with = "baseline")]
+    compare: Option<PathBuf>,
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct LuxBridgeSettings {
     schema_version: u32,
@@ -615,9 +768,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Skill(args) => run_skill_command(args),
         Command::AiLog(args) => run_ai_log_command(args),
+        Command::Mcp(args) => run_mcp_command(args),
         Command::Compile(args) => run_batch_compile(args),
         Command::Bridge(args) => run_bridge_command(args),
         Command::RunTests(args) => run_batch_tests(args),
+        Command::Screenshot(args) => run_screenshot_command(args),
+        Command::Session(args) => run_session_command(args),
+        Command::Install(args) => run_install_command(args),
+        Command::Addon(args) => run_addon_command(args),
         Command::Schema => {
             println!(
                 "{}",
@@ -647,6 +805,141 @@ async fn main() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// lux mcp
+// ---------------------------------------------------------------------------
+
+fn run_mcp_command(args: McpArgs) -> anyhow::Result<()> {
+    match args.action {
+        McpAction::Serve => mcp::run_stdio_server(mcp::create_lux_mcp_server()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// lux session
+// ---------------------------------------------------------------------------
+
+fn run_session_command(args: SessionArgs) -> anyhow::Result<()> {
+    match args.action {
+        SessionAction::Record(a) => run_session_record(a),
+        SessionAction::Stop(a) => run_session_stop(a),
+        SessionAction::Replay(a) => run_session_replay(a),
+        SessionAction::Timeline(a) => run_session_timeline(a),
+        SessionAction::Report(a) => run_session_report(a),
+    }
+}
+
+fn run_session_record(args: SessionRecordArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let (session_id, session_path) = session::start_session(&project_root)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "ok": true,
+            "sessionId": session_id,
+            "sessionPath": session_path,
+        }))?
+    );
+    Ok(())
+}
+
+fn run_session_stop(args: SessionStopArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let session_id = match args.session_id {
+        Some(id) => id,
+        None => session::current_session_id(&project_root)?,
+    };
+    let session_file = session::stop_session_in_project(&project_root, &session_id)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "ok": true,
+            "sessionId": session_id,
+            "eventCount": session_file.events.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn run_session_replay(args: SessionReplayArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let session_id = match args.session_id {
+        Some(id) => id,
+        None => session::current_session_id(&project_root)?,
+    };
+    let options = session::ReplayOptions {
+        speed: args.speed,
+        stop_on_error: false,
+        filter_types: args.filter_type.map_or_else(Vec::new, |t| vec![t]),
+    };
+    let result = session::replay_session_in_project(&project_root, &session_id, options)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "ok": true,
+            "sessionId": session_id,
+            "totalEvents": result.total_events,
+            "replayedEvents": result.replayed_events,
+            "errors": result.errors,
+            "durationMs": result.duration_ms,
+        }))?
+    );
+    Ok(())
+}
+
+fn run_session_timeline(args: SessionTimelineArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let timeline = session::timeline_session(
+        &project_root,
+        args.session_id.as_deref(),
+        args.filter_type.as_deref(),
+        args.limit,
+    )?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&timeline)?);
+        return Ok(());
+    }
+    println!("Session: {}", timeline.session_id);
+    println!("Events ({}):", timeline.events.len());
+    for event in &timeline.events {
+        println!(
+            "  [{}] {} - {}",
+            event.event_type, event.timestamp_utc, event.summary
+        );
+    }
+    Ok(())
+}
+
+fn run_session_report(args: SessionReportArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let session_id = match args.session_id {
+        Some(id) => id,
+        None => session::current_session_id(&project_root)?,
+    };
+    let report = session::report_session(&project_root, &session_id)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    println!("Session: {}", report.session_id);
+    println!("Total events: {}", report.total_events);
+    println!("Duration: {}ms", report.duration_ms);
+    println!("Errors: {}", report.error_count);
+    if !report.event_type_counts.is_empty() {
+        println!("Event types:");
+        for (event_type, count) in &report.event_type_counts {
+            println!("  {}: {}", event_type, count);
+        }
+    }
+    if !report.errors.is_empty() {
+        println!("Error details:");
+        for error in &report.errors {
+            println!("  - {}", error);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // lux ai-log
 // ---------------------------------------------------------------------------
 
@@ -656,6 +949,7 @@ fn run_ai_log_command(args: AiLogArgs) -> anyhow::Result<()> {
         AiLogAction::Tail(tail_args) => print_ai_log_tail(tail_args),
         AiLogAction::Context(context_args) => print_ai_log_context(context_args),
         AiLogAction::Compact(compact_args) => compact_ai_log(compact_args),
+        AiLogAction::WorkStep(work_step_args) => append_ai_log_work_step(work_step_args),
     }
 }
 
@@ -755,6 +1049,71 @@ fn compact_ai_log(args: AiLogCompactArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn append_ai_log_work_step(args: AiLogWorkStepArgs) -> anyhow::Result<()> {
+    let log_path = ai_log::ensure_log_path(&args.project_path)?;
+    let mut step = ai_log::AiWorkStep {
+        step_name: args.name,
+        status: args.status,
+        tool: args.tool,
+        action: args.action,
+        summary: args.summary,
+        redaction_metadata: None,
+        timestamp_utc: current_timestamp_utc(),
+    };
+
+    let mut value = serde_json::to_value(&step).context("failed to prepare AI work step")?;
+    let metadata = ai_log::redact_entry(&mut value, &args.project_path.to_string_lossy());
+    if !metadata.redacted_fields.is_empty() {
+        step = serde_json::from_value(value).context("failed to rebuild redacted AI work step")?;
+        step.redaction_metadata = Some(metadata);
+    }
+
+    ai_log::append_work_step(&log_path, &step)?;
+    ai_log::apply_retention_policy(&log_path, &ai_log::RetentionPolicy::default())?;
+
+    println!(
+        "Wrote AI work step '{}' ({}) to {}",
+        step.step_name,
+        step.status,
+        log_path.display()
+    );
+    Ok(())
+}
+
+fn current_timestamp_utc() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format!("{seconds}Z")
+}
+
+fn run_screenshot_command(args: ScreenshotArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    match (args.baseline, args.compare) {
+        (Some(name), None) => {
+            let path = visual_regression::capture_screenshot_baseline(&name, &project_root)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "baselinePath": cross_platform::display_path(&path),
+                }))?
+            );
+        }
+        (None, Some(baseline)) => {
+            let current = visual_regression::current_screenshot_path(&project_root);
+            let comparison = visual_regression::compare_screenshots(&baseline, &current);
+            println!("{}", serde_json::to_string_pretty(&comparison)?);
+            if !comparison.passes() {
+                std::process::exit(1);
+            }
+        }
+        _ => bail!("Specify either --baseline <name> or --compare <baseline-path>"),
+    }
+    Ok(())
+}
+
 fn ai_log_filter_from_recent(args: &AiLogRecentArgs) -> ai_log::AiLogFilter {
     ai_log::AiLogFilter {
         limit: Some(args.limit),
@@ -785,6 +1144,12 @@ struct SkillManifest {
     skill_type: String,
     source: Option<String>,
     dependencies: Option<Value>,
+    #[serde(default, rename = "requiredPackages")]
+    required_packages: Option<Vec<String>>,
+    #[serde(default, rename = "compatibleRenderPipelines")]
+    compatible_render_pipelines: Option<Vec<String>>,
+    #[serde(default, rename = "contextSlimRules")]
+    context_slim_rules: Option<SkillContextSlimRules>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -792,6 +1157,16 @@ struct SkillAuthor {
     name: String,
     email: Option<String>,
     url: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+struct SkillContextSlimRules {
+    #[serde(default, rename = "maxReferences")]
+    max_references: Option<usize>,
+    #[serde(default, rename = "maxSkillMdLines")]
+    max_skill_md_lines: Option<usize>,
+    #[serde(default, rename = "excludeTags")]
+    exclude_tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1169,6 +1544,9 @@ fn build_skill_adaptation_metadata(name: &str, source: &str) -> anyhow::Result<V
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Phase 1: Basic structural checks
+    // -----------------------------------------------------------------------
     let mut checks = Vec::new();
     let assets_dir = project_root.join("Assets");
     let project_settings_dir = project_root.join("ProjectSettings");
@@ -1207,10 +1585,115 @@ fn build_skill_adaptation_metadata(name: &str, source: &str) -> anyhow::Result<V
     if manifest.lux_version.is_none() {
         warnings.push("source manifest does not declare luxVersion".to_string());
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: Project metadata detection
+    // -----------------------------------------------------------------------
+    let project_metadata = detect_project_metadata(&project_root, &mut warnings);
+
+    // -----------------------------------------------------------------------
+    // Phase 3: Compatibility judgment
+    // -----------------------------------------------------------------------
+    let compatibility = judge_skill_compatibility(&manifest, &project_metadata, &mut checks);
+    if !compatibility.compatible {
+        bail!(
+            "skill '{}' is incompatible with this project: {}",
+            name,
+            compatibility.reasons.join(", ")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Context slimming
+    // -----------------------------------------------------------------------
+    let context_slimming = compute_context_slimming(source_dir, &manifest, &project_metadata);
+
+    Ok(json!({
+        "schema_version": 1,
+        "protocol": "lux.skill.adaptation.v1",
+        "skill_name": name,
+        "source": source,
+        "project_root": project_root,
+        "checks": checks,
+        "warnings": warnings,
+        "project_metadata": project_metadata.to_json(),
+        "compatibility": {
+            "compatible": compatibility.compatible,
+            "reasons": compatibility.reasons,
+        },
+        "context_slimming": context_slimming,
+    }))
+}
+
+struct ProjectMetadata {
+    unity_version: Option<String>,
+    render_pipeline: String,
+    installed_packages: Vec<String>,
+    has_lux_package: bool,
+}
+
+impl ProjectMetadata {
+    fn to_json(&self) -> Value {
+        json!({
+            "unity_version": self.unity_version,
+            "render_pipeline": self.render_pipeline,
+            "installed_packages": self.installed_packages,
+            "has_lux_package": self.has_lux_package,
+        })
+    }
+}
+
+struct CompatibilityResult {
+    compatible: bool,
+    reasons: Vec<String>,
+}
+
+fn detect_project_metadata(project_root: &Path, warnings: &mut Vec<String>) -> ProjectMetadata {
+    let mut unity_version: Option<String> = None;
+    let mut render_pipeline = "unknown".to_string();
+    let mut installed_packages: Vec<String> = Vec::new();
+    let mut has_lux_package = false;
+
+    // Read Unity version from ProjectSettings/ProjectVersion.txt
+    let version_path = project_root
+        .join("ProjectSettings")
+        .join("ProjectVersion.txt");
+    if let Ok(version_content) = fs::read_to_string(&version_path) {
+        for line in version_content.lines() {
+            if let Some(version) = line.strip_prefix("m_EditorVersion: ") {
+                unity_version = Some(version.trim().to_string());
+                break;
+            }
+        }
+    }
+
+    // Read Packages/manifest.json for installed packages and render pipeline hints
     let package_manifest_path = project_root.join("Packages").join("manifest.json");
     match fs::read_to_string(&package_manifest_path) {
         Ok(package_manifest_json) => {
-            if !package_manifest_json.contains("com.linalab.lux") {
+            has_lux_package = package_manifest_json.contains("com.linalab.lux");
+
+            if let Ok(package_value) = serde_json::from_str::<Value>(&package_manifest_json) {
+                if let Some(deps) = package_value.get("dependencies").and_then(Value::as_object) {
+                    for key in deps.keys() {
+                        installed_packages.push(key.clone());
+                    }
+                }
+
+                // Detect render pipeline from packages
+                if installed_packages.contains(&"com.unity.render-pipelines.universal".to_string())
+                {
+                    render_pipeline = "urp".to_string();
+                } else if installed_packages
+                    .contains(&"com.unity.render-pipelines.high-definition".to_string())
+                {
+                    render_pipeline = "hdrp".to_string();
+                } else {
+                    render_pipeline = "builtin".to_string();
+                }
+            }
+
+            if !has_lux_package {
                 warnings.push(
                     "project Packages/manifest.json does not mention com.linalab.lux".to_string(),
                 );
@@ -1226,15 +1709,201 @@ fn build_skill_adaptation_metadata(name: &str, source: &str) -> anyhow::Result<V
         )),
     }
 
-    Ok(json!({
-        "schema_version": 1,
-        "protocol": "lux.skill.adaptation.v1",
-        "skill_name": name,
-        "source": source,
-        "project_root": project_root,
-        "checks": checks,
-        "warnings": warnings,
-    }))
+    // Check for GraphicsSettings asset for render pipeline override
+    let graphics_settings = project_root
+        .join("ProjectSettings")
+        .join("GraphicsSettings.asset");
+    if graphics_settings.exists() && render_pipeline == "unknown" {
+        if let Ok(content) = fs::read_to_string(&graphics_settings) {
+            if content.contains("UniversalRenderPipelineAsset") {
+                render_pipeline = "urp".to_string();
+            } else if content.contains("HDRenderPipelineAsset") {
+                render_pipeline = "hdrp".to_string();
+            } else {
+                render_pipeline = "builtin".to_string();
+            }
+        }
+    }
+
+    ProjectMetadata {
+        unity_version,
+        render_pipeline,
+        installed_packages,
+        has_lux_package,
+    }
+}
+
+fn judge_skill_compatibility(
+    manifest: &SkillManifest,
+    project_metadata: &ProjectMetadata,
+    checks: &mut Vec<Value>,
+) -> CompatibilityResult {
+    let mut reasons: Vec<String> = Vec::new();
+
+    // Check luxVersion compatibility
+    if let Some(ref lux_version) = manifest.lux_version {
+        let version_ok =
+            lux_version.starts_with(">=") || lux_version.starts_with('^') || lux_version == "*";
+        checks.push(json!({
+            "name": "lux_version_declared",
+            "ok": true,
+            "message": format!("Skill declares luxVersion: {}", lux_version),
+        }));
+        if !version_ok && !lux_version.is_empty() {
+            // Specific version constraint — we just note it as a warning, not a blocker,
+            // since we cannot resolve semver for the running LUX binary here.
+            checks.push(json!({
+                "name": "lux_version_check",
+                "ok": true,
+                "message": format!("luxVersion constraint '{}' noted (skipping semver resolution)", lux_version),
+            }));
+        }
+    }
+
+    // Check required packages
+    let mut missing_packages: Vec<String> = Vec::new();
+    if let Some(ref required) = manifest.required_packages {
+        for package in required {
+            if !project_metadata.installed_packages.contains(package) {
+                missing_packages.push(package.clone());
+            }
+        }
+        let packages_ok = missing_packages.is_empty();
+        checks.push(json!({
+            "name": "required_packages",
+            "ok": packages_ok,
+            "message": if packages_ok {
+                "All required packages are installed".to_string()
+            } else {
+                format!("Missing required packages: {}", missing_packages.join(", "))
+            },
+        }));
+        if !packages_ok {
+            reasons.push(format!(
+                "missing required packages: {}",
+                missing_packages.join(", ")
+            ));
+        }
+    }
+
+    // Check render pipeline compatibility
+    if let Some(ref compatible_pipelines) = manifest.compatible_render_pipelines {
+        let pipeline_ok = compatible_pipelines.is_empty()
+            || compatible_pipelines.contains(&project_metadata.render_pipeline);
+        checks.push(json!({
+            "name": "render_pipeline",
+            "ok": pipeline_ok,
+            "message": format!(
+                "Project render pipeline '{}' vs skill compatibility: [{}]",
+                project_metadata.render_pipeline,
+                compatible_pipelines.join(", ")
+            ),
+        }));
+        if !pipeline_ok {
+            reasons.push(format!(
+                "incompatible render pipeline: project uses '{}', skill requires one of [{}]",
+                project_metadata.render_pipeline,
+                compatible_pipelines.join(", ")
+            ));
+        }
+    }
+
+    CompatibilityResult {
+        compatible: reasons.is_empty(),
+        reasons,
+    }
+}
+
+fn compute_context_slimming(
+    source_dir: &Path,
+    manifest: &SkillManifest,
+    project_metadata: &ProjectMetadata,
+) -> Value {
+    let slim_rules = manifest.context_slim_rules.as_ref();
+
+    // Count total references
+    let references_dir = source_dir.join("references");
+    let total_references = if references_dir.is_dir() {
+        fs::read_dir(&references_dir)
+            .map(|entries| entries.flatten().count())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Count SKILL.md lines
+    let skill_md_path = source_dir.join("SKILL.md");
+    let total_skill_md_lines = fs::read_to_string(&skill_md_path)
+        .map(|content| content.lines().count())
+        .unwrap_or(0);
+
+    // Apply max_references slimming
+    let max_references = slim_rules
+        .and_then(|rules| rules.max_references)
+        .unwrap_or(usize::MAX);
+    let _slimmed_references = total_references.min(max_references);
+    let references_slashed = total_references > max_references;
+
+    // Apply max_skill_md_lines slimming
+    let max_skill_md_lines = slim_rules
+        .and_then(|rules| rules.max_skill_md_lines)
+        .unwrap_or(usize::MAX);
+    let slimmed_skill_md_lines = total_skill_md_lines.min(max_skill_md_lines);
+    let skill_md_slashed = total_skill_md_lines > max_skill_md_lines;
+
+    // Apply exclude_tags filtering
+    let excluded_tags: Vec<String> = slim_rules
+        .and_then(|rules| rules.exclude_tags.clone())
+        .unwrap_or_default();
+
+    // Build tag-relevance filter: references whose filenames match project package or pipeline
+    let mut included_references: Vec<String> = Vec::new();
+    let mut excluded_references: Vec<String> = Vec::new();
+    if references_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&references_dir) {
+            let mut all_refs: Vec<String> = entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+                .filter(|name| name.ends_with(".md"))
+                .collect();
+            all_refs.sort();
+
+            for reference_name in &all_refs {
+                let name_lower = reference_name.to_lowercase();
+                let should_exclude = excluded_tags
+                    .iter()
+                    .any(|tag| name_lower.contains(&tag.to_lowercase()));
+                if should_exclude {
+                    excluded_references.push(reference_name.clone());
+                } else {
+                    included_references.push(reference_name.clone());
+                }
+            }
+        }
+    }
+
+    // Respect max_references limit after tag filtering
+    if included_references.len() > max_references {
+        let excess = included_references.len() - max_references;
+        let drained: Vec<String> =
+            included_references.split_off(included_references.len() - excess);
+        excluded_references.extend(drained);
+    }
+
+    let slimmed_references_actual = included_references.len();
+
+    json!({
+        "total_references": total_references,
+        "slimmed_references": slimmed_references_actual,
+        "references_slashed": references_slashed || slimmed_references_actual != total_references,
+        "total_skill_md_lines": total_skill_md_lines,
+        "slimmed_skill_md_lines": slimmed_skill_md_lines,
+        "skill_md_slashed": skill_md_slashed,
+        "excluded_tags": excluded_tags,
+        "included_references": included_references,
+        "excluded_references": excluded_references,
+        "project_render_pipeline": project_metadata.render_pipeline,
+    })
 }
 
 fn install_skill_from_source(source: &str, target_dir: &Path) -> anyhow::Result<()> {
@@ -3242,7 +3911,7 @@ fn run_batch_tests(args: RunTestsArgs) -> anyhow::Result<()> {
 
 fn resolve_project_root(project_path: &Option<PathBuf>) -> anyhow::Result<PathBuf> {
     match project_path {
-        Some(path) => Ok(path.clone()),
+        Some(path) => Ok(cross_platform::normalize_path_buf(path.clone())),
         None => find_unity_project_root(std::env::current_dir()?)
             .context("Unity project not found. Use --project-path."),
     }
@@ -3263,12 +3932,12 @@ fn is_unity_project(path: &Path) -> bool {
     path.join("Assets").is_dir() && path.join("ProjectSettings").is_dir()
 }
 
-struct UnityLaunchTarget {
-    executable: PathBuf,
-    prefix_args: Vec<String>,
+pub struct UnityLaunchTarget {
+    pub executable: PathBuf,
+    pub prefix_args: Vec<String>,
 }
 
-fn resolve_unity_launch_target(project_root: &Path) -> anyhow::Result<UnityLaunchTarget> {
+pub fn resolve_unity_launch_target(project_root: &Path) -> anyhow::Result<UnityLaunchTarget> {
     if let Some(editor) = std::env::var_os("LUX_UNITY_EDITOR") {
         return Ok(UnityLaunchTarget {
             executable: PathBuf::from(editor),
@@ -3332,8 +4001,10 @@ fn resolve_unity_launch_target(project_root: &Path) -> anyhow::Result<UnityLaunc
     )
 }
 
-fn read_unity_editor_version(project_root: &Path) -> anyhow::Result<String> {
-    let version_path = project_root.join("ProjectSettings/ProjectVersion.txt");
+pub fn read_unity_editor_version(project_root: &Path) -> anyhow::Result<String> {
+    let version_path = project_root
+        .join("ProjectSettings")
+        .join("ProjectVersion.txt");
     let text = fs::read_to_string(&version_path)
         .with_context(|| format!("failed to read {}", version_path.display()))?;
     text.lines()
@@ -3353,14 +4024,24 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let project_root = args
         .project_path
         .map(|path| {
-            path.canonicalize()
-                .with_context(|| format!("failed to canonicalize project path {}", path.display()))
+            let normalized = cross_platform::normalize_path_buf(path);
+            normalized.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize project path {}",
+                    normalized.display()
+                )
+            })
         })
         .transpose()?;
     let state = server::GatewayState::new(server::GatewayConfig {
         token: args.token,
         history_capacity: args.history_capacity,
         project_root,
+        addon_auth: crate::addon_auth::AddonAuthConfig {
+            github_client_id: std::env::var("LUX_GITHUB_CLIENT_ID")
+                .unwrap_or_else(|_| "placeholder_client_id".to_string()),
+            github_client_secret: std::env::var("LUX_GITHUB_CLIENT_SECRET").ok(),
+        },
     });
     let idle_timeout = args.idle_timeout.checked_mul(60).map(Duration::from_secs);
     let app = server::router(state.clone());
@@ -3395,4 +4076,158 @@ async fn shutdown_signal(state: server::GatewayState, idle_timeout: Option<Durat
     } else {
         ctrl_c.await;
     }
+}
+
+
+fn run_install_command(args: InstallArgs) -> anyhow::Result<()> {
+    let project_path = resolve_project_root(&args.project)?;
+    if !is_unity_project(&project_path) {
+        bail!("target is not a Unity project: missing Assets/ or ProjectSettings/");
+    }
+
+    let package_name = &args.name;
+    if !package_name.starts_with("com.linalab.") {
+        bail!("package name must follow com.linalab.<name> convention");
+    }
+
+    let repo_url = format!("https://github.com/linalab/{}", package_name);
+    let packages_dir = project_path.join("Packages");
+    let package_dir = packages_dir.join(package_name);
+
+    if package_dir.exists() {
+        if args.json {
+            println!("{{\"ok\": true, \"message\": \"package already installed\", \"path\": \"{}\"}}", package_dir.display());
+        } else {
+            println!("Package {} is already installed at {}", package_name, package_dir.display());
+        }
+        return Ok(());
+    }
+
+    let manifest_path = packages_dir.join("manifest.json");
+    if manifest_path.exists() {
+        let content = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+        let mut manifest: serde_json::Value = serde_json::from_str(&content)
+            .with_context(|| "failed to parse manifest.json")?;
+
+        if let Some(deps) = manifest.get_mut("dependencies").and_then(|d| d.as_object_mut()) {
+            if deps.contains_key(package_name) {
+                if args.json {
+                    println!("{{\"ok\": true, \"message\": \"package already in manifest\"}}");
+                } else {
+                    println!("Package {} already listed in manifest.json", package_name);
+                }
+                return Ok(());
+            }
+
+            deps.insert(
+                package_name.clone(),
+                serde_json::Value::String(format!("git+{}", repo_url)),
+            );
+
+            let output = serde_json::to_string_pretty(&manifest);
+            match output {
+                Ok(json) => {
+                    fs::write(&manifest_path, json)?;
+                }
+                Err(e) => {
+                    bail!("failed to serialize manifest: {}", e);
+                }
+            }
+        } else {
+            bail!("manifest.json has no dependencies object");
+        }
+    } else {
+        bail!("Packages/manifest.json not found at {}", manifest_path.display());
+    }
+
+    if args.json {
+        println!("{{\"ok\": true, \"package\": \"{}\", \"repo\": \"{}\"}}", package_name, repo_url);
+    } else {
+        println!("Added {} to project (source: {})", package_name, repo_url);
+        println!("Unity will resolve the package on next refresh.");
+    }
+    Ok(())
+}
+
+fn run_addon_command(args: AddonArgs) -> anyhow::Result<()> {
+    match args.action {
+        AddonAction::List(a) => run_addon_list(a),
+        AddonAction::Auth(a) => run_addon_auth(a),
+    }
+}
+
+fn run_addon_list(args: AddonListArgs) -> anyhow::Result<()> {
+    let known = crate::addon_store::KNOWN_LINALAB_PACKAGES;
+    let packages: Vec<&str> = if args.public {
+        known.to_vec()
+    } else {
+        known.to_vec()
+    };
+
+    if args.json {
+        let list: Vec<serde_json::Value> = packages
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name,
+                    "repo": format!("https://github.com/linalab/{}", name),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&list)?);
+    } else {
+        if args.public {
+            println!("Public linalab packages:");
+        } else {
+            println!("Registered linalab packages:");
+        }
+        for name in &packages {
+            println!("  {} (https://github.com/linalab/{})", name, name);
+        }
+    }
+    Ok(())
+}
+
+fn run_addon_auth(args: AddonAuthArgs) -> anyhow::Result<()> {
+    if args.status {
+        println!("Auth status: not authenticated");
+        println!("Run 'lux addon auth' to start GitHub Device Flow authentication.");
+        return Ok(());
+    }
+
+    let client_id = std::env::var("LUX_GITHUB_CLIENT_ID")
+        .map_err(|_| anyhow::anyhow!("LUX_GITHUB_CLIENT_ID not set"))?;
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let response = addon_auth::start_device_flow(&client_id).await?;
+        println!("To authenticate, visit: {}", response.verification_uri);
+        println!("Enter code: {}", response.user_code);
+        println!("Waiting for authorization...");
+
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(response.interval)).await;
+            match addon_auth::poll_device_token(&client_id, &response.device_code).await {
+                Ok(Some(token)) => {
+                    println!("Authentication successful!");
+                    let repos = addon_auth::check_repo_access(&token.access_token).await?;
+                    if repos.is_empty() {
+                        println!("No linalab packages accessible.");
+                    } else {
+                        println!("Accessible repos:");
+                        for repo in &repos {
+                            println!("  {}", repo);
+                        }
+                    }
+                    break;
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    bail!("Authentication failed: {}", e);
+                }
+            }
+        }
+        Ok(())
+    })
 }

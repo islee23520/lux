@@ -25,8 +25,10 @@ use uuid::Uuid;
 
 use crate::{
     ai_log::{self, AiLogEntry, AiLogFilter},
+    cross_platform,
     protocol::{EventEnvelope, PROTOCOL_VERSION},
 };
+use serde_json::json;
 
 const AI_LOG_DEFAULT_LIMIT: usize = 100;
 const AI_LOG_MAX_LIMIT: usize = 500;
@@ -36,11 +38,12 @@ pub struct GatewayConfig {
     pub token: String,
     pub history_capacity: usize,
     pub project_root: Option<PathBuf>,
+    pub addon_auth: crate::addon_auth::AddonAuthConfig,
 }
 
 #[derive(Clone)]
 pub struct GatewayState {
-    config: Arc<GatewayConfig>,
+    pub config: Arc<GatewayConfig>,
     events: broadcast::Sender<EventEnvelope>,
     history: Arc<Mutex<VecDeque<EventEnvelope>>>,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
@@ -53,6 +56,9 @@ pub struct GatewayState {
     signaling_queues: Arc<Mutex<HashMap<String, VecDeque<QueuedSignalingMessage>>>>,
     started_at: Instant,
     last_activity: Arc<Mutex<Instant>>,
+    pub addon_store: Arc<Mutex<crate::addon_store::AddonStore>>,
+    pub addon_tokens: Arc<Mutex<HashMap<String, crate::addon_store::ScopedToken>>>,
+    pub unity_process: Arc<Mutex<Option<crate::unity_launch::UnityProcessInfo>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +333,9 @@ impl GatewayState {
             signaling_queues: Arc::new(Mutex::new(HashMap::new())),
             started_at: now,
             last_activity: Arc::new(Mutex::new(now)),
+            addon_store: Arc::new(Mutex::new(crate::addon_store::AddonStore::new())),
+            addon_tokens: Arc::new(Mutex::new(HashMap::new())),
+            unity_process: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -437,6 +446,9 @@ pub fn router(state: GatewayState) -> Router {
             axum::routing::post(execute_graph),
         )
         .route("/api/node-types", get(list_node_types))
+        .route("/api/skills/:name/adaptation", get(get_skill_adaptation))
+        .nest("/api/addons", crate::addon_routes::routes())
+        .nest("/api/unity", crate::unity_launch::routes())
         .nest_service(
             "/ui",
             ServeDir::new(ui_dir).append_index_html_on_directories(true),
@@ -871,6 +883,13 @@ async fn execute_tool_command(
         source: "lux-gateway".to_string(),
         session_id,
         captured_at_utc: now,
+        project_path: state
+            .config
+            .project_root
+            .as_ref()
+            .map(|path| cross_platform::display_path(path)),
+        redaction_metadata: None,
+        retention_metadata: None,
         payload,
     };
 
@@ -1100,6 +1119,13 @@ async fn execute_graph(
         source: "lux".to_string(),
         session_id: graph.id.clone(),
         captured_at_utc: chrono_like_now(),
+        project_path: state
+            .config
+            .project_root
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        redaction_metadata: None,
+        retention_metadata: None,
         payload: serde_json::json!({
             "kind": "execute-graph",
             "graph": graph,
@@ -1461,6 +1487,13 @@ async fn handle_socket(state: GatewayState, socket: WebSocket, role: String, cli
         source: "lux".to_string(),
         session_id: client_id.clone(),
         captured_at_utc: chrono_like_now(),
+        project_path: state
+            .config
+            .project_root
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        redaction_metadata: None,
+        retention_metadata: None,
         payload: serde_json::json!({
             "kind": "client-connected",
             "role": role,
@@ -1652,6 +1685,91 @@ fn chrono_like_now() -> String {
     format!("unix:{seconds}")
 }
 
+async fn get_skill_adaptation(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    AxumPath(skill_name): AxumPath<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    let header_token = headers
+        .get("x-lux-token")
+        .and_then(|value| value.to_str().ok());
+    if !state.accepts_token(header_token) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "invalid or missing token".to_string(),
+        ));
+    }
+
+    let Some(project_root) = &state.config.project_root else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "server has no project root configured".to_string(),
+        ));
+    };
+
+    // Discover skills to find the matching one
+    let skill_dir = {
+        let core_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("Skills")
+            .join(&skill_name);
+        let project_dir = project_root.join(".lux/skills").join(&skill_name);
+        let global_dir = std::env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join(".lux/skills").join(&skill_name));
+
+        if core_dir.join("manifest.json").is_file() {
+            Some(core_dir)
+        } else if project_dir.join("manifest.json").is_file() {
+            Some(project_dir)
+        } else if let Some(ref global) = global_dir {
+            if global.join("manifest.json").is_file() {
+                Some(global.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    let Some(skill_dir) = skill_dir else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("skill '{skill_name}' not found"),
+        ));
+    };
+
+    let adaptation_path = skill_dir.join("lux-adaptation.json");
+    if !adaptation_path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("skill '{skill_name}' has no adaptation metadata"),
+        ));
+    }
+
+    let content = std::fs::read_to_string(&adaptation_path).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read adaptation: {error}"),
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to parse adaptation: {error}"),
+        )
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "skill_name": skill_name,
+            "adaptation": value,
+        })),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1668,6 +1786,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         }))
     }
 
@@ -1676,6 +1798,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: Some(project_root),
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         }))
     }
 
@@ -1860,6 +1986,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
 
         assert!(state.accepts_token(Some("secret")));
@@ -1895,6 +2025,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 2,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
 
         for index in 0..3 {
@@ -1906,6 +2040,9 @@ mod tests {
                     source: "test".to_string(),
                     session_id: "test-session".to_string(),
                     captured_at_utc: "test-time".to_string(),
+                    project_path: None,
+                    redaction_metadata: None,
+                    retention_metadata: None,
                     payload: serde_json::json!({ "index": index }),
                 })
                 .await;
@@ -2185,6 +2322,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         let app = router(state.clone());
 
@@ -2302,6 +2443,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         let app = router(state.clone());
 
@@ -2362,6 +2507,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         let app = router(state.clone());
 
@@ -2493,6 +2642,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         state
             .remote_sessions
@@ -2531,6 +2684,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         state
             .remote_sessions
@@ -2687,6 +2844,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         let (address, handle) = start_test_server(state).await;
 
@@ -2714,6 +2875,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         let (address, handle) = start_test_server(state).await;
 
@@ -2749,6 +2914,10 @@ mod tests {
             token: "secret".to_string(),
             history_capacity: 8,
             project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
         });
         state
             .remote_sessions
@@ -2815,5 +2984,320 @@ mod tests {
         let key_web = signaling_peer_key("abc-123", &SignalingRole::Web);
         assert_eq!(key_unity, "abc-123:unity");
         assert_eq!(key_web, "abc-123:web");
+    }
+    #[tokio::test]
+    async fn e2e_pipeline_graph_execute_dispatches_event_with_nodes() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 16,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state.clone());
+
+        let mut events = state.events.subscribe();
+
+        let node_types = vec![
+            serde_json::json!({"id": "n1", "type": "unity-context" }),
+            serde_json::json!({"id": "n2", "type": "output-directory" }),
+            serde_json::json!({"id": "n3", "type": "prompt-template" }),
+        ];
+
+        let created = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/graphs",
+            serde_json::json!({
+                "displayName": "E2E Test Pipeline",
+                "nodes": node_types,
+                "edges": []
+            }),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let graph_json = response_json(created).await;
+        let graph_id = graph_json["id"].as_str().unwrap();
+
+        let executed = json_request(
+            app.clone(),
+            Method::POST,
+            &format!("/api/graphs/{}/execute", graph_id),
+            serde_json::json!({ "request": { "mode": "test" } }),
+        )
+        .await;
+        assert_eq!(executed.status(), StatusCode::ACCEPTED);
+        let exec_json = response_json(executed).await;
+        assert_eq!(exec_json["payload"]["kind"], "execute-graph");
+        assert_eq!(exec_json["payload"]["graph"]["nodes"].as_array().unwrap().len(), 3);
+
+        let broadcast = events.recv().await.unwrap();
+        assert_eq!(broadcast.category, crate::protocol::EventCategory::Tool);
+        assert_eq!(broadcast.source, "lux");
+        assert_eq!(broadcast.payload["kind"], "execute-graph");
+        let graph_nodes = broadcast.payload["graph"]["nodes"].as_array().unwrap();
+        assert_eq!(graph_nodes.len(), 3);
+        let node_type_list: Vec<&str> = graph_nodes
+            .iter()
+            .map(|n| n["type"].as_str().unwrap())
+            .collect();
+        assert!(node_type_list.contains(&"unity-context"));
+        assert!(node_type_list.contains(&"output-directory"));
+        assert!(node_type_list.contains(&"prompt-template"));
+    }
+
+    #[tokio::test]
+    async fn e2e_tool_session_lifecycle_create_execute_delete() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 16,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state.clone());
+        let mut events = state.events.subscribe();
+
+        let created = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/tools/sessions",
+            serde_json::json!({ "toolType": "claude-code" }),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let session = response_json(created).await;
+        let session_id = session["id"].as_str().unwrap();
+
+        let executed = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/tools/execute",
+            serde_json::json!({
+                "toolType": "claude-code",
+                "command": "test-command",
+                "sessionId": session_id,
+            }),
+        )
+        .await;
+        assert_eq!(executed.status(), StatusCode::ACCEPTED);
+        let exec = response_json(executed).await;
+        assert_eq!(exec["toolSessionId"], session_id);
+
+        let broadcast = events.recv().await.unwrap();
+        assert_eq!(broadcast.payload["toolType"], "claude-code");
+        assert_eq!(broadcast.payload["command"], "test-command");
+
+        let fetched = authenticated_get(
+            app.clone(),
+            &format!("/api/tools/sessions/{}", session_id),
+        )
+        .await;
+        let session_data = response_json(fetched).await;
+        assert_eq!(session_data["commandHistory"].as_array().unwrap().len(), 1);
+
+        let deleted = delete_request(
+            app.clone(),
+            &format!("/api/tools/sessions/{}", session_id),
+        )
+        .await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+        let missing =
+            authenticated_get(app, &format!("/api/tools/sessions/{}", session_id)).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn e2e_unity_launch_endpoint_returns_status_without_unity() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state);
+
+        let status = authenticated_get(app.clone(), "/api/unity/status").await;
+        assert_eq!(status.status(), StatusCode::OK);
+        let status_json = response_json(status).await;
+        assert_eq!(status_json["running"], false);
+        assert_eq!(status_json["pid"], serde_json::Value::Null);
+        assert_eq!(status_json["executable"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn e2e_unity_launch_requires_valid_project_path() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state);
+
+        let response = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/unity/launch",
+            serde_json::json!({ "projectPath": "/nonexistent/path/that/does/not/exist" }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn e2e_unity_launch_no_project_configured_is_503() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state);
+
+        let response = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/unity/launch",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn e2e_addon_manager_register_list_unregister() {
+        let state = GatewayState::new(GatewayConfig {
+            token: "secret".to_string(),
+            history_capacity: 8,
+            project_root: None,
+            addon_auth: crate::addon_auth::AddonAuthConfig {
+                github_client_id: "test".to_string(),
+                github_client_secret: None,
+            },
+        });
+        let app = router(state.clone());
+
+        let registered = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/addons/register",
+            serde_json::json!({ "repoUrl": "https://github.com/linalab/com.linalab.lux" }),
+        )
+        .await;
+        assert_eq!(registered.status(), StatusCode::CREATED);
+        let addon = response_json(registered).await;
+        let addon_id = addon["id"].as_str().unwrap();
+        assert_eq!(addon["name"], "com.linalab.lux");
+        assert_eq!(addon["visibility"], "unknown");
+
+        let listed = authenticated_get(app.clone(), "/api/addons").await;
+        assert_eq!(listed.status(), StatusCode::OK);
+        let list = response_json(listed).await;
+        assert_eq!(list.as_array().unwrap().len(), 1);
+
+        state
+            .addon_store
+            .lock()
+            .await
+            .set_visibility(addon_id, crate::addon_auth::RepoVisibility::Public);
+
+        let vis = authenticated_get(
+            app.clone(),
+            &format!("/api/addons/{}/visibility", addon_id),
+        )
+        .await;
+        assert_eq!(vis.status(), StatusCode::OK);
+        let vis_json = response_json(vis).await;
+        assert_eq!(vis_json["visibility"], "public");
+
+        let token = crate::addon_auth::issue_addon_token(
+            "secret",
+            &["linalab/com.linalab.lux".to_string()],
+        )
+        .unwrap();
+        let renewed = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/addons/auth/renew",
+            serde_json::json!({ "addonToken": token }),
+        )
+        .await;
+        assert_eq!(renewed.status(), StatusCode::OK);
+
+        let deleted = delete_request(app.clone(), &format!("/api/addons/{}", addon_id)).await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn e2e_addon_token_hmac_signing_and_verification() {
+        let gateway_token = "test-gateway-key";
+        let repos = vec![
+            "linalab/com.linalab.lux".to_string(),
+            "linalab/com.linalab.unity-log".to_string(),
+        ];
+
+        let token = crate::addon_auth::issue_addon_token(gateway_token, &repos).unwrap();
+        let verified =
+            crate::addon_auth::verify_addon_token(gateway_token, &token).unwrap();
+        assert_eq!(verified.repos, repos);
+
+        let wrong_key_result =
+            crate::addon_auth::verify_addon_token("wrong-key", &token);
+        assert!(wrong_key_result.is_err());
+
+        let expired =
+            crate::addon_auth::issue_addon_token_with_ttl(gateway_token, &repos, 0).unwrap();
+        let expired_result = crate::addon_auth::verify_addon_token(gateway_token, &expired);
+        assert!(expired_result.is_err());
+        assert!(expired_result
+            .unwrap_err()
+            .to_string()
+            .contains("expired"));
+    }
+
+    #[tokio::test]
+    async fn e2e_addon_discover_scans_packages_directory() {
+        let project = temp_project_root("addon-discover");
+        fs::create_dir_all(project.join("Packages/com.linalab.lux")).unwrap();
+        fs::create_dir_all(project.join("Packages/com.linalab.unity-log")).unwrap();
+        fs::create_dir_all(project.join("Packages/com.other.package")).unwrap();
+
+        let app = test_app_with_project(project.clone());
+
+        let discovered = json_request(
+            app.clone(),
+            Method::POST,
+            "/api/addons/discover",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(discovered.status(), StatusCode::OK);
+        let list = response_json(discovered).await;
+        let discovered_names: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["name"].as_str().unwrap())
+            .collect();
+        assert!(discovered_names.contains(&"com.linalab.lux"));
+        assert!(discovered_names.contains(&"com.linalab.unity-log"));
+        assert!(!discovered_names.contains(&"com.other.package"));
+
+        let _ = fs::remove_dir_all(&project);
     }
 }
