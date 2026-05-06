@@ -1,0 +1,395 @@
+diff --git a/LuxEditor/LuxAiActionLog.cs b/LuxEditor/LuxAiActionLog.cs
+--- a/LuxEditor/LuxAiActionLog.cs
++++ b/LuxEditor/LuxAiActionLog.cs
+@@ -116,7 +116,11 @@
+         const string LegacyLogFileName = "LuxAiActionLog.jsonl";
+         const string Redacted = "[REDACTED]";
+         const string Truncated = "[TRUNCATED]";
+-
++        const int AppendOpenRetryCount = 8;
++        const int AppendOpenRetryDelayMs = 10;
++
++        static readonly ConcurrentDictionary<string, object> FileWriteLocks = new ConcurrentDictionary<string, object>(StringComparer.Ordinal);
++        static readonly Encoding JsonlEncoding = new UTF8Encoding(false);
+         static readonly Regex PrivateKeyBlockPattern = new Regex(
+             "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+             RegexOptions.Compiled | RegexOptions.CultureInvariant);
+@@ -141,6 +145,7 @@
+         readonly ConcurrentQueue<string> _pendingLines;
+         readonly AutoResetEvent _writeSignal;
+         readonly string _logPath;
++        readonly object _fileWriteLock;
+         readonly int _recentCapacity;
+         readonly int _maxTextLength;
+         readonly Thread _writerThread;
+@@ -155,6 +160,8 @@
+             {
+                 MigrateLegacyLogIfNeeded(_logPath);
+             }
++
++            _fileWriteLock = FileWriteLocks.GetOrAdd(_logPath, _ => new object());
+             _recent = new Queue<LuxAiActionLogEntry>(_recentCapacity);
+             _pendingLines = new ConcurrentQueue<string>();
+             _writeSignal = new AutoResetEvent(false);
+@@ -279,7 +286,7 @@
+             int normalizedMaxLines = Math.Max(1, maxLines);
+             Directory.CreateDirectory(Path.GetDirectoryName(_logPath));
+ 
+-            lock (_sync)
++            lock (_fileWriteLock)
+             {
+                 string[] originalLines = File.Exists(_logPath) ? File.ReadAllLines(_logPath) : Array.Empty<string>();
+                 var validLines = originalLines
+@@ -290,7 +297,7 @@
+                     .ToArray();
+ 
+                 string tempPath = _logPath + ".tmp";
+-                File.WriteAllLines(tempPath, keptLines, Encoding.UTF8);
++                File.WriteAllLines(tempPath, keptLines, JsonlEncoding);
+                 if (File.Exists(_logPath))
+                 {
+                     File.Delete(_logPath);
+@@ -337,17 +344,39 @@
+                 return;
+             }
+ 
+-            lock (_sync)
++            lock (_fileWriteLock)
+             {
+                 Directory.CreateDirectory(Path.GetDirectoryName(_logPath));
+-                using (var writer = new StreamWriter(_logPath, true, Encoding.UTF8))
++                using (var stream = OpenAppendStreamWithRetry(_logPath))
+                 {
+                     while (_pendingLines.TryDequeue(out string line))
+                     {
+-                        writer.WriteLine(line);
++                        byte[] bytes = JsonlEncoding.GetBytes(line + "\n");
++                        stream.Write(bytes, 0, bytes.Length);
+                     }
+-                }
+-            }
++
++                    stream.Flush(true);
++                }
++            }
++        }
++
++        static FileStream OpenAppendStreamWithRetry(string path)
++        {
++            IOException lastError = null;
++            for (int attempt = 0; attempt < AppendOpenRetryCount; attempt++)
++            {
++                try
++                {
++                    return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
++                }
++                catch (IOException exception)
++                {
++                    lastError = exception;
++                    Thread.Sleep(AppendOpenRetryDelayMs * (attempt + 1));
++                }
++            }
++
++            throw lastError ?? new IOException("Failed to open AI action log for append.");
+         }
+ 
+         Dictionary<string, string> RedactMetadata(IReadOnlyDictionary<string, string> metadata)
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -1,6 +1,7 @@
+ using System;
+ using System.Collections.Generic;
+ using System.IO;
++using System.Threading.Tasks;
+ using NUnit.Framework;
+ 
+ namespace Linalab.LuxEditor.Tests
+@@ -69,6 +70,77 @@
+             Assert.That(recent, Has.Count.EqualTo(2));
+             Assert.That(recent[0].action, Is.EqualTo("second"));
+             Assert.That(recent[1].action, Is.EqualTo("third"));
++        }
++
++        [Test]
++        public void Record_PreservesExistingContentAcrossRepeatedAppends()
++        {
++            string path = GetTempLogPath();
++            Directory.CreateDirectory(Path.GetDirectoryName(path));
++            File.WriteAllText(path, "{\"existing\":true}\n");
++
++            using (var log = new UnityEditor.LuxAiActionLog(logPath: path))
++            {
++                log.Record("test", "agent", "repeat", "first", "target", "first message");
++                log.Record("test", "agent", "repeat", "second", "target", "second message");
++                log.Flush();
++            }
++
++            string[] lines = File.ReadAllLines(path);
++
++            Assert.That(lines, Has.Length.EqualTo(3));
++            Assert.That(lines[0], Is.EqualTo("{\"existing\":true}"));
++            Assert.That(lines[1], Does.Contain("\"action\":\"first\""));
++            Assert.That(lines[2], Does.Contain("\"action\":\"second\""));
++        }
++
++        [Test]
++        public void Record_ConcurrentInstancesAppendCompleteJsonlRecords()
++        {
++            string path = GetTempLogPath();
++            Directory.CreateDirectory(Path.GetDirectoryName(path));
++            File.WriteAllText(path, "{\"existing\":true}\n");
++            using var firstLog = new UnityEditor.LuxAiActionLog(logPath: path);
++            using var secondLog = new UnityEditor.LuxAiActionLog(logPath: path);
++            var logs = new[] { firstLog, secondLog };
++            const int EventCount = 80;
++
++            Parallel.For(0, EventCount, index =>
++            {
++                logs[index % logs.Length].Record(
++                    "test",
++                    "agent",
++                    "concurrent",
++                    "append-" + index,
++                    "target",
++                    "message-" + index);
++            });
++            firstLog.Flush();
++            secondLog.Flush();
++
++            string[] lines = File.ReadAllLines(path);
++            var actions = new HashSet<string>(StringComparer.Ordinal);
++
++            Assert.That(lines, Has.Length.EqualTo(EventCount + 1));
++            Assert.That(lines[0], Is.EqualTo("{\"existing\":true}"));
++            for (int index = 1; index < lines.Length; index++)
++            {
++                Assert.That(lines[index], Does.StartWith("{"));
++                Assert.That(lines[index], Does.EndWith("}"));
++                Assert.That(lines[index], Does.Contain("\"protocol\":\"lux.ai.action_log.v1\""));
++                int actionStart = lines[index].IndexOf("\"action\":\"", StringComparison.Ordinal);
++                Assert.That(actionStart, Is.GreaterThanOrEqualTo(0));
++                actionStart += "\"action\":\"".Length;
++                int actionEnd = lines[index].IndexOf("\"", actionStart, StringComparison.Ordinal);
++                Assert.That(actionEnd, Is.GreaterThan(actionStart));
++                actions.Add(lines[index].Substring(actionStart, actionEnd - actionStart));
++            }
++
++            Assert.That(actions, Has.Count.EqualTo(EventCount));
++            for (int index = 0; index < EventCount; index++)
++            {
++                Assert.That(actions.Contains("append-" + index), Is.True);
++            }
+         }
+ 
+         [Test]
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -1,15 +1,20 @@
+ use std::{
+-    fs::{self, File},
++    collections::HashMap,
++    fs::{self, File, OpenOptions},
+     io::{BufRead, BufReader, Write},
+     path::{Path, PathBuf},
++    sync::{Arc, Mutex, OnceLock},
+ };
+ 
+ use anyhow::{Context, Result};
+ use serde::{Deserialize, Serialize};
+ use serde_json::{json, Value};
+ 
++use crate::protocol::EventEnvelope;
++
+ const LOG_RELATIVE_PATH: [&str; 2] = [".lux", "ai-action-log.jsonl"];
+ const LEGACY_LOG_RELATIVE_PATH: [&str; 2] = ["UserSettings", "LuxAiActionLog.jsonl"];
++static APPEND_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+ 
+ #[derive(Clone, Debug, Default, Eq, PartialEq)]
+ pub struct AiLogFilter {
+@@ -85,12 +90,56 @@
+         })
+ }
+ 
++fn append_lock_for(path: &Path) -> Arc<Mutex<()>> {
++    let locks = APPEND_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
++    let mut locks = locks
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
++    locks
++        .entry(path.to_path_buf())
++        .or_insert_with(|| Arc::new(Mutex::new(())))
++        .clone()
++}
++
+ pub fn parse_jsonl_values(reader: impl BufRead) -> Vec<Value> {
+     reader
+         .lines()
+         .map_while(Result::ok)
+         .filter_map(|line| parse_jsonl_line(&line))
+         .collect()
++}
++
++pub fn serialize_event_record(event: &EventEnvelope) -> Result<String> {
++    let value = serde_json::to_value(event.clone().normalize())
++        .context("failed to serialize AI log event record")?;
++    if !value.is_object() {
++        anyhow::bail!("AI log event records must serialize as JSON objects");
++    }
++
++    serde_json::to_string(&value).context("failed to encode AI log event record")
++}
++
++pub fn append_event_record(path: impl AsRef<Path>, event: &EventEnvelope) -> Result<()> {
++    let path = path.as_ref();
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)
++            .with_context(|| format!("failed to create AI log directory {}", parent.display()))?;
++    }
++
++    let line = serialize_event_record(event)? + "\n";
++    let append_lock = append_lock_for(path);
++    let _guard = append_lock
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
++    let mut file = OpenOptions::new()
++        .create(true)
++        .append(true)
++        .open(path)
++        .with_context(|| format!("failed to open AI log {}", path.display()))?;
++    file.write_all(line.as_bytes())
++        .with_context(|| format!("failed to append AI log {}", path.display()))?;
++    file.sync_data()
++        .with_context(|| format!("failed to sync AI log {}", path.display()))
+ }
+ 
+ pub fn read_log_entries(path: impl AsRef<Path>, filter: &AiLogFilter) -> Result<Vec<AiLogEntry>> {
+@@ -151,6 +200,10 @@
+ 
+ pub fn compact_log_file(path: impl AsRef<Path>, max_lines: usize) -> Result<AiLogCompactResult> {
+     let path = path.as_ref();
++    let append_lock = append_lock_for(path);
++    let _guard = append_lock
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
+     let file =
+         File::open(path).with_context(|| format!("failed to open AI log {}", path.display()))?;
+     let mut valid_lines = Vec::new();
+@@ -277,7 +330,11 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use crate::protocol::{EventCategory, EventEnvelope};
++    use std::collections::BTreeSet;
+     use std::io::Cursor;
++    use std::sync::Arc;
++    use std::thread;
+     use std::time::{SystemTime, UNIX_EPOCH};
+ 
+     #[test]
+@@ -314,6 +371,72 @@
+         assert_eq!(values.len(), 2);
+         assert_eq!(values[0]["actor"], "codex");
+         assert_eq!(values[1]["actor"], "opencode");
++    }
++
++    #[test]
++    fn ai_log_append_preserves_existing_lines_across_repeated_writes() {
++        let path = temp_log_path("append-preserve");
++        fs::write(&path, "{\"actor\":\"existing\"}\n").unwrap();
++        let first = test_event("repeat-first");
++        let second = test_event("repeat-second");
++
++        append_event_record(&path, &first).unwrap();
++        append_event_record(&path, &second).unwrap();
++
++        let contents = fs::read_to_string(&path).unwrap();
++        let lines: Vec<_> = contents.lines().collect();
++        assert_eq!(lines.len(), 3);
++        assert_eq!(lines[0], "{\"actor\":\"existing\"}");
++        assert_eq!(
++            serde_json::from_str::<Value>(lines[1]).unwrap()["event_id"],
++            "repeat-first"
++        );
++        assert_eq!(
++            serde_json::from_str::<Value>(lines[2]).unwrap()["event_id"],
++            "repeat-second"
++        );
++
++        let _ = fs::remove_file(path);
++    }
++
++    #[test]
++    fn ai_log_concurrent_appends_preserve_all_jsonl_records() {
++        const WRITER_COUNT: usize = 8;
++        const EVENTS_PER_WRITER: usize = 20;
++        let path = Arc::new(temp_log_path("append-concurrent"));
++        fs::write(&*path, "{\"actor\":\"existing\"}\n").unwrap();
++
++        let handles: Vec<_> = (0..WRITER_COUNT)
++            .map(|writer| {
++                let path = Arc::clone(&path);
++                thread::spawn(move || {
++                    for index in 0..EVENTS_PER_WRITER {
++                        let event = test_event(&format!("writer-{writer}-event-{index}"));
++                        append_event_record(&*path, &event).unwrap();
++                    }
++                })
++            })
++            .collect();
++
++        for handle in handles {
++            handle.join().unwrap();
++        }
++
++        let contents = fs::read_to_string(&*path).unwrap();
++        let lines: Vec<_> = contents.lines().collect();
++        assert_eq!(lines.len(), 1 + (WRITER_COUNT * EVENTS_PER_WRITER));
++        assert_eq!(lines[0], "{\"actor\":\"existing\"}");
++
++        let mut event_ids = BTreeSet::new();
++        for line in &lines[1..] {
++            let value: Value = serde_json::from_str(line).unwrap();
++            let envelope: EventEnvelope = serde_json::from_value(value).unwrap();
++            assert_eq!(envelope.schema_version, 1);
++            assert!(event_ids.insert(envelope.event_id));
++        }
++
++        assert_eq!(event_ids.len(), WRITER_COUNT * EVENTS_PER_WRITER);
++        let _ = fs::remove_file(&*path);
+     }
+ 
+     #[test]
+@@ -387,6 +510,31 @@
+         );
+     }
+ 
++    fn temp_log_path(prefix: &str) -> PathBuf {
++        std::env::temp_dir().join(format!(
++            "lux-ai-log-{prefix}-{}.jsonl",
++            SystemTime::now()
++                .duration_since(UNIX_EPOCH)
++                .unwrap()
++                .as_nanos()
++        ))
++    }
++
++    fn test_event(event_id: &str) -> EventEnvelope {
++        EventEnvelope {
++            schema_version: 0,
++            event_id: event_id.to_string(),
++            category: EventCategory::AiActionLog,
++            source: "codex".to_string(),
++            session_id: "append-test".to_string(),
++            captured_at_utc: "2026-05-04T00:00:00.0000000Z".to_string(),
++            payload: json!({
++                "action": "append",
++                "message": "append-safe JSONL write"
++            }),
++        }
++    }
++
+     fn temp_project_root(prefix: &str) -> PathBuf {
+         let nanos = SystemTime::now()
+             .duration_since(UNIX_EPOCH)

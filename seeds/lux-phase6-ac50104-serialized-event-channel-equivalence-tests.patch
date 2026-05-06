@@ -1,0 +1,192 @@
+diff --git a/LuxEditorTests/Editor/LuxRuntimeEventChannelTests.cs b/LuxEditorTests/Editor/LuxRuntimeEventChannelTests.cs
+index ba52033..7f3f6ab 100644
+--- a/LuxEditorTests/Editor/LuxRuntimeEventChannelTests.cs
++++ b/LuxEditorTests/Editor/LuxRuntimeEventChannelTests.cs
+@@ -1,4 +1,6 @@
+ using System;
++using System.Collections;
++using System.Collections.Generic;
+ using System.IO;
+ using Linalab.Lux.Runtime;
+ using NUnit.Framework;
+@@ -100,6 +102,67 @@ namespace Linalab.LuxEditor.Tests
+             UnityEngine.Object.DestroyImmediate(channel);
+         }
+ 
++        [Test]
++        public void SerializedChannel_ProducesSameRuntimeRecordAsDirectLoggingApi()
++        {
++            string projectRoot = Path.Combine(tempDirectory, "Project");
++            string directLogPath = Path.Combine(tempDirectory, "direct-runtime-events.jsonl");
++            string channelLogPath = Path.Combine(tempDirectory, "channel-runtime-events.jsonl");
++            var directAttributes = new Dictionary<string, object>
++            {
++                ["entityId"] = "enemy-7",
++                ["scoreValue"] = 150,
++                ["isBoss"] = false,
++                ["position"] = new Vector3(12.5f, 0f, -3.25f)
++            };
++            var directMetadata = new Dictionary<string, string>
++            {
++                ["scenePath"] = "Assets/Scenes/Arena.unity",
++                ["source"] = "serialized-channel"
++            };
++            var directRecord = LuxRuntimeEvent.Emit(
++                "enemy_death",
++                directAttributes,
++                "Enemies/Enemy-7",
++                "Gameplay runtime enemy death logged.",
++                metadata: directMetadata,
++                options: new LuxRuntimeEventOptions
++                {
++                    ProjectRoot = projectRoot,
++                    LogPath = directLogPath
++                });
++            var configuredChannel = ScriptableObject.CreateInstance<LuxRuntimeEventChannel>();
++            var serializedChannel = ScriptableObject.CreateInstance<LuxRuntimeEventChannel>();
++            configuredChannel.Configure(
++                "enemy_death",
++                "Enemies/Enemy-7",
++                "Gameplay runtime enemy death logged.",
++                projectRoot,
++                channelLogPath,
++                new[]
++                {
++                    new LuxRuntimeEventChannelMetadata("scenePath", "Assets/Scenes/Arena.unity"),
++                    new LuxRuntimeEventChannelMetadata("source", "serialized-channel")
++                },
++                new[]
++                {
++                    LuxRuntimeEventChannelAttribute.String("entityId", "enemy-7"),
++                    LuxRuntimeEventChannelAttribute.Integer("scoreValue", 150),
++                    LuxRuntimeEventChannelAttribute.Boolean("isBoss", false),
++                    LuxRuntimeEventChannelAttribute.Vector3("position", new Vector3(12.5f, 0f, -3.25f))
++                });
++            EditorJsonUtility.FromJsonOverwrite(EditorJsonUtility.ToJson(configuredChannel), serializedChannel);
++
++            var channelRecord = serializedChannel.Emit();
++
++            AssertRuntimeRecordsMatch(directRecord, channelRecord);
++            Assert.That(File.ReadAllText(directLogPath), Does.Contain("\"eventType\":\"enemy_death\""));
++            Assert.That(File.ReadAllText(channelLogPath), Does.Contain("\"eventType\":\"enemy_death\""));
++            Assert.That(File.ReadAllText(channelLogPath), Does.Contain("\"projectPath\":\"" + Escape(projectRoot) + "\""));
++            UnityEngine.Object.DestroyImmediate(configuredChannel);
++            UnityEngine.Object.DestroyImmediate(serializedChannel);
++        }
++
+         [Test]
+         public void ChannelConfiguration_IsUnitySerialized()
+         {
+@@ -119,6 +181,112 @@ namespace Linalab.LuxEditor.Tests
+             UnityEngine.Object.DestroyImmediate(channel);
+         }
+ 
++        static void AssertRuntimeRecordsMatch(LuxRuntimeEventRecord expected, LuxRuntimeEventRecord actual)
++        {
++            Assert.That(actual, Is.Not.Null);
++            Assert.That(expected.id, Is.Not.Empty);
++            Assert.That(actual.id, Is.Not.Empty);
++            Assert.That(actual.id, Is.Not.EqualTo(expected.id));
++            Assert.That(actual.schemaVersion, Is.EqualTo(expected.schemaVersion));
++            Assert.That(actual.protocol, Is.EqualTo(expected.protocol));
++            Assert.That(actual.timestampUtc, Is.EqualTo(expected.timestampUtc));
++            Assert.That(actual.projectPath, Is.EqualTo(expected.projectPath));
++            Assert.That(actual.source, Is.EqualTo(expected.source));
++            Assert.That(actual.actor, Is.EqualTo(expected.actor));
++            Assert.That(actual.category, Is.EqualTo(expected.category));
++            Assert.That(actual.type, Is.EqualTo(expected.type));
++            Assert.That(actual.action, Is.EqualTo(expected.action));
++            Assert.That(actual.target, Is.EqualTo(expected.target));
++            Assert.That(actual.summary, Is.EqualTo(expected.summary));
++            Assert.That(actual.message, Is.EqualTo(expected.message));
++            Assert.That(actual.severity, Is.EqualTo(expected.severity));
++            Assert.That(actual.success, Is.EqualTo(expected.success));
++            AssertStringDictionaryMatches(expected.metadata, actual.metadata);
++            AssertPayloadMatches(expected.payload, actual.payload);
++        }
++
++        static void AssertPayloadMatches(LuxRuntimeEventPayload expected, LuxRuntimeEventPayload actual)
++        {
++            Assert.That(actual, Is.Not.Null);
++            Assert.That(actual.kind, Is.EqualTo(expected.kind));
++            Assert.That(actual.eventType, Is.EqualTo(expected.eventType));
++            Assert.That(actual.summary, Is.EqualTo(expected.summary));
++            Assert.That(actual.status, Is.EqualTo(expected.status));
++            Assert.That(actual.target, Is.EqualTo(expected.target));
++            AssertObjectDictionaryMatches(expected.attributes, actual.attributes);
++        }
++
++        static void AssertStringDictionaryMatches(
++            IReadOnlyDictionary<string, string> expected,
++            IReadOnlyDictionary<string, string> actual)
++        {
++            Assert.That(actual, Is.Not.Null);
++            Assert.That(actual.Count, Is.EqualTo(expected.Count));
++            foreach (var pair in expected)
++            {
++                Assert.That(actual.ContainsKey(pair.Key), Is.True, pair.Key);
++                Assert.That(actual[pair.Key], Is.EqualTo(pair.Value), pair.Key);
++            }
++        }
++
++        static void AssertObjectDictionaryMatches(
++            IReadOnlyDictionary<string, object> expected,
++            IReadOnlyDictionary<string, object> actual)
++        {
++            Assert.That(actual, Is.Not.Null);
++            Assert.That(actual.Count, Is.EqualTo(expected.Count));
++            foreach (var pair in expected)
++            {
++                Assert.That(actual.ContainsKey(pair.Key), Is.True, pair.Key);
++                AssertObjectValuesMatch(pair.Key, pair.Value, actual[pair.Key]);
++            }
++        }
++
++        static void AssertObjectValuesMatch(string path, object expected, object actual)
++        {
++            if (expected is IDictionary expectedDictionary)
++            {
++                var actualDictionary = actual as IDictionary;
++                Assert.That(actualDictionary, Is.Not.Null, path);
++                Assert.That(actualDictionary.Count, Is.EqualTo(expectedDictionary.Count), path);
++                foreach (DictionaryEntry entry in expectedDictionary)
++                {
++                    Assert.That(actualDictionary.Contains(entry.Key), Is.True, path + "." + entry.Key);
++                    AssertObjectValuesMatch(path + "." + entry.Key, entry.Value, actualDictionary[entry.Key]);
++                }
++
++                return;
++            }
++
++            if (!(expected is string) && expected is IEnumerable expectedEnumerable)
++            {
++                var actualEnumerable = actual as IEnumerable;
++                Assert.That(actualEnumerable, Is.Not.Null, path);
++                var expectedValues = ToList(expectedEnumerable);
++                var actualValues = ToList(actualEnumerable);
++                Assert.That(actualValues.Count, Is.EqualTo(expectedValues.Count), path);
++                for (int index = 0; index < expectedValues.Count; index++)
++                {
++                    AssertObjectValuesMatch(path + "[" + index + "]", expectedValues[index], actualValues[index]);
++                }
++
++                return;
++            }
++
++            Assert.That(actual, Is.EqualTo(expected), path);
++        }
++
++        static List<object> ToList(IEnumerable values)
++        {
++            var result = new List<object>();
++            foreach (var value in values)
++            {
++                result.Add(value);
++            }
++
++            return result;
++        }
++
+         static string Escape(string value)
+         {
+             return value.Replace("\\", "\\\\").Replace("\"", "\\\"");

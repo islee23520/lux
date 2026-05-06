@@ -1,0 +1,326 @@
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -131,14 +131,23 @@
+     let items: Vec<Value> = ordered
+         .iter()
+         .map(|entry| {
++            let event_type = event_type(&entry.value);
++            let summary = compact_summary(&entry.value);
++            let message = compact_message(&entry.value);
+             json!({
+                 "timestampUtc": entry.timestamp,
+-                "actor": string_field(&entry.value, "actor"),
++                "id": event_id(&entry.value),
++                "actor": redacted_string_field(&entry.value, "actor"),
+                 "category": string_field(&entry.value, "category"),
+-                "source": string_field(&entry.value, "source"),
+-                "action": string_field(&entry.value, "action"),
+-                "eventType": event_type(&entry.value),
+-                "summary": compact_summary(&entry.value),
++                "source": redacted_string_field(&entry.value, "source"),
++                "type": event_type.clone(),
++                "action": redacted_string_field(&entry.value, "action"),
++                "target": redacted_string_field(&entry.value, "target"),
++                "status": redacted_string_field(&entry.value, "status"),
++                "tool": redacted_string_field(&entry.value, "tool"),
++                "eventType": event_type,
++                "summary": summary,
++                "message": message,
+             })
+         })
+         .collect();
+@@ -147,6 +156,26 @@
+         "count": items.len(),
+         "entries": items,
+     })
++}
++
++pub fn build_project_continuation_context(
++    project_root: impl AsRef<Path>,
++    log_path: impl AsRef<Path>,
++    entries: &[AiLogEntry],
++    limit: Option<usize>,
++) -> Value {
++    let mut context = build_continuation_context(entries, limit);
++    if let Some(object) = context.as_object_mut() {
++        object.insert(
++            "projectPath".to_string(),
++            Value::String(project_root.as_ref().display().to_string()),
++        );
++        object.insert(
++            "path".to_string(),
++            Value::String(log_path.as_ref().display().to_string()),
++        );
++    }
++    context
+ }
+ 
+ pub fn compact_log_file(path: impl AsRef<Path>, max_lines: usize) -> Result<AiLogCompactResult> {
+@@ -259,16 +288,46 @@
+     string_field(value, "timestampUtc").or_else(|| string_field(value, "captured_at_utc"))
+ }
+ 
++fn event_id(value: &Value) -> Option<String> {
++    string_field(value, "id").or_else(|| string_field(value, "event_id"))
++}
++
+ fn event_type(value: &Value) -> Option<String> {
+-    string_field(value, "eventType").or_else(|| string_field(value, "event_type"))
++    string_field(value, "type")
++        .or_else(|| string_field(value, "eventType"))
++        .or_else(|| string_field(value, "event_type"))
++        .or_else(|| string_field(value, "kind"))
++        .or_else(|| string_field(value, "stepName"))
++        .or_else(|| string_field(value, "action"))
+ }
+ 
+ fn string_field(value: &Value, field: &str) -> Option<String> {
+-    value.get(field)?.as_str().map(ToOwned::to_owned)
++    value
++        .get(field)
++        .and_then(Value::as_str)
++        .or_else(|| value.get("payload")?.get(field)?.as_str())
++        .map(ToOwned::to_owned)
+ }
+ 
++fn redacted_string_field(value: &Value, field: &str) -> Option<String> {
++    string_field(value, field).map(|text| redact_secrets(&text))
++}
++
+ fn compact_summary(value: &Value) -> Option<String> {
+-    ["summary", "message", "description"]
++    [
++        "summary",
++        "message",
++        "description",
++        "resultSummary",
++        "stepName",
++    ]
++    .iter()
++    .find_map(|field| string_field(value, field))
++    .map(|text| redact_secrets(&text))
++}
++
++fn compact_message(value: &Value) -> Option<String> {
++    ["message", "summary", "description", "resultSummary"]
+         .iter()
+         .find_map(|field| string_field(value, field))
+         .map(|text| redact_secrets(&text))
+@@ -341,18 +400,39 @@
+     #[test]
+     fn ai_log_continuation_context_orders_by_timestamp() {
+         let entries = parse_entries(Cursor::new(
+-            "{\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"actor\":\"codex\",\"summary\":\"second\"}\n\
+-             {\"captured_at_utc\":\"2026-05-04T00:00:01Z\",\"actor\":\"opencode\",\"message\":\"first\"}\n",
++            "{\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"id\":\"top-level-id\",\"actor\":\"codex\",\"category\":\"ai\",\"type\":\"step\",\"summary\":\"second summary\",\"message\":\"second message\"}\n\
++             {\"captured_at_utc\":\"2026-05-04T00:00:01Z\",\"event_id\":\"envelope-id\",\"source\":\"unity\",\"payload\":{\"actor\":\"opencode\",\"category\":\"editor\",\"action\":\"legacy_action\",\"message\":\"first message\",\"status\":\"completed\",\"tool\":\"selection\"}}\n",
+         ));
+ 
+         let context = build_continuation_context(&entries, None);
+         let items = context["entries"].as_array().unwrap();
+         assert_eq!(items[0]["timestampUtc"], "2026-05-04T00:00:01Z");
+-        assert_eq!(items[0]["summary"], "first");
+-        assert_eq!(items[1]["summary"], "second");
++        assert_eq!(items[0]["id"], "envelope-id");
++        assert_eq!(items[0]["actor"], "opencode");
++        assert_eq!(items[0]["type"], "legacy_action");
++        assert_eq!(items[0]["summary"], "first message");
++        assert_eq!(items[0]["message"], "first message");
++        assert_eq!(items[0]["status"], "completed");
++        assert_eq!(items[0]["tool"], "selection");
++        assert_eq!(items[1]["id"], "top-level-id");
++        assert_eq!(items[1]["category"], "ai");
++        assert_eq!(items[1]["type"], "step");
++        assert_eq!(items[1]["summary"], "second summary");
++        assert_eq!(items[1]["message"], "second message");
+     }
+ 
+     #[test]
++    fn ai_log_project_continuation_context_includes_scope_paths() {
++        let project_root = Path::new("/project");
++        let log_path = project_root.join(".lux/ai-action-log.jsonl");
++        let context = build_project_continuation_context(project_root, &log_path, &[], Some(20));
++
++        assert_eq!(context["projectPath"], "/project");
++        assert_eq!(context["path"], "/project/.lux/ai-action-log.jsonl");
++        assert_eq!(context["count"], 0);
++    }
++
++    #[test]
+     fn ai_log_compact_preserves_valid_jsonl_and_drops_excess_invalid_lines() {
+         let path = std::env::temp_dir().join(format!(
+             "lux-ai-log-test-{}.jsonl",
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -163,6 +163,16 @@
+     limit: usize,
+     #[arg(long, default_value_t = false)]
+     json: bool,
++    #[arg(long)]
++    actor: Option<String>,
++    #[arg(long)]
++    category: Option<String>,
++    #[arg(long)]
++    source: Option<String>,
++    #[arg(long)]
++    action: Option<String>,
++    #[arg(long)]
++    event_type: Option<String>,
+ }
+ 
+ #[derive(Parser, Debug)]
+@@ -715,12 +725,19 @@
+ 
+ fn print_ai_log_context(args: AiLogContextArgs) -> anyhow::Result<()> {
+     let log_path = ai_log::ensure_log_path(&args.project_path)?;
+-    let filter = ai_log::AiLogFilter {
+-        limit: Some(args.limit),
+-        ..ai_log::AiLogFilter::default()
++    let filter = ai_log_filter_from_context(&args);
++    let context_limit = filter.limit;
++    let read_filter = ai_log::AiLogFilter {
++        limit: None,
++        ..filter
+     };
+-    let entries = ai_log::read_log_entries(&log_path, &filter)?;
+-    let context = ai_log::build_continuation_context(&entries, Some(args.limit));
++    let entries = ai_log::read_log_entries(&log_path, &read_filter)?;
++    let context = ai_log::build_project_continuation_context(
++        &args.project_path,
++        &log_path,
++        &entries,
++        context_limit,
++    );
+ 
+     if args.json {
+         println!("{}", serde_json::to_string_pretty(&context)?);
+@@ -756,6 +773,17 @@
+ }
+ 
+ fn ai_log_filter_from_recent(args: &AiLogRecentArgs) -> ai_log::AiLogFilter {
++    ai_log::AiLogFilter {
++        limit: Some(args.limit),
++        actor: args.actor.clone(),
++        category: args.category.clone(),
++        source: args.source.clone(),
++        action: args.action.clone(),
++        event_type: args.event_type.clone(),
++    }
++}
++
++fn ai_log_filter_from_context(args: &AiLogContextArgs) -> ai_log::AiLogFilter {
+     ai_log::AiLogFilter {
+         limit: Some(args.limit),
+         actor: args.actor.clone(),
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -511,9 +511,19 @@
+         )
+             .into_response());
+     };
++    let project_root = state
++        .config
++        .project_root
++        .as_ref()
++        .expect("project root exists when AI log path resolves");
+     let filter = ai_log_filter(query);
+     if !path.exists() {
+-        return Ok(Json(ai_log::build_continuation_context(&[], filter.limit)));
++        return Ok(Json(ai_log::build_project_continuation_context(
++            project_root,
++            &path,
++            &[],
++            filter.limit,
++        )));
+     }
+     let context_limit = filter.limit;
+     let read_filter = AiLogFilter {
+@@ -521,7 +531,9 @@
+         ..filter
+     };
+     let entries = ai_log::read_log_entries(&path, &read_filter).map_err(internal_error)?;
+-    Ok(Json(ai_log::build_continuation_context(
++    Ok(Json(ai_log::build_project_continuation_context(
++        project_root,
++        &path,
+         &entries,
+         context_limit,
+     )))
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -70,6 +70,7 @@
+     assert_command_help_contains(&["ai-log", "recent", "--help"], "--event-type");
+     assert_command_help_contains(&["ai-log", "tail", "--help"], "--follow");
+     assert_command_help_contains(&["ai-log", "context", "--help"], "--json");
++    assert_command_help_contains(&["ai-log", "context", "--help"], "--event-type");
+     assert_command_help_contains(&["ai-log", "compact", "--help"], "--max-lines");
+     assert_command_help_contains(&["unity", "status", "--help"], "--project-path");
+     assert_command_help_contains(&["unity", "context", "--help"], "--refresh");
+@@ -161,10 +162,67 @@
+ 
+     assert_command_success(&output, "lux ai-log context");
+     let parsed: Value = serde_json::from_slice(&output.stdout).expect("context JSON");
++    assert_eq!(
++        parsed["projectPath"],
++        project_root.to_str().expect("project path UTF-8")
++    );
++    assert!(parsed["path"]
++        .as_str()
++        .expect("context path string")
++        .ends_with(".lux/ai-action-log.jsonl"));
+     assert_eq!(parsed["count"], 2);
+     let entries = parsed["entries"].as_array().expect("entries array");
+     assert_eq!(entries[0]["summary"], "third codex edit");
+     assert_eq!(entries[1]["summary"], "opencode review");
++}
++
++#[test]
++fn ai_log_context_json_filters_before_timestamp_limit() {
++    let project_root = create_temp_dir("lux-ai-log-context-filter").join("Project");
++    let lux_directory = project_root.join(".lux");
++    fs::create_dir_all(&lux_directory).expect("create .lux");
++    fs::write(
++        lux_directory.join("ai-action-log.jsonl"),
++        concat!(
++            "{\"timestampUtc\":\"2026-05-04T00:00:04Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"cli\",\"action\":\"edit\",\"eventType\":\"append\",\"summary\":\"newest matching\"}\n",
++            "{\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"cli\",\"action\":\"edit\",\"eventType\":\"append\",\"summary\":\"older matching\"}\n",
++            "{\"timestampUtc\":\"2026-05-04T00:00:03Z\",\"actor\":\"opencode\",\"category\":\"review\",\"source\":\"cli\",\"action\":\"qa\",\"eventType\":\"complete\",\"summary\":\"filtered review\"}\n",
++            "{\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"cli\",\"action\":\"edit\",\"eventType\":\"append\",\"summary\":\"stale matching\"}\n",
++        ),
++    )
++    .expect("write AI log fixture");
++
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "context",
++            "--project-path",
++            project_root.to_str().expect("project path UTF-8"),
++            "--limit",
++            "2",
++            "--json",
++            "--actor",
++            "codex",
++            "--category",
++            "ai-action-log",
++            "--source",
++            "cli",
++            "--action",
++            "edit",
++            "--event-type",
++            "append",
++        ])
++        .output()
++        .expect("run filtered lux ai-log context");
++
++    assert_command_success(&output, "filtered lux ai-log context");
++    let parsed: Value = serde_json::from_slice(&output.stdout).expect("context JSON");
++    assert_eq!(parsed["count"], 2);
++    let entries = parsed["entries"].as_array().expect("entries array");
++    assert_eq!(entries[0]["summary"], "older matching");
++    assert_eq!(entries[1]["summary"], "newest matching");
++    assert_eq!(entries[1]["type"], "append");
++    assert_eq!(entries[1]["message"], "newest matching");
+ }
+ 
+ #[test]

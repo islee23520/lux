@@ -1,0 +1,193 @@
+diff --git a/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs b/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs
+new file mode 100644
+index 0000000..f6dc3a1
+--- /dev/null
++++ b/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs
+@@ -0,0 +1,170 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using Linalab.Lux.Runtime;
++using NUnit.Framework;
++using UnityEngine;
++
++namespace Linalab.LuxEditor.Tests
++{
++    public sealed class LuxRuntimeEventStaticApiSmokeTests
++    {
++        string tempDirectory;
++
++        [SetUp]
++        public void SetUp()
++        {
++            tempDirectory = Path.Combine(Path.GetTempPath(), "LuxRuntimeEventStaticApiSmokeTests", Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(tempDirectory);
++        }
++
++        [TearDown]
++        public void TearDown()
++        {
++            LuxRuntimeEvent.ResetForTests();
++            if (!string.IsNullOrWhiteSpace(tempDirectory) && Directory.Exists(tempDirectory))
++            {
++                Directory.Delete(tempDirectory, true);
++            }
++        }
++
++        [Test]
++        public void StaticApiSmokeSample_EmitsUnifiedRuntimeEventSchema()
++        {
++            string projectRoot = Path.Combine(tempDirectory, "Project");
++            string logPath = Path.Combine(projectRoot, "UserSettings", "LuxAiActionLog.jsonl");
++            LuxRuntimeEvent.ConfigureForTests(
++                logPath,
++                projectRoot,
++                () => new DateTime(2026, 5, 5, 12, 30, 0, DateTimeKind.Utc));
++            var sampleObject = new GameObject("LuxRuntimeEventStaticApiSmokeSample");
++
++            try
++            {
++                var emitter = sampleObject.AddComponent<LuxRuntimeEventStaticApiSmokeEmitter>();
++
++                var record = emitter.EmitEnemyDeath();
++
++                string[] lines = File.ReadAllLines(logPath);
++                var decoded = JsonUtility.FromJson<LuxRuntimeEventSchemaSmokeRecord>(lines[0]);
++
++                Assert.That(lines, Has.Length.EqualTo(1));
++                Assert.That(record.schemaVersion, Is.EqualTo(1));
++                Assert.That(record.protocol, Is.EqualTo("lux.ai.action_log.v1"));
++                Assert.That(record.source, Is.EqualTo("unity-runtime"));
++                Assert.That(record.actor, Is.EqualTo("gameplay"));
++                Assert.That(record.category, Is.EqualTo("runtime"));
++                Assert.That(record.type, Is.EqualTo("enemy_death"));
++                Assert.That(record.action, Is.EqualTo("enemy_death"));
++                Assert.That(record.target, Is.EqualTo("Enemies/Enemy-7"));
++                Assert.That(record.summary, Is.EqualTo("Static API smoke sample emitted enemy death."));
++                Assert.That(record.message, Is.EqualTo(record.summary));
++                Assert.That(record.severity, Is.EqualTo("info"));
++                Assert.That(record.success, Is.True);
++                Assert.That(record.metadata["sample"], Is.EqualTo("static-api-smoke"));
++                Assert.That(record.payload.kind, Is.EqualTo("runtime-gameplay-event"));
++                Assert.That(record.payload.eventType, Is.EqualTo("enemy_death"));
++                Assert.That(record.payload.status, Is.EqualTo("completed"));
++
++                Assert.That(decoded.schemaVersion, Is.EqualTo(1));
++                Assert.That(decoded.protocol, Is.EqualTo("lux.ai.action_log.v1"));
++                Assert.That(decoded.timestampUtc, Is.EqualTo("2026-05-05T12:30:00.0000000Z"));
++                Assert.That(decoded.projectPath, Is.EqualTo(projectRoot));
++                Assert.That(decoded.source, Is.EqualTo("unity-runtime"));
++                Assert.That(decoded.actor, Is.EqualTo("gameplay"));
++                Assert.That(decoded.category, Is.EqualTo("runtime"));
++                Assert.That(decoded.type, Is.EqualTo("enemy_death"));
++                Assert.That(decoded.action, Is.EqualTo("enemy_death"));
++                Assert.That(decoded.target, Is.EqualTo("Enemies/Enemy-7"));
++                Assert.That(decoded.summary, Is.EqualTo("Static API smoke sample emitted enemy death."));
++                Assert.That(decoded.message, Is.EqualTo(decoded.summary));
++                Assert.That(decoded.severity, Is.EqualTo("info"));
++                Assert.That(decoded.success, Is.True);
++                Assert.That(decoded.payload.kind, Is.EqualTo("runtime-gameplay-event"));
++                Assert.That(decoded.payload.eventType, Is.EqualTo("enemy_death"));
++                Assert.That(decoded.payload.summary, Is.EqualTo("Static API smoke sample emitted enemy death."));
++                Assert.That(decoded.payload.status, Is.EqualTo("completed"));
++                Assert.That(decoded.payload.target, Is.EqualTo("Enemies/Enemy-7"));
++                Assert.That(decoded.payload.attributes.entityId, Is.EqualTo("enemy-7"));
++                Assert.That(decoded.payload.attributes.scenePath, Is.EqualTo("Assets/Scenes/Arena.unity"));
++                Assert.That(decoded.payload.attributes.position.x, Is.EqualTo(12.5f));
++                Assert.That(decoded.payload.attributes.position.y, Is.EqualTo(0f));
++                Assert.That(decoded.payload.attributes.position.z, Is.EqualTo(-3.25f));
++                Assert.That(decoded.payload.attributes.scoreValue, Is.EqualTo(150));
++                Assert.That(decoded.payload.attributes.isBoss, Is.False);
++                Assert.That(decoded.payload.attributes.tags, Is.EqualTo(new[] { "runtime", "combat" }));
++                Assert.That(lines[0], Does.Contain("\"metadata\":{\"sample\":\"static-api-smoke\"}"));
++                Assert.That(lines[0], Does.Contain("\"redactionMetadata\""));
++                Assert.That(lines[0], Does.Contain("\"retentionMetadata\""));
++            }
++            finally
++            {
++                UnityEngine.Object.DestroyImmediate(sampleObject);
++            }
++        }
++
++        [Serializable]
++        sealed class LuxRuntimeEventSchemaSmokeRecord
++        {
++            public int schemaVersion;
++            public string protocol;
++            public string id;
++            public string timestampUtc;
++            public string projectPath;
++            public string source;
++            public string actor;
++            public string category;
++            public string type;
++            public string action;
++            public string target;
++            public string summary;
++            public string message;
++            public string severity;
++            public bool success;
++            public LuxRuntimeEventSchemaSmokePayload payload;
++        }
++
++        [Serializable]
++        sealed class LuxRuntimeEventSchemaSmokePayload
++        {
++            public string kind;
++            public string eventType;
++            public string summary;
++            public string status;
++            public string target;
++            public LuxRuntimeEventSchemaSmokeAttributes attributes;
++        }
++
++        [Serializable]
++        sealed class LuxRuntimeEventSchemaSmokeAttributes
++        {
++            public string entityId;
++            public string scenePath;
++            public Vector3 position;
++            public int scoreValue;
++            public bool isBoss;
++            public string[] tags;
++        }
++    }
++
++    public sealed class LuxRuntimeEventStaticApiSmokeEmitter : MonoBehaviour
++    {
++        public LuxRuntimeEventRecord EmitEnemyDeath()
++        {
++            return LuxRuntimeEvent.Emit(
++                "enemy_death",
++                new Dictionary<string, object>
++                {
++                    ["entityId"] = "enemy-7",
++                    ["scenePath"] = "Assets/Scenes/Arena.unity",
++                    ["position"] = new Vector3(12.5f, 0f, -3.25f),
++                    ["scoreValue"] = 150,
++                    ["isBoss"] = false,
++                    ["tags"] = new[] { "runtime", "combat" }
++                },
++                "Enemies/Enemy-7",
++                "Static API smoke sample emitted enemy death.",
++                metadata: new Dictionary<string, string> { ["sample"] = "static-api-smoke" });
++        }
++    }
++}
+diff --git a/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs.meta b/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs.meta
+new file mode 100644
+index 0000000..6ad23da
+--- /dev/null
++++ b/LuxEditorTests/Editor/LuxRuntimeEventStaticApiSmokeTests.cs.meta
+@@ -0,0 +1,11 @@
++fileFormatVersion: 2
++guid: 7aa480b6094d4f77b381fb54f68ab74c
++MonoImporter:
++  externalObjects: {}
++  serializedVersion: 2
++  defaultReferences: []
++  executionOrder: 0
++  icon: {instanceID: 0}
++  userData:
++  assetBundleName:
++  assetBundleVariant:

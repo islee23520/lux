@@ -1,0 +1,200 @@
+diff --git a/RustGateway~/src/protocol.rs b/RustGateway~/src/protocol.rs
+--- a/RustGateway~/src/protocol.rs
++++ b/RustGateway~/src/protocol.rs
+@@ -24,6 +24,8 @@ pub struct EventEnvelope {
+     pub source: String,
+     pub session_id: String,
+     pub captured_at_utc: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub metadata: Option<Value>,
+     pub payload: Value,
+ }
+ 
+@@ -36,6 +38,7 @@ impl EventEnvelope {
+             source: "unity-editor".to_string(),
+             session_id: "example-session".to_string(),
+             captured_at_utc: "2026-04-30T00:00:00.0000000Z".to_string(),
++            metadata: None,
+             payload: json!({
+                 "kind": "example",
+                 "message": "Lux gateway event envelope prototype"
+@@ -48,6 +51,10 @@ impl EventEnvelope {
+             self.schema_version = PROTOCOL_VERSION;
+         }
+ 
++        if matches!(self.metadata.as_ref(), Some(Value::Null)) {
++            self.metadata = None;
++        }
++
+         self
+     }
+ }
+@@ -61,6 +68,7 @@ mod tests {
+         let json = serde_json::to_value(EventEnvelope::schema_example()).unwrap();
+         assert_eq!(json["schema_version"], PROTOCOL_VERSION);
+         assert_eq!(json["category"], "tool");
++        assert!(json.get("metadata").is_none());
+     }
+ 
+     #[test]
+@@ -100,4 +108,60 @@ mod tests {
+         let deserialized: EventCategory = serde_json::from_value(json!("ai-action-log")).unwrap();
+         assert_eq!(deserialized, EventCategory::AiActionLog);
+     }
++
++    #[test]
++    fn event_envelope_roundtrips_optional_metadata() {
++        let event = EventEnvelope {
++            metadata: Some(json!({
++                "producer": "unity-editor",
++                "correlationId": "corr-1",
++                "attempt": 2,
++                "tags": ["phase6", "metadata"]
++            })),
++            ..EventEnvelope::schema_example()
++        };
++
++        let serialized = serde_json::to_value(&event).unwrap();
++        assert_eq!(serialized["metadata"]["producer"], "unity-editor");
++        assert_eq!(serialized["metadata"]["attempt"], 2);
++        assert_eq!(serialized["metadata"]["tags"][0], "phase6");
++
++        let deserialized: EventEnvelope = serde_json::from_value(serialized).unwrap();
++        assert_eq!(
++            deserialized.metadata.unwrap()["correlationId"],
++            "corr-1"
++        );
++    }
++
++    #[test]
++    fn event_envelope_deserializes_absent_or_null_metadata_as_none() {
++        let absent: EventEnvelope = serde_json::from_value(json!({
++            "schema_version": 0,
++            "event_id": "absent-metadata",
++            "category": "tool",
++            "source": "codex",
++            "session_id": "session-1",
++            "captured_at_utc": "2026-05-04T00:00:00.0000000Z",
++            "payload": {"kind": "ai-work-step"}
++        }))
++        .unwrap();
++        let null = serde_json::from_value::<EventEnvelope>(json!({
++            "schema_version": 1,
++            "event_id": "null-metadata",
++            "category": "tool",
++            "source": "codex",
++            "session_id": "session-1",
++            "captured_at_utc": "2026-05-04T00:00:00.0000000Z",
++            "metadata": null,
++            "payload": {"kind": "ai-work-step"}
++        }))
++        .unwrap()
++        .normalize();
++
++        let absent = absent.normalize();
++        assert_eq!(absent.schema_version, PROTOCOL_VERSION);
++        assert!(absent.metadata.is_none());
++        assert!(null.metadata.is_none());
++        assert!(serde_json::to_value(null).unwrap().get("metadata").is_none());
++    }
+ }
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -871,6 +871,7 @@ async fn execute_tool(
+         source: "lux-gateway".to_string(),
+         session_id,
+         captured_at_utc: now,
++        metadata: None,
+         payload,
+     };
+ 
+@@ -1100,6 +1101,7 @@ async fn execute_graph(
+         source: "lux".to_string(),
+         session_id: graph.id.clone(),
+         captured_at_utc: chrono_like_now(),
++        metadata: None,
+         payload: serde_json::json!({
+             "kind": "execute-graph",
+             "graph": graph,
+@@ -1461,6 +1463,7 @@ async fn events_socket(
+         source: "lux".to_string(),
+         session_id: client_id.clone(),
+         captured_at_utc: chrono_like_now(),
++        metadata: None,
+         payload: serde_json::json!({
+             "kind": "client-connected",
+             "role": role,
+@@ -1906,6 +1909,7 @@ mod tests {
+                     source: "test".to_string(),
+                     session_id: "test-session".to_string(),
+                     captured_at_utc: "test-time".to_string(),
++                    metadata: None,
+                     payload: serde_json::json!({ "index": index }),
+                 })
+                 .await;
+diff --git a/LuxEditor/LuxAiActionLog.cs b/LuxEditor/LuxAiActionLog.cs
+--- a/LuxEditor/LuxAiActionLog.cs
++++ b/LuxEditor/LuxAiActionLog.cs
+@@ -441,8 +441,12 @@ namespace UnityEditor
+             AppendJsonProperty(builder, "message", entry.message, false);
+             AppendJsonProperty(builder, "severity", entry.severity, false);
+             AppendJsonProperty(builder, "success", entry.success, false);
+-            builder.Append(",\"metadata\":");
+-            AppendMetadata(builder, entry.metadata);
++            if (entry.metadata != null && entry.metadata.Count > 0)
++            {
++                builder.Append(",\"metadata\":");
++                AppendMetadata(builder, entry.metadata);
++            }
++
+             builder.Append('}');
+             return builder.ToString();
+         }
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -55,6 +55,43 @@ namespace Linalab.LuxEditor.Tests
+         }
+ 
+         [Test]
++        public void Record_OmitsOptionalMetadataWhenNoMetadataIsProvided()
++        {
++            string path = GetTempLogPath();
++            using (var log = new UnityEditor.LuxAiActionLog(logPath: path))
++            {
++                log.Record("opencode", "agent", "compile", "run", "Editor", "Compilation requested");
++                log.Flush();
++            }
++
++            string jsonl = File.ReadAllText(path);
++
++            Assert.That(jsonl, Does.Not.Contain("\"metadata\""));
++        }
++
++        [Test]
++        public void Compact_AcceptsRecordsWithAbsentOrNullMetadata()
++        {
++            string path = GetTempLogPath();
++            Directory.CreateDirectory(Path.GetDirectoryName(path));
++            File.WriteAllText(
++                path,
++                "{\"schemaVersion\":1,\"protocol\":\"lux.ai.action_log.v1\",\"id\":\"absent\",\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"action\":\"run\"}\n" +
++                "{\"schemaVersion\":1,\"protocol\":\"lux.ai.action_log.v1\",\"id\":\"null\",\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"action\":\"run\",\"metadata\":null}\n" +
++                "not-json\n");
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++
++            var result = log.Compact(maxLines: 10);
++            string[] lines = File.ReadAllLines(path);
++
++            Assert.That(result.ValidLineCount, Is.EqualTo(2));
++            Assert.That(result.WrittenLineCount, Is.EqualTo(2));
++            Assert.That(lines, Has.Length.EqualTo(2));
++            Assert.That(lines[0], Does.Contain("\"id\":\"absent\""));
++            Assert.That(lines[1], Does.Contain("\"metadata\":null"));
++        }
++
++        [Test]
+         public void Recent_RespectsCapacity()
+         {
+             string path = GetTempLogPath();

@@ -1,0 +1,399 @@
+diff --git a/LuxEditor/LuxAiActionLogBroadcaster.cs b/LuxEditor/LuxAiActionLogBroadcaster.cs
+index ff5551e..0e5344f 100644
+--- a/LuxEditor/LuxAiActionLogBroadcaster.cs
++++ b/LuxEditor/LuxAiActionLogBroadcaster.cs
+@@ -17,7 +17,9 @@ namespace UnityEditor
+         const double SelectionDebounceSeconds = 0.25;
+         const double ConsoleSummaryDebounceSeconds = 0.5;
+         const int BroadcastBatchSize = 16;
++        const int EditorEventBatchSize = 32;
+         const int MaxQueuedBroadcasts = 256;
++        const int MaxQueuedEditorEvents = 512;
+         const int MaxMetadataValueLength = 512;
+         const string EditorActor = "user";
+         const string EditorSource = "unity-editor";
+@@ -25,6 +27,7 @@ namespace UnityEditor
+ 
+         static readonly object Sync = new object();
+         static readonly Queue<LuxAiActionLogEntry> PendingBroadcasts = new Queue<LuxAiActionLogEntry>();
++        static readonly Queue<LuxPendingEditorEvent> PendingEditorEvents = new Queue<LuxPendingEditorEvent>();
+         static readonly Dictionary<LogType, int> PendingConsoleCounts = new Dictionary<LogType, int>();
+         static readonly LuxAiActionLog SharedLog = new LuxAiActionLog();
+ 
+@@ -186,6 +189,7 @@ namespace UnityEditor
+ 
+         public static void Flush()
+         {
++            DrainEditorEvents(int.MaxValue);
+             log.Flush();
+             PumpBroadcasts();
+         }
+@@ -204,6 +208,7 @@ namespace UnityEditor
+             lock (Sync)
+             {
+                 PendingBroadcasts.Clear();
++                PendingEditorEvents.Clear();
+                 PendingConsoleCounts.Clear();
+             }
+         }
+@@ -213,6 +218,32 @@ namespace UnityEditor
+             return PumpBroadcasts();
+         }
+ 
++        public static int PumpEditorEventsForTests(int maxEvents = 0)
++        {
++            return DrainEditorEvents(maxEvents <= 0 ? EditorEventBatchSize : maxEvents);
++        }
++
++        public static int PendingEditorEventCountForTests()
++        {
++            lock (Sync)
++            {
++                return PendingEditorEvents.Count;
++            }
++        }
++
++        public static void QueueEditorHookEventForTests(
++            string hookName,
++            string eventType,
++            string target,
++            string message,
++            string status,
++            IReadOnlyDictionary<string, string> metadata = null,
++            string severity = "info",
++            bool success = true)
++        {
++            EnqueueEditorHookEvent(hookName, eventType, target, message, status, metadata, severity, success);
++        }
++
+         static void Pump()
+         {
+             double now = Now();
+@@ -227,6 +258,7 @@ namespace UnityEditor
+                 RecordConsoleSummary();
+             }
+ 
++            DrainEditorEvents(EditorEventBatchSize);
+             PumpBroadcasts();
+         }
+ 
+@@ -238,7 +270,7 @@ namespace UnityEditor
+ 
+         static void RecordSelectionChanged()
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "Selection.selectionChanged",
+                 "selection.changed",
+                 Selection.activeObject == null ? string.Empty : Selection.activeObject.name,
+@@ -253,7 +285,7 @@ namespace UnityEditor
+ 
+         static void OnPlayModeStateChanged(PlayModeStateChange state)
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "EditorApplication.playModeStateChanged",
+                 "playmode.state_changed",
+                 state.ToString(),
+@@ -264,22 +296,22 @@ namespace UnityEditor
+ 
+         static void OnHierarchyChanged()
+         {
+-            RecordEditorHookEvent("EditorApplication.hierarchyChanged", "hierarchy.changed", "Hierarchy", "Unity hierarchy changed.", "completed");
++            EnqueueEditorHookEvent("EditorApplication.hierarchyChanged", "hierarchy.changed", "Hierarchy", "Unity hierarchy changed.", "completed");
+         }
+ 
+         static void OnProjectChanged()
+         {
+-            RecordEditorHookEvent("EditorApplication.projectChanged", "project.changed", "Project", "Unity project assets changed.", "completed");
++            EnqueueEditorHookEvent("EditorApplication.projectChanged", "project.changed", "Project", "Unity project assets changed.", "completed");
+         }
+ 
+         static void OnUndoRedoPerformed()
+         {
+-            RecordEditorHookEvent("Undo.undoRedoPerformed", "undo_redo.performed", "Undo", "Unity undo or redo performed.", "completed");
++            EnqueueEditorHookEvent("Undo.undoRedoPerformed", "undo_redo.performed", "Undo", "Unity undo or redo performed.", "completed");
+         }
+ 
+         static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "EditorSceneManager.sceneOpened",
+                 "scene.opened",
+                 scene.path,
+@@ -290,12 +322,12 @@ namespace UnityEditor
+ 
+         static void OnSceneSaved(Scene scene)
+         {
+-            RecordEditorHookEvent("EditorSceneManager.sceneSaved", "scene.saved", scene.path, "Unity scene saved.", "completed");
++            EnqueueEditorHookEvent("EditorSceneManager.sceneSaved", "scene.saved", scene.path, "Unity scene saved.", "completed");
+         }
+ 
+         static void OnSceneClosing(Scene scene, bool removingScene)
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "EditorSceneManager.sceneClosing",
+                 "scene.closing",
+                 scene.path,
+@@ -306,7 +338,7 @@ namespace UnityEditor
+ 
+         static void OnBeforeAssemblyReload()
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "AssemblyReloadEvents.beforeAssemblyReload",
+                 "assembly_reload.before",
+                 "UnityEditor",
+@@ -317,7 +349,7 @@ namespace UnityEditor
+ 
+         static void OnEditorQuitting()
+         {
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "EditorApplication.quitting",
+                 "editor.quitting",
+                 "UnityEditor",
+@@ -362,7 +394,7 @@ namespace UnityEditor
+ 
+             metadata["totalCount"] = total.ToString(System.Globalization.CultureInfo.InvariantCulture);
+ 
+-            RecordEditorHookEvent(
++            EnqueueEditorHookEvent(
+                 "Application.logMessageReceived",
+                 "console.summary",
+                 "Console",
+@@ -407,16 +439,104 @@ namespace UnityEditor
+             string severity = "info",
+             bool success = true)
+         {
+-            string normalizedEventType = NormalizeEditorEventType(eventType);
++            return RecordEditorHookEvent(CreatePendingEditorEvent(hookName, eventType, target, message, status, metadata, severity, success));
++        }
++
++        static LuxAiActionLogEntry RecordEditorHookEvent(LuxPendingEditorEvent pending)
++        {
+             return RecordWithAttribution(
+                 new LuxAiActionAttribution(EditorActor, EditorSource, string.Empty),
+                 EditorCategory,
++                pending.EventType,
++                pending.Target,
++                pending.Message,
++                pending.Severity,
++                pending.Success,
++                BuildEditorEventMetadata(pending.HookName, pending.EventType, pending.Status, pending.Metadata));
++        }
++
++        static void EnqueueEditorHookEvent(
++            string hookName,
++            string eventType,
++            string target,
++            string message,
++            string status,
++            IReadOnlyDictionary<string, string> metadata = null,
++            string severity = "info",
++            bool success = true)
++        {
++            var pending = CreatePendingEditorEvent(hookName, eventType, target, message, status, metadata, severity, success);
++            lock (Sync)
++            {
++                while (PendingEditorEvents.Count >= MaxQueuedEditorEvents)
++                {
++                    PendingEditorEvents.Dequeue();
++                }
++
++                PendingEditorEvents.Enqueue(pending);
++            }
++        }
++
++        static int DrainEditorEvents(int maxEvents)
++        {
++            int recorded = 0;
++            int limit = maxEvents <= 0 ? EditorEventBatchSize : maxEvents;
++            while (recorded < limit)
++            {
++                LuxPendingEditorEvent pending;
++                lock (Sync)
++                {
++                    if (PendingEditorEvents.Count == 0)
++                    {
++                        return recorded;
++                    }
++
++                    pending = PendingEditorEvents.Dequeue();
++                }
++
++                RecordEditorHookEvent(pending);
++                recorded++;
++            }
++
++            return recorded;
++        }
++
++        static LuxPendingEditorEvent CreatePendingEditorEvent(
++            string hookName,
++            string eventType,
++            string target,
++            string message,
++            string status,
++            IReadOnlyDictionary<string, string> metadata,
++            string severity,
++            bool success)
++        {
++            string normalizedEventType = NormalizeEditorEventType(eventType);
++            return new LuxPendingEditorEvent(
++                string.IsNullOrWhiteSpace(hookName) ? "unknown" : hookName.Trim(),
+                 normalizedEventType,
+                 string.IsNullOrWhiteSpace(target) ? "UnityEditor" : target,
+                 string.IsNullOrWhiteSpace(message) ? "Unity Editor event recorded." : message,
+-                severity,
+-                success,
+-                BuildEditorEventMetadata(hookName, normalizedEventType, status, metadata));
++                string.IsNullOrWhiteSpace(status) ? "completed" : status.Trim(),
++                CloneMetadata(metadata),
++                string.IsNullOrWhiteSpace(severity) ? "info" : severity,
++                success);
++        }
++
++        static IReadOnlyDictionary<string, string> CloneMetadata(IReadOnlyDictionary<string, string> metadata)
++        {
++            var result = new Dictionary<string, string>(StringComparer.Ordinal);
++            if (metadata == null)
++            {
++                return result;
++            }
++
++            foreach (var pair in metadata)
++            {
++                result[pair.Key ?? string.Empty] = pair.Value ?? string.Empty;
++            }
++
++            return result;
+         }
+ 
+         static IReadOnlyDictionary<string, string> BuildEditorEventMetadata(
+@@ -587,6 +707,38 @@ namespace UnityEditor
+             public string CorrelationId { get; }
+         }
+ 
++        readonly struct LuxPendingEditorEvent
++        {
++            public LuxPendingEditorEvent(
++                string hookName,
++                string eventType,
++                string target,
++                string message,
++                string status,
++                IReadOnlyDictionary<string, string> metadata,
++                string severity,
++                bool success)
++            {
++                HookName = hookName ?? string.Empty;
++                EventType = eventType ?? string.Empty;
++                Target = target ?? string.Empty;
++                Message = message ?? string.Empty;
++                Status = status ?? string.Empty;
++                Metadata = metadata ?? new Dictionary<string, string>();
++                Severity = severity ?? string.Empty;
++                Success = success;
++            }
++
++            public string HookName { get; }
++            public string EventType { get; }
++            public string Target { get; }
++            public string Message { get; }
++            public string Status { get; }
++            public IReadOnlyDictionary<string, string> Metadata { get; }
++            public string Severity { get; }
++            public bool Success { get; }
++        }
++
+         sealed class AttributionScope : IDisposable
+         {
+             readonly LuxAiActionAttribution previous;
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+index b36729b..68a53bf 100644
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -281,6 +281,80 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(jsonl, Does.Contain("\"objectCount\":\"1\""));
+         }
+ 
++        [Test]
++        public void Broadcaster_QueuesEditorHookEventsUntilExplicitPump()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            var broadcasts = new List<Tuple<string, UnityEditor.LuxAiActionLogEntry>>();
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(
++                log,
++                (eventType, payload) => broadcasts.Add(Tuple.Create(eventType, (UnityEditor.LuxAiActionLogEntry)payload)),
++                () => 0.0);
++
++            UnityEditor.LuxAiActionLogBroadcaster.QueueEditorHookEventForTests(
++                "Selection.selectionChanged",
++                " Selection.Changed ",
++                "Main Camera",
++                "Unity selection changed.",
++                "completed",
++                new Dictionary<string, string>
++                {
++                    ["objectCount"] = "1",
++                    ["apiKey"] = "secret-token"
++                });
++
++            Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PendingEditorEventCountForTests(), Is.EqualTo(1));
++            Assert.That(log.Recent(), Is.Empty);
++            Assert.That(File.Exists(path), Is.False);
++            Assert.That(broadcasts, Is.Empty);
++
++            int recorded = UnityEditor.LuxAiActionLogBroadcaster.PumpEditorEventsForTests();
++            log.Flush();
++
++            var recent = log.Recent();
++            string jsonl = File.ReadAllText(path);
++            Assert.That(recorded, Is.EqualTo(1));
++            Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PendingEditorEventCountForTests(), Is.EqualTo(0));
++            Assert.That(recent, Has.Count.EqualTo(1));
++            Assert.That(recent[0].source, Is.EqualTo("unity-editor"));
++            Assert.That(recent[0].category, Is.EqualTo("editor"));
++            Assert.That(recent[0].action, Is.EqualTo("selection.changed"));
++            Assert.That(recent[0].metadata["hookName"], Is.EqualTo("Selection.selectionChanged"));
++            Assert.That(recent[0].metadata["objectCount"], Is.EqualTo("1"));
++            Assert.That(recent[0].metadata["apiKey"], Is.EqualTo("[REDACTED]"));
++            Assert.That(jsonl, Does.Contain("\"action\":\"selection.changed\""));
++            Assert.That(jsonl, Does.Not.Contain("secret-token"));
++            Assert.That(broadcasts, Is.Empty);
++
++            Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PumpForTests(), Is.EqualTo(1));
++            Assert.That(broadcasts, Has.Count.EqualTo(1));
++            Assert.That(broadcasts[0].Item1, Is.EqualTo("ai_action_log"));
++            Assert.That(broadcasts[0].Item2.metadata["apiKey"], Is.EqualTo("[REDACTED]"));
++        }
++
++        [Test]
++        public void Broadcaster_FlushDrainsPendingEditorHookEventsBeforeLogFlush()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(log, null, () => 0.0);
++
++            UnityEditor.LuxAiActionLogBroadcaster.QueueEditorHookEventForTests(
++                "EditorApplication.playModeStateChanged",
++                "playmode.state_changed",
++                "EnteredPlayMode",
++                "Unity playmode state changed.",
++                "completed");
++
++            UnityEditor.LuxAiActionLogBroadcaster.Flush();
++
++            string jsonl = File.ReadAllText(path);
++            Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PendingEditorEventCountForTests(), Is.EqualTo(0));
++            Assert.That(jsonl, Does.Contain("\"action\":\"playmode.state_changed\""));
++            Assert.That(jsonl, Does.Contain("\"hookName\":\"EditorApplication.playModeStateChanged\""));
++        }
++
+         [Test]
+         public void ExplicitSceneCloseRecordMethod_CapturesUnsafeHookReplacement()
+         {

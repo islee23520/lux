@@ -1,0 +1,93 @@
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -1216,12 +1216,54 @@ fn build_skill_adaptation_metadata(name: &str, source: &str) -> anyhow::Result<V
+         )),
+     }
+ 
++    let adaptation_decisions = json!({
++        "schema": "lux.skill.adaptation.decisions.v1",
++        "status": "accepted",
++        "artifact": "lux-adaptation.json",
++        "decisions": [
++            {
++                "id": "project_scope_install",
++                "decision": "install_project_scoped_skill",
++                "status": "accepted",
++                "reason": "--adapt is valid for project-scoped skill installation",
++            },
++            {
++                "id": "unity_project_validation",
++                "decision": "adapt_for_unity_project",
++                "status": "accepted",
++                "reason": "Project root contains Assets/ and ProjectSettings/",
++                "evidence": {
++                    "assetsDirectory": assets_dir,
++                    "projectSettingsDirectory": project_settings_dir,
++                },
++            },
++            {
++                "id": "source_skill_validation",
++                "decision": "use_source_skill",
++                "status": "accepted",
++                "reason": "Source manifest, SKILL.md, and requested skill name are valid",
++                "evidence": {
++                    "manifestPath": manifest_path,
++                    "skillMdPath": skill_md_path,
++                },
++            },
++            {
++                "id": "adaptation_artifact",
++                "decision": "persist_adaptation_metadata",
++                "status": "accepted",
++                "reason": "Project agents need a structured read path for adaptation results",
++                "output": "lux-adaptation.json",
++            },
++        ],
++    });
++
+     Ok(json!({
+         "schema_version": 1,
+         "protocol": "lux.skill.adaptation.v1",
+         "skill_name": name,
+         "source": source,
+         "project_root": project_root,
++        "adaptation_decisions": adaptation_decisions,
+         "checks": checks,
+         "warnings": warnings,
+     }))
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -387,6 +387,31 @@ fn skill_install_project_adapt_writes_metadata_and_info_json_reads_it() {
+     let adaptation_path = installed_dir.join("lux-adaptation.json");
+     assert!(adaptation_path.is_file());
+ 
++    let stored_adaptation: Value = serde_json::from_str(
++        &fs::read_to_string(&adaptation_path).expect("read installed adaptation metadata"),
++    )
++    .expect("installed adaptation metadata JSON");
++    assert_eq!(
++        stored_adaptation["adaptation_decisions"]["schema"],
++        "lux.skill.adaptation.decisions.v1"
++    );
++    assert_eq!(
++        stored_adaptation["adaptation_decisions"]["artifact"],
++        "lux-adaptation.json"
++    );
++    let decisions = stored_adaptation["adaptation_decisions"]["decisions"]
++        .as_array()
++        .expect("adaptation decisions array");
++    assert!(decisions.iter().any(|decision| {
++        decision["id"] == "adaptation_artifact"
++            && decision["decision"] == "persist_adaptation_metadata"
++            && decision["status"] == "accepted"
++    }));
++    assert_eq!(
++        install_json["adaptation_metadata"]["adaptation_decisions"],
++        stored_adaptation["adaptation_decisions"]
++    );
++
+     let info = Command::new(env!("CARGO_BIN_EXE_lux"))
+         .args(["skill", "info", "smoke-adapt-skill", "--json"])
+         .current_dir(&project)

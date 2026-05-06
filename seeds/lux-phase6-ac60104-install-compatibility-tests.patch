@@ -1,0 +1,204 @@
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -402,6 +402,81 @@ fn skill_install_project_adapt_writes_metadata_and_info_json_reads_it() {
+     );
+ }
+ 
++#[test]
++fn skill_install_adapt_compatible_compatibility_metadata_installs() {
++    let home = create_temp_dir("lux-skill-adapt-compatible-home");
++    let project = create_test_unity_project("lux-skill-adapt-compatible-project", true);
++    let source = create_test_skill_source_with_compatibility(
++        "smoke-adapt-compatible-skill",
++        Some(
++            r#"{
++    "requiresLuxPackage": true,
++    "requiredPackages": ["com.linalab.lux"],
++    "renderPipelines": ["urp"],
++    "platformTargets": ["android", "standalone"],
++    "unityVersion": { "min": "6000.0", "max": "6000.99" },
++    "requiredFeatures": ["package_dependency"]
++  }"#,
++        ),
++    );
++
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "skill",
++            "install",
++            "smoke-adapt-compatible-skill",
++            "--source",
++            source.to_str().expect("source path UTF-8"),
++            "--project",
++            "--adapt",
++            "--json",
++        ])
++        .current_dir(&project)
++        .env("HOME", &home)
++        .output()
++        .expect("run compatible lux skill install --adapt");
++
++    assert_command_success(&output, "compatible lux skill install --adapt");
++    assert!(
++        output.stderr.is_empty(),
++        "compatible install should not emit stderr: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    let parsed: Value = serde_json::from_slice(&output.stdout).expect("install JSON");
++    assert_eq!(parsed["installed"], true);
++    assert_eq!(parsed["adapted"], true);
++    assert!(parsed.get("failure").is_none());
++    let compatibility = &parsed["adaptation_metadata"]["compatibility"];
++    assert_eq!(compatibility["schema"], "lux.skill.compatibility.v1");
++    assert_eq!(compatibility["status"], "compatible");
++    assert_compatibility_check_ok(compatibility, "requires_lux_package");
++    assert_compatibility_check_ok(compatibility, "required_packages");
++    assert_compatibility_check_ok(compatibility, "render_pipeline");
++    assert_compatibility_check_ok(compatibility, "platform_targets");
++    assert_compatibility_check_ok(compatibility, "unity_version_min");
++    assert_compatibility_check_ok(compatibility, "unity_version_max");
++    assert_compatibility_check_ok(compatibility, "required_features");
++
++    let installed_dir = project.join(".lux/skills/smoke-adapt-compatible-skill");
++    assert!(
++        installed_dir.join("manifest.json").is_file(),
++        "compatible adapted skill manifest should be installed"
++    );
++    let stored_adaptation: Value = serde_json::from_str(
++        &fs::read_to_string(installed_dir.join("lux-adaptation.json"))
++            .expect("read installed compatibility adaptation metadata"),
++    )
++    .expect("installed compatibility adaptation JSON");
++    assert_eq!(
++        stored_adaptation["compatibility"]["status"],
++        "compatible"
++    );
++    assert_eq!(
++        stored_adaptation["compatibility"]["declared"]["renderPipelines"][0],
++        "urp"
++    );
++}
++
+ #[test]
+ fn skill_install_adapt_requires_project_scope() {
+     let home = create_temp_dir("lux-skill-adapt-requires-project-home");
+@@ -589,6 +664,81 @@ fn skill_install_adapt_incompatible_plaintext_names_failed_checks() {
+     assert!(stderr.contains("render_pipeline"));
+ }
+ 
++#[test]
++fn skill_install_adapt_incompatible_json_names_all_failed_checks() {
++    let home = create_temp_dir("lux-skill-adapt-json-multi-incompatible-home");
++    let project = create_test_unity_project("lux-skill-adapt-json-multi-incompatible-project", true);
++    let source = create_test_skill_source_with_compatibility(
++        "smoke-adapt-multi-incompatible-skill",
++        Some(
++            r#"{
++    "requiresLuxPackage": true,
++    "requiredPackages": ["com.linalab.lux", "com.example.missing"],
++    "renderPipelines": ["hdrp"],
++    "platformTargets": ["visionos"],
++    "unityVersion": { "min": "7000.0" },
++    "requiredFeatures": ["package_dependency", "unity_ai_bridge_discovery"]
++  }"#,
++        ),
++    );
++
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "skill",
++            "install",
++            "smoke-adapt-multi-incompatible-skill",
++            "--source",
++            source.to_str().expect("source path UTF-8"),
++            "--project",
++            "--adapt",
++            "--json",
++        ])
++        .current_dir(&project)
++        .env("HOME", &home)
++        .output()
++        .expect("run multi-check incompatible lux skill install --adapt");
++
++    assert!(!output.status.success());
++    assert_eq!(output.status.code(), Some(1));
++    assert!(
++        output.stderr.is_empty(),
++        "JSON failure contract should be written to stdout only: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    let parsed: Value = serde_json::from_slice(&output.stdout).expect("error JSON");
++    assert_eq!(parsed["installed"], false);
++    assert_eq!(parsed["error_code"], "adapted_skill_incompatible");
++    let error = parsed["error"].as_str().expect("error string");
++    assert!(error.contains("required_packages"));
++    assert!(error.contains("render_pipeline"));
++    assert!(error.contains("platform_targets"));
++    assert!(error.contains("unity_version_min"));
++    assert!(error.contains("required_features"));
++    assert_eq!(parsed["failure"]["schema"], "lux.skill.install_failure.v1");
++    assert_eq!(parsed["failure"]["compatibility_status"], "incompatible");
++    assert_eq!(parsed["failure"]["skill_name"], "smoke-adapt-multi-incompatible-skill");
++    assert!(parsed["failure"]["recovery"]
++        .as_str()
++        .expect("recovery text")
++        .contains("lux skill install --project --adapt"));
++    assert_compatibility_failed_checks(
++        &parsed["failure"],
++        &[
++            "required_packages",
++            "render_pipeline",
++            "platform_targets",
++            "unity_version_min",
++            "required_features",
++        ],
++    );
++    assert!(
++        !project
++            .join(".lux/skills/smoke-adapt-multi-incompatible-skill")
++            .exists(),
++        "incompatible adapted skill must not be installed"
++    );
++}
++
+ #[test]
+ fn skill_install_refuses_core_removal() {
+     let home = create_temp_dir("lux-skill-core-remove-home");
+@@ -2540,6 +2690,36 @@ fn create_test_skill_source_with_compatibility(
+     source
+ }
+ 
++fn assert_compatibility_check_ok(compatibility: &Value, name: &str) {
++    let check = compatibility["checks"]
++        .as_array()
++        .expect("compatibility checks array")
++        .iter()
++        .find(|check| check["name"] == name)
++        .unwrap_or_else(|| panic!("missing compatibility check {name}"));
++    assert_eq!(check["ok"], true, "compatibility check {name} should pass");
++}
++
++fn assert_compatibility_failed_checks(failure: &Value, expected: &[&str]) {
++    let failed_checks = failure["failed_checks"]
++        .as_array()
++        .expect("failed checks array")
++        .iter()
++        .filter_map(Value::as_str)
++        .collect::<Vec<_>>();
++    for expected_check in expected {
++        assert!(
++            failed_checks.contains(expected_check),
++            "expected failed compatibility check {expected_check}; got {failed_checks:?}"
++        );
++    }
++    assert_eq!(
++        failed_checks.len(),
++        expected.len(),
++        "failure message should name only failed checks"
++    );
++}
++
+ fn create_test_unity_project(prefix: &str, include_lux_package: bool) -> std::path::PathBuf {
+     let project = create_temp_dir(prefix);
+     fs::create_dir_all(project.join("Assets")).expect("create Assets dir");

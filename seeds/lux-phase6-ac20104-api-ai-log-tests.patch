@@ -1,0 +1,90 @@
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -1728,6 +1728,18 @@ mod tests {
+         app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+             .await
+             .unwrap()
++    }
++
++    async fn get_with_token(app: Router, uri: &str, token: &str) -> Response {
++        app.oneshot(
++            Request::builder()
++                .uri(uri)
++                .header("x-lux-token", token)
++                .body(Body::empty())
++                .unwrap(),
++        )
++        .await
++        .unwrap()
+     }
+ 
+     async fn response_json(response: Response) -> serde_json::Value {
+@@ -1962,7 +1974,67 @@ mod tests {
+         let json = response_json(authorized).await;
+         assert_eq!(json.as_array().unwrap().len(), 1);
+         assert_eq!(json[0]["value"]["actor"], "codex");
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_endpoint_rejects_invalid_token() {
++        let project_root = temp_project_root("invalid-token");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\"}\n",
++        );
++        let app = test_app_with_project(project_root.clone());
++
++        let response = get_with_token(app, "/api/ai-log", "wrong-secret").await;
++        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_endpoint_reads_only_configured_project_log() {
++        let configured_project = temp_project_root("isolation-configured");
++        let other_project = temp_project_root("isolation-other");
++        write_ai_log(
++            &configured_project,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"summary\":\"configured project\"}\n",
++        );
++        write_ai_log(
++            &other_project,
++            "{\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"actor\":\"opencode\",\"summary\":\"other project\"}\n",
++        );
++        let app = test_app_with_project(configured_project.clone());
+ 
++        let response = authenticated_get(app, "/api/ai-log?limit=10").await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++        let entries = json.as_array().unwrap();
++        assert_eq!(entries.len(), 1);
++        assert_eq!(entries[0]["value"]["summary"], "configured project");
++        assert_ne!(entries[0]["value"]["summary"], "other project");
++
++        let _ = fs::remove_dir_all(configured_project);
++        let _ = fs::remove_dir_all(other_project);
++    }
++
++    #[tokio::test]
++    async fn ai_log_endpoints_return_empty_responses_when_log_is_missing() {
++        let project_root = temp_project_root("empty-log");
++        let app = test_app_with_project(project_root.clone());
++
++        let list_response = authenticated_get(app.clone(), "/api/ai-log").await;
++        assert_eq!(list_response.status(), StatusCode::OK);
++        let list_json = response_json(list_response).await;
++        assert_eq!(list_json.as_array().unwrap().len(), 0);
++
++        let context_response = authenticated_get(app, "/api/ai-log/context").await;
++        assert_eq!(context_response.status(), StatusCode::OK);
++        let context_json = response_json(context_response).await;
++        assert_eq!(context_json["count"], 0);
++        assert_eq!(context_json["entries"].as_array().unwrap().len(), 0);
++
+         let _ = fs::remove_dir_all(project_root);
+     }
+ 

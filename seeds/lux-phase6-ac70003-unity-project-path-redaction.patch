@@ -1,0 +1,659 @@
+diff --git a/LuxEditor/LuxAiActionLog.cs b/LuxEditor/LuxAiActionLog.cs
+--- a/LuxEditor/LuxAiActionLog.cs
++++ b/LuxEditor/LuxAiActionLog.cs
+@@ -116,6 +116,8 @@ namespace UnityEditor
+         const string LegacyLogFileName = "LuxAiActionLog.jsonl";
+         const string Redacted = "[REDACTED]";
+         const string Truncated = "[TRUNCATED]";
++        const string ProjectPathPlaceholder = "<PROJECT>";
++        const string HomePathPlaceholder = "<HOME>";
+ 
+         static readonly Regex PrivateKeyBlockPattern = new Regex(
+             "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+@@ -375,6 +377,7 @@ namespace UnityEditor
+             redacted = BearerPattern.Replace(redacted, Redacted);
+             redacted = SecretTokenPattern.Replace(redacted, Redacted);
+             redacted = SensitiveAssignmentPattern.Replace(redacted, match => match.Groups[1].Value + "=" + Redacted);
++            redacted = RedactUnityPaths(redacted);
+ 
+             if (redacted.Length <= _maxTextLength)
+             {
+@@ -385,6 +388,213 @@ namespace UnityEditor
+             return redacted.Substring(0, _maxTextLength) + Truncated;
+         }
+ 
++        static string RedactUnityPaths(string value)
++        {
++            string redacted = value ?? string.Empty;
++
++            string projectRoot = SafeFullPath(LuxBridgeSettings.GetProjectRoot());
++            redacted = ReplaceKnownPath(redacted, projectRoot, ProjectPathPlaceholder);
++            redacted = NormalizeProjectScopedPlaceholders(redacted);
++
++            string homeRoot = SafeFullPath(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
++            if (!string.IsNullOrWhiteSpace(homeRoot))
++            {
++                redacted = ReplaceKnownPath(redacted, homeRoot, HomePathPlaceholder);
++            }
++
++            redacted = redacted.Replace("~/", HomePathPlaceholder + "/");
++            redacted = redacted.Replace("~\\", HomePathPlaceholder + "/");
++            return NormalizeRedactedSeparators(redacted);
++        }
++
++        static string ReplaceKnownPath(string value, string rawPath, string placeholder)
++        {
++            if (string.IsNullOrEmpty(value) || string.IsNullOrWhiteSpace(rawPath))
++            {
++                return value ?? string.Empty;
++            }
++
++            string result = value;
++            foreach (string variant in KnownPathVariants(rawPath))
++            {
++                result = ReplaceKnownPathVariant(result, variant, placeholder);
++            }
++
++            return result;
++        }
++
++        static IEnumerable<string> KnownPathVariants(string rawPath)
++        {
++            string normalized = NormalizePathForRedaction(rawPath);
++            if (string.IsNullOrEmpty(normalized))
++            {
++                yield break;
++            }
++
++            yield return normalized;
++            string backslash = normalized.Replace('/', '\\');
++            if (!string.Equals(backslash, normalized, StringComparison.Ordinal))
++            {
++                yield return backslash;
++            }
++        }
++
++        static string ReplaceKnownPathVariant(string value, string prefix, string placeholder)
++        {
++            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(prefix))
++            {
++                return value ?? string.Empty;
++            }
++
++            var builder = new StringBuilder(value.Length);
++            int cursor = 0;
++            while (cursor < value.Length)
++            {
++                int index = value.IndexOf(prefix, cursor, StringComparison.OrdinalIgnoreCase);
++                if (index < 0)
++                {
++                    break;
++                }
++
++                int end = index + prefix.Length;
++                if (!IsPathBoundaryAfter(value, end))
++                {
++                    builder.Append(value, cursor, end - cursor);
++                    cursor = end;
++                    continue;
++                }
++
++                builder.Append(value, cursor, index - cursor);
++                builder.Append(placeholder);
++                cursor = end;
++            }
++
++            builder.Append(value, cursor, value.Length - cursor);
++            return builder.ToString();
++        }
++
++        static bool IsPathBoundaryAfter(string value, int index)
++        {
++            if (index >= value.Length)
++            {
++                return true;
++            }
++
++            char next = value[index];
++            return next == '/'
++                || next == '\\'
++                || char.IsWhiteSpace(next)
++                || next == '"'
++                || next == '\''
++                || next == ','
++                || next == ';'
++                || next == ':'
++                || next == ')'
++                || next == ']'
++                || next == '}';
++        }
++
++        static string NormalizeProjectScopedPlaceholders(string value)
++        {
++            string result = value ?? string.Empty;
++            foreach (string directory in new[] { "Assets", "Library", "Packages" })
++            {
++                result = NormalizeProjectDirectoryPlaceholder(result, directory);
++            }
++
++            return result;
++        }
++
++        static string NormalizeProjectDirectoryPlaceholder(string value, string directory)
++        {
++            string slashPrefix = ProjectPathPlaceholder + "/" + directory;
++            string backslashPrefix = ProjectPathPlaceholder + "\\" + directory;
++            return ReplaceProjectDirectoryPrefix(
++                ReplaceProjectDirectoryPrefix(value, slashPrefix, directory),
++                backslashPrefix,
++                directory);
++        }
++
++        static string ReplaceProjectDirectoryPrefix(string value, string prefix, string directory)
++        {
++            var builder = new StringBuilder(value.Length);
++            int cursor = 0;
++            while (cursor < value.Length)
++            {
++                int index = value.IndexOf(prefix, cursor, StringComparison.Ordinal);
++                if (index < 0)
++                {
++                    break;
++                }
++
++                int afterPrefix = index + prefix.Length;
++                bool exactDirectory = afterPrefix >= value.Length || IsPathBoundaryAfter(value, afterPrefix);
++                bool nestedDirectory = afterPrefix < value.Length && (value[afterPrefix] == '/' || value[afterPrefix] == '\\');
++                if (!exactDirectory && !nestedDirectory)
++                {
++                    builder.Append(value, cursor, afterPrefix - cursor);
++                    cursor = afterPrefix;
++                    continue;
++                }
++
++                builder.Append(value, cursor, index - cursor);
++                builder.Append(directory);
++                if (nestedDirectory)
++                {
++                    builder.Append('/');
++                    cursor = afterPrefix + 1;
++                }
++                else
++                {
++                    cursor = afterPrefix;
++                }
++            }
++
++            builder.Append(value, cursor, value.Length - cursor);
++            return builder.ToString();
++        }
++
++        static string NormalizeRedactedSeparators(string value)
++        {
++            string result = value ?? string.Empty;
++            foreach (string prefix in new[] { "Assets", "Library", "Packages", ProjectPathPlaceholder, HomePathPlaceholder })
++            {
++                result = result.Replace(prefix + "\\", prefix + "/");
++            }
++
++            return result;
++        }
++
++        static string SafeFullPath(string path)
++        {
++            if (string.IsNullOrWhiteSpace(path))
++            {
++                return string.Empty;
++            }
++
++            try
++            {
++                return Path.GetFullPath(path);
++            }
++            catch (ArgumentException)
++            {
++                return path;
++            }
++            catch (NotSupportedException)
++            {
++                return path;
++            }
++            catch (PathTooLongException)
++            {
++                return path;
++            }
++        }
++
++        static string NormalizePathForRedaction(string path)
++        {
++            return (path ?? string.Empty).Trim().Replace('\\', '/').TrimEnd('/');
++        }
++
+         static string NormalizeSeverity(string severity)
+         {
+             string normalized = (severity ?? string.Empty).Trim().ToLowerInvariant();
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -100,6 +100,54 @@ namespace Linalab.LuxEditor.Tests
+         }
+ 
+         [Test]
++        public void Record_RedactsUnityProjectAndHomePathsBeforePersistenceAndRecentWindow()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            string projectRoot = Path.GetFullPath(UnityEditor.LuxBridgeSettings.GetProjectRoot()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++            string homeRoot = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++            string assetPath = Path.Combine(projectRoot, "Assets", "Scripts", "PlayerController.cs");
++            string libraryPath = Path.Combine(projectRoot, "Library", "ArtifactDB");
++            string packagePath = Path.Combine(projectRoot, "Packages", "manifest.json");
++            string settingsPath = Path.Combine(projectRoot, "ProjectSettings", "ProjectVersion.txt");
++            string homeConfigPath = string.IsNullOrWhiteSpace(homeRoot)
++                ? "~/Library/Application Support/Lux/config.json"
++                : Path.Combine(homeRoot, "Library", "Application Support", "Lux", "config.json");
++
++            var entry = log.Record(
++                "test",
++                "agent",
++                "paths",
++                "normalize",
++                assetPath,
++                $"Library={libraryPath} Package={packagePath} Settings={settingsPath} Home={homeConfigPath} Tilde=~/Library/Lux/cache.json",
++                metadata: new Dictionary<string, string>
++                {
++                    ["asset"] = assetPath,
++                    ["library"] = libraryPath,
++                    ["package"] = packagePath,
++                    ["settings"] = settingsPath,
++                    ["home"] = homeConfigPath
++                });
++            log.Flush();
++
++            string jsonl = File.ReadAllText(path);
++            string combined = (entry.target + " " + entry.message + " " + jsonl).Replace('\\', '/');
++            string normalizedProjectRoot = projectRoot.Replace('\\', '/');
++
++            Assert.That(combined, Does.Not.Contain(normalizedProjectRoot));
++            Assert.That(combined, Does.Contain("Assets/Scripts/PlayerController.cs"));
++            Assert.That(combined, Does.Contain("Library/ArtifactDB"));
++            Assert.That(combined, Does.Contain("Packages/manifest.json"));
++            Assert.That(combined, Does.Contain("<PROJECT>/ProjectSettings/ProjectVersion.txt"));
++            Assert.That(combined, Does.Contain("<HOME>/Library"));
++            if (!string.IsNullOrWhiteSpace(homeRoot))
++            {
++                Assert.That(combined, Does.Not.Contain(homeRoot.Replace('\\', '/')));
++            }
++        }
++
++        [Test]
+         public void Compact_KeepsValidJsonlAndReportsCompactedState()
+         {
+             string path = GetTempLogPath();
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -93,10 +93,19 @@ pub fn parse_jsonl_values(reader: impl BufRead) -> Vec<Value> {
+         .collect()
+ }
+ 
+ pub fn read_log_entries(path: impl AsRef<Path>, filter: &AiLogFilter) -> Result<Vec<AiLogEntry>> {
+-    let file = File::open(path.as_ref())
+-        .with_context(|| format!("failed to open AI log {}", path.as_ref().display()))?;
+-    Ok(filter_entries(parse_entries(BufReader::new(file)), filter))
++    let path = path.as_ref();
++    let project_root = project_root_from_log_path(path);
++    let file =
++        File::open(path).with_context(|| format!("failed to open AI log {}", path.display()))?;
++    let entries = parse_entries(BufReader::new(file))
++        .into_iter()
++        .map(|mut entry| {
++            entry.value = redact_value_for_output(entry.value, project_root.as_deref());
++            entry
++        })
++        .collect();
++    Ok(filter_entries(entries, filter))
+ }
+ 
+ pub fn filter_entries(entries: Vec<AiLogEntry>, filter: &AiLogFilter) -> Vec<AiLogEntry> {
+@@ -203,9 +212,24 @@ pub fn compact_log_file(path: impl AsRef<Path>, max_lines: usize) -> Result<AiLo
+ }
+ 
+ pub fn redact_secrets(text: &str) -> String {
+-    text.split_whitespace()
++    redact_secrets_for_project(text, None)
++}
++
++pub fn normalize_path_for_output(
++    path: impl AsRef<Path>,
++    project_root: Option<impl AsRef<Path>>,
++) -> String {
++    redact_unity_paths(
++        &path.as_ref().to_string_lossy(),
++        project_root.as_ref().map(|root| root.as_ref()),
++    )
++}
++
++fn redact_secrets_for_project(text: &str, project_root: Option<&Path>) -> String {
++    let redacted = text
++        .split_whitespace()
+         .map(|part| {
+             if part.eq_ignore_ascii_case("bearer") || part.to_ascii_lowercase().contains("token=") {
+                 "[REDACTED]"
+             } else {
+                 part
+@@ -220,6 +238,202 @@ pub fn redact_secrets(text: &str) -> String {
+         })
+         .collect::<Vec<_>>()
+         .join(" ")
++        .to_string();
++    redact_unity_paths(&redacted, project_root)
++}
++
++fn redact_value_for_output(value: Value, project_root: Option<&Path>) -> Value {
++    match value {
++        Value::String(text) => Value::String(redact_secrets_for_project(&text, project_root)),
++        Value::Array(values) => Value::Array(
++            values
++                .into_iter()
++                .map(|value| redact_value_for_output(value, project_root))
++                .collect(),
++        ),
++        Value::Object(object) => Value::Object(
++            object
++                .into_iter()
++                .map(|(key, value)| (key, redact_value_for_output(value, project_root)))
++                .collect(),
++        ),
++        other => other,
++    }
++}
++
++fn project_root_from_log_path(path: &Path) -> Option<PathBuf> {
++    let file_name = path.file_name()?.to_str()?;
++    let directory_name = path.parent()?.file_name()?.to_str()?;
++    let is_current_log = file_name == "ai-action-log.jsonl" && directory_name == ".lux";
++    let is_legacy_log = file_name == "LuxAiActionLog.jsonl" && directory_name == "UserSettings";
++    if is_current_log || is_legacy_log {
++        path.parent()?.parent().map(Path::to_path_buf)
++    } else {
++        None
++    }
++}
++
++fn redact_unity_paths(text: &str, project_root: Option<&Path>) -> String {
++    let mut redacted = text.to_string();
++    if let Some(project_root) = project_root {
++        redacted = replace_known_path(&redacted, project_root, "<PROJECT>");
++        redacted = normalize_project_scoped_placeholders(&redacted);
++    }
++
++    if let Some(home_root) = home_dir() {
++        redacted = replace_known_path(&redacted, &home_root, "<HOME>");
++    }
++
++    redacted = redacted.replace("~/", "<HOME>/").replace("~\\", "<HOME>/");
++    normalize_redacted_separators(&redacted)
++}
++
++fn replace_known_path(text: &str, path: &Path, placeholder: &str) -> String {
++    let mut output = text.to_string();
++    for variant in known_path_variants(path) {
++        output = replace_known_path_variant(&output, &variant, placeholder);
++    }
++    output
++}
++
++fn known_path_variants(path: &Path) -> Vec<String> {
++    let mut variants = Vec::new();
++    push_unique_string(
++        &mut variants,
++        normalize_path_for_redaction(&path.to_string_lossy()),
++    );
++    if let Ok(canonical) = path.canonicalize() {
++        push_unique_string(
++            &mut variants,
++            normalize_path_for_redaction(&canonical.to_string_lossy()),
++        );
++    }
++
++    let slash_variants = variants.clone();
++    for variant in slash_variants {
++        push_unique_string(&mut variants, variant.replace('/', "\\"));
++    }
++
++    variants
++        .into_iter()
++        .filter(|variant| !variant.is_empty())
++        .collect()
++}
++
++fn replace_known_path_variant(text: &str, prefix: &str, placeholder: &str) -> String {
++    if prefix.is_empty() {
++        return text.to_string();
++    }
++
++    let mut output = String::with_capacity(text.len());
++    let mut cursor = 0usize;
++    while cursor < text.len() {
++        let Some(relative) = find_ascii_case_insensitive(&text[cursor..], prefix) else {
++            break;
++        };
++        let start = cursor + relative;
++        let end = start + prefix.len();
++        if !is_path_boundary_after(text, end) {
++            output.push_str(&text[cursor..end]);
++            cursor = end;
++            continue;
++        }
++
++        output.push_str(&text[cursor..start]);
++        output.push_str(placeholder);
++        cursor = end;
++    }
++
++    output.push_str(&text[cursor..]);
++    output
++}
++
++fn is_path_boundary_after(text: &str, index: usize) -> bool {
++    text[index..].chars().next().map_or(true, |character| {
++        character == '/'
++            || character == '\\'
++            || character.is_whitespace()
++            || matches!(character, '"' | '\'' | ',' | ';' | ':' | ')' | ']' | '}')
++    })
++}
++
++fn normalize_project_scoped_placeholders(text: &str) -> String {
++    ["Assets", "Library", "Packages"]
++        .iter()
++        .fold(text.to_string(), |value, directory| {
++            normalize_project_directory_placeholder(&value, directory)
++        })
++}
++
++fn normalize_project_directory_placeholder(text: &str, directory: &str) -> String {
++    let slash_prefix = format!("<PROJECT>/{directory}");
++    let backslash_prefix = format!("<PROJECT>\\{directory}");
++    let text = replace_project_directory_prefix(text, &slash_prefix, directory);
++    replace_project_directory_prefix(&text, &backslash_prefix, directory)
++}
++
++fn replace_project_directory_prefix(text: &str, prefix: &str, directory: &str) -> String {
++    let mut output = String::with_capacity(text.len());
++    let mut cursor = 0usize;
++    while cursor < text.len() {
++        let Some(relative) = text[cursor..].find(prefix) else {
++            break;
++        };
++        let start = cursor + relative;
++        let after_prefix = start + prefix.len();
++        let nested_directory = text[after_prefix..]
++            .chars()
++            .next()
++            .is_some_and(|character| character == '/' || character == '\\');
++        let exact_directory = !nested_directory && is_path_boundary_after(text, after_prefix);
++        if !nested_directory && !exact_directory {
++            output.push_str(&text[cursor..after_prefix]);
++            cursor = after_prefix;
++            continue;
++        }
++
++        output.push_str(&text[cursor..start]);
++        output.push_str(directory);
++        if nested_directory {
++            output.push('/');
++            cursor = after_prefix + 1;
++        } else {
++            cursor = after_prefix;
++        }
++    }
++
++    output.push_str(&text[cursor..]);
++    output
++}
++
++fn normalize_redacted_separators(text: &str) -> String {
++    ["Assets", "Library", "Packages", "<PROJECT>", "<HOME>"]
++        .iter()
++        .fold(text.to_string(), |value, prefix| {
++            value.replace(&format!("{prefix}\\"), &format!("{prefix}/"))
++        })
++}
++
++fn normalize_path_for_redaction(path: &str) -> String {
++    path.trim().replace('\\', "/").trim_end_matches('/').to_string()
++}
++
++fn home_dir() -> Option<PathBuf> {
++    std::env::var_os("HOME")
++        .filter(|value| !value.is_empty())
++        .map(PathBuf::from)
++}
++
++fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
++    haystack
++        .to_ascii_lowercase()
++        .find(&needle.to_ascii_lowercase())
++}
++
++fn push_unique_string(values: &mut Vec<String>, value: String) {
++    if !values.contains(&value) {
++        values.push(value);
++    }
+ }
+ 
+ fn parse_entries(reader: impl BufRead) -> Vec<AiLogEntry> {
+@@ -383,6 +591,75 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn ai_log_redacts_unity_project_and_home_paths_in_text() {
++        let project_root = temp_project_root("ai-log-path-redaction");
++        let input = format!(
++            "asset={} library={} package={} settings={} tilde=~/Library/Lux/cache.json",
++            project_root.join("Assets/Scripts/Player.cs").display(),
++            project_root.join("Library/ArtifactDB").display(),
++            project_root.join("Packages/manifest.json").display(),
++            project_root.join("ProjectSettings/ProjectVersion.txt").display(),
++        );
++
++        let redacted = redact_unity_paths(&input, Some(&project_root));
++        let normalized_project_root = project_root.to_string_lossy().replace('\\', "/");
++
++        assert!(!redacted.contains(&normalized_project_root));
++        assert!(redacted.contains("asset=Assets/Scripts/Player.cs"));
++        assert!(redacted.contains("library=Library/ArtifactDB"));
++        assert!(redacted.contains("package=Packages/manifest.json"));
++        assert!(redacted.contains("settings=<PROJECT>/ProjectSettings/ProjectVersion.txt"));
++        assert!(redacted.contains("tilde=<HOME>/Library/Lux/cache.json"));
++
++        if let Some(home_root) = home_dir() {
++            let home_text = format!(
++                "home={}",
++                home_root.join("Library/Application Support/Lux/config.json").display()
++            );
++            let home_redacted = redact_unity_paths(&home_text, Some(&project_root));
++            assert!(!home_redacted.contains(&home_root.to_string_lossy().replace('\\', "/")));
++            assert!(home_redacted.contains("home=<HOME>/Library/Application Support/Lux/config.json"));
++        }
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
++
++    #[test]
++    fn ai_log_read_entries_redacts_project_paths_before_cli_api_output() {
++        let project_root = temp_project_root("ai-log-read-path-redaction");
++        let log_dir = project_root.join(".lux");
++        fs::create_dir_all(&log_dir).unwrap();
++        let log_path = log_dir.join("ai-action-log.jsonl");
++        let raw_asset_path = project_root.join("Assets/Scripts/Player.cs");
++        let raw_library_path = project_root.join("Library/ArtifactDB");
++        fs::write(
++            &log_path,
++            format!(
++                "{{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"target\":\"{}\",\"metadata\":{{\"library\":\"{}\"}},\"summary\":\"opened {}\"}}\n",
++                raw_asset_path.display(),
++                raw_library_path.display(),
++                raw_asset_path.display()
++            ),
++        )
++        .unwrap();
++
++        let entries = read_log_entries(&log_path, &AiLogFilter::default()).unwrap();
++        let serialized = serde_json::to_string(&entries).unwrap();
++        let normalized_project_root = project_root.to_string_lossy().replace('\\', "/");
++
++        assert_eq!(entries[0].value["target"], "Assets/Scripts/Player.cs");
++        assert_eq!(entries[0].value["metadata"]["library"], "Library/ArtifactDB");
++        assert_eq!(
++            entries[0].value["summary"],
++            "opened Assets/Scripts/Player.cs"
++        );
++        assert!(!serialized.contains(&normalized_project_root));
++        assert!(!serialized.contains(&raw_asset_path.to_string_lossy().to_string()));
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
++
+     fn temp_project_root(prefix: &str) -> PathBuf {
+         let nanos = SystemTime::now()
+             .duration_since(UNIX_EPOCH)
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -668,7 +668,7 @@ fn print_ai_log_recent(args: AiLogRecentArgs) -> anyhow::Result<()> {
+             "{}",
+             serde_json::to_string_pretty(&json!({
+-                "projectPath": args.project_path,
+-                "path": log_path,
++                "projectPath": ai_log::normalize_path_for_output(&args.project_path, Some(&args.project_path)),
++                "path": ai_log::normalize_path_for_output(&log_path, Some(&args.project_path)),
+                 "count": entries.len(),
+                 "entries": entries,
+             }))?
+@@ -695,7 +695,7 @@ fn print_ai_log_tail(args: AiLogTailArgs) -> anyhow::Result<()> {
+             "{}",
+             serde_json::to_string_pretty(&json!({
+-                "projectPath": args.project_path,
+-                "path": log_path,
++                "projectPath": ai_log::normalize_path_for_output(&args.project_path, Some(&args.project_path)),
++                "path": ai_log::normalize_path_for_output(&log_path, Some(&args.project_path)),
+                 "follow": args.follow,
+                 "count": entries.len(),
+                 "entries": entries,
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -143,6 +143,9 @@ fn ai_log_recent_json_filters_fixture_jsonl() {
+     let entries = parsed["entries"].as_array().expect("entries array");
+     assert_eq!(entries[0]["value"]["summary"], "second codex edit");
+     assert_eq!(entries[1]["value"]["summary"], "third codex edit");
++    assert_eq!(parsed["projectPath"], "<PROJECT>");
++    assert_eq!(parsed["path"], "<PROJECT>/.lux/ai-action-log.jsonl");
++    assert!(!String::from_utf8_lossy(&output.stdout).contains(project_root.to_str().unwrap()));
+ }
+ 
+ #[test]

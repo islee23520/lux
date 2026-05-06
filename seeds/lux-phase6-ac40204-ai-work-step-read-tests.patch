@@ -1,0 +1,251 @@
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -912,6 +912,115 @@ fn read_project_ai_work_steps_returns_empty_when_log_file_is_missing() {
+ 
+         fs::remove_dir_all(result.project_path).unwrap();
+     }
++
++    #[test]
++    fn ai_work_step_json_and_jsonl_inputs_normalize_to_the_same_entry_shape() {
++        let mut record = test_ai_work_step_record("ai-step-json-jsonl", 7);
++        record["timestampUtc"] = json!("2026-05-04T00:00:07Z");
++        record["payload"]["stepName"] = json!("inspect_project");
++        record["payload"]["summary"] = json!("Inspected project context.");
++        let pretty_json = serde_json::to_string_pretty(&record).unwrap();
++        assert!(pretty_json.contains('\n'));
++
++        let from_json_value = deserialize_ai_work_step_record(&pretty_json).unwrap();
++        let from_json = AiWorkStepEntry::from_log_entry(AiLogEntry {
++            line_number: 42,
++            timestamp: String::new(),
++            value: from_json_value,
++        })
++        .unwrap();
++        let jsonl_line = serialize_ai_work_step_record(&record).unwrap();
++        assert!(!jsonl_line.contains('\n'));
++        let from_jsonl = parse_ordered_ai_work_step_records(Cursor::new(format!("{jsonl_line}\n")));
++
++        assert_eq!(from_jsonl.len(), 1);
++        assert_eq!(from_json.id, from_jsonl[0].id);
++        assert_eq!(from_json.timestamp_utc, from_jsonl[0].timestamp_utc);
++        assert_eq!(from_json.sequence, from_jsonl[0].sequence);
++        assert_eq!(from_json.step_name, from_jsonl[0].step_name);
++        assert_eq!(from_json.status, from_jsonl[0].status);
++        assert_eq!(from_json.summary, from_jsonl[0].summary);
++        assert_eq!(from_json.value, from_jsonl[0].value);
++    }
++
++    #[test]
++    fn read_project_ai_work_steps_returns_same_order_on_repeated_reads() {
++        let project_root = temp_project_root("ai-work-step-deterministic-read");
++        let log_path = ensure_log_path(&project_root).unwrap();
++        let mut first = test_ai_work_step_record("ai-step-first", 1);
++        let mut second = test_ai_work_step_record("ai-step-second", 2);
++        let mut third = test_ai_work_step_record("ai-step-third", 3);
++        first["timestampUtc"] = json!("2026-05-04T00:00:01Z");
++        second["timestampUtc"] = json!("2026-05-04T00:00:01Z");
++        third["timestampUtc"] = json!("2026-05-04T00:00:02Z");
++        fs::write(
++            &log_path,
++            format!(
++                "{}\n{}\n{}\n",
++                serialize_ai_work_step_record(&third).unwrap(),
++                serialize_ai_work_step_record(&second).unwrap(),
++                serialize_ai_work_step_record(&first).unwrap()
++            ),
++        )
++        .unwrap();
++
++        for _ in 0..3 {
++            let result = read_project_ai_work_steps(&project_root, 10).unwrap();
++            let ids: Vec<_> = result.entries.iter().map(|entry| entry.id.as_str()).collect();
++            assert_eq!(ids, vec!["ai-step-first", "ai-step-second", "ai-step-third"]);
++            assert!(result.warnings.is_empty());
++        }
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
++
++    #[test]
++    fn read_project_ai_work_steps_returns_empty_for_blank_log_file() {
++        let project_root = temp_project_root("ai-work-step-blank-log");
++        let log_path = ensure_log_path(&project_root).unwrap();
++        fs::write(&log_path, "\n  \n\t\n").unwrap();
++
++        let result = read_project_ai_work_steps(&project_root, 50).unwrap();
++
++        assert_eq!(result.path, log_path);
++        assert_eq!(result.limit, 50);
++        assert!(result.entries.is_empty());
++        assert!(result.warnings.is_empty());
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
++
++    #[test]
++    fn read_project_ai_work_steps_reports_invalid_log_lines_without_entries() {
++        let project_root = temp_project_root("ai-work-step-invalid-only-log");
++        let log_path = ensure_log_path(&project_root).unwrap();
++        fs::write(
++            &log_path,
++            concat!(
++                "not-json\n",
++                "\n",
++                r#"{"payload":{"kind":"editor-user-action"}}"#,
++                "\n",
++                r#"{"payload":{"kind":"ai-work-step","ordering":{"sequence":-1}}}"#,
++                "\n",
++            ),
++        )
++        .unwrap();
++
++        let result = read_project_ai_work_steps(&project_root, 50).unwrap();
++
++        assert!(result.entries.is_empty());
++        assert_eq!(result.warnings.len(), 3);
++        let warning_lines: Vec<_> = result
++            .warnings
++            .iter()
++            .map(|warning| warning.line_number)
++            .collect();
++        assert_eq!(warning_lines, vec![1, 3, 4]);
++        assert!(result.warnings[0].reason.contains("not valid JSON"));
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
+ 
+     #[test]
+     fn ai_work_step_redaction_scrubs_response_fields_and_nested_value() {
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -2127,6 +2127,49 @@ async fn ai_log_work_steps_endpoint_requires_project_and_token() {
+ 
+         let _ = fs::remove_dir_all(project_root);
+     }
++
++    #[tokio::test]
++    async fn ai_log_work_steps_endpoint_handles_empty_and_invalid_logs() {
++        let empty_project = temp_project_root("work-steps-empty");
++        write_ai_log(&empty_project, "\n  \n");
++        let empty_response = authenticated_get(
++            test_app_with_project(empty_project.clone()),
++            "/api/ai-log/work-steps?limit=10",
++        )
++        .await;
++        assert_eq!(empty_response.status(), StatusCode::OK);
++        let empty_json = response_json(empty_response).await;
++        assert_eq!(empty_json["count"], 0);
++        assert_eq!(empty_json["warningCount"], 0);
++        assert!(empty_json["entries"].as_array().unwrap().is_empty());
++        assert!(empty_json["warnings"].as_array().unwrap().is_empty());
++
++        let invalid_project = temp_project_root("work-steps-invalid");
++        write_ai_log(
++            &invalid_project,
++            concat!(
++                "not-json\n",
++                "\n",
++                r#"{"payload":{"kind":"editor-user-action"}}"#,
++                "\n",
++            ),
++        );
++        let invalid_response = authenticated_get(
++            test_app_with_project(invalid_project.clone()),
++            "/api/ai-log/work-steps?limit=10",
++        )
++        .await;
++        assert_eq!(invalid_response.status(), StatusCode::OK);
++        let invalid_json = response_json(invalid_response).await;
++        assert_eq!(invalid_json["count"], 0);
++        assert_eq!(invalid_json["warningCount"], 2);
++        assert!(invalid_json["entries"].as_array().unwrap().is_empty());
++        assert_eq!(invalid_json["warnings"][0]["lineNumber"], 1);
++        assert_eq!(invalid_json["warnings"][1]["lineNumber"], 3);
++
++        let _ = fs::remove_dir_all(empty_project);
++        let _ = fs::remove_dir_all(invalid_project);
++    }
+ 
+     #[tokio::test]
+     async fn ui_serves_index_html() {
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -271,6 +271,61 @@ fn ai_log_work_steps_json_returns_ordered_project_scoped_steps() {
+     assert!(!serialized.contains("editor-only"));
+ }
+ 
++#[test]
++fn ai_log_work_steps_json_handles_empty_and_invalid_logs() {
++    let empty_project = create_ai_work_step_project_with_log("lux-ai-log-work-steps-empty", "");
++    let empty_output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "work-steps",
++            "--project-path",
++            empty_project.to_str().expect("project path UTF-8"),
++            "--limit",
++            "10",
++            "--json",
++        ])
++        .output()
++        .expect("run lux ai-log work-steps on empty log");
++
++    assert_command_success(&empty_output, "lux ai-log work-steps empty");
++    let empty: Value = serde_json::from_slice(&empty_output.stdout).expect("empty work steps JSON");
++    assert_eq!(empty["count"], 0);
++    assert_eq!(empty["warningCount"], 0);
++    assert!(empty["entries"].as_array().unwrap().is_empty());
++    assert!(empty["warnings"].as_array().unwrap().is_empty());
++
++    let invalid_project = create_ai_work_step_project_with_log(
++        "lux-ai-log-work-steps-invalid",
++        concat!(
++            "not-json\n",
++            "\n",
++            r#"{"payload":{"kind":"editor-user-action"}}"#,
++            "\n",
++        ),
++    );
++    let invalid_output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "work-steps",
++            "--project-path",
++            invalid_project.to_str().expect("project path UTF-8"),
++            "--limit",
++            "10",
++            "--json",
++        ])
++        .output()
++        .expect("run lux ai-log work-steps on invalid log");
++
++    assert_command_success(&invalid_output, "lux ai-log work-steps invalid");
++    let invalid: Value =
++        serde_json::from_slice(&invalid_output.stdout).expect("invalid work steps JSON");
++    assert_eq!(invalid["count"], 0);
++    assert_eq!(invalid["warningCount"], 2);
++    assert!(invalid["entries"].as_array().unwrap().is_empty());
++    assert_eq!(invalid["warnings"][0]["lineNumber"], 1);
++    assert_eq!(invalid["warnings"][1]["lineNumber"], 3);
++}
++
+ #[test]
+ fn skill_list_shows_lux_unity() {
+     let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+@@ -2410,4 +2471,13 @@ fn create_ai_work_step_fixture_project(prefix: &str) -> std::path::PathBuf {
+     project_root
+ }
+ 
++fn create_ai_work_step_project_with_log(prefix: &str, log_body: &str) -> std::path::PathBuf {
++    let project_root = create_temp_dir(prefix).join("Project");
++    let lux_directory = project_root.join(".lux");
++    fs::create_dir_all(&lux_directory).expect("create .lux");
++    fs::write(lux_directory.join("ai-action-log.jsonl"), log_body)
++        .expect("write AI work step log fixture");
++    project_root
++}
++
+ 

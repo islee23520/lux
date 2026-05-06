@@ -1,0 +1,635 @@
+diff --git a/Runtime/LuxRuntimeEvent.cs b/Runtime/LuxRuntimeEvent.cs
+index 21ae2b7..3f5311d 100644
+--- a/Runtime/LuxRuntimeEvent.cs
++++ b/Runtime/LuxRuntimeEvent.cs
+@@ -129,8 +129,8 @@ namespace Linalab.Lux.Runtime
+                     eventType = normalizedEventType,
+                     summary = redactedSummary,
+                     status = redactedStatus,
+                     target = redactedTarget,
+-                    attributes = RedactAttributes(payload)
++                    attributes = RedactAttributes(payload, true)
+                 }
+             };
+ 
+@@ -297,7 +297,7 @@ namespace Linalab.Lux.Runtime
+             return result;
+         }
+ 
+-        static Dictionary<string, object> RedactAttributes(IReadOnlyDictionary<string, object> payload)
++        static Dictionary<string, object> RedactAttributes(IReadOnlyDictionary<string, object> payload, bool gameplayPayload)
+         {
+             var result = new Dictionary<string, object>(StringComparer.Ordinal);
+             if (payload == null)
+@@ -308,9 +308,17 @@ namespace Linalab.Lux.Runtime
+             foreach (var pair in payload)
+             {
+                 string key = RedactText(pair.Key);
+-                result[key] = SensitiveKeyPattern.IsMatch(pair.Key ?? string.Empty)
++                string rawKey = pair.Key ?? string.Empty;
++                if (SensitiveKeyPattern.IsMatch(rawKey))
++                {
++                    result[key] = Redacted;
++                }
++                else
++                {
++                    result[key] = gameplayPayload && IsGameplaySensitiveKeyName(rawKey)
++                        ? RedactGameplaySensitiveValue(pair.Value)
++                        : RedactValue(pair.Value, gameplayPayload);
++                }
+-                    ? Redacted
+-                    : RedactValue(pair.Value);
+             }
+ 
+             return result;
+@@ -329,4 +334,4 @@ namespace Linalab.Lux.Runtime
+-        static object RedactValue(object value)
++        static object RedactValue(object value, bool gameplayPayload)
+         {
+             if (value == null)
+             {
+@@ -382,10 +387,15 @@ namespace Linalab.Lux.Runtime
+                 foreach (DictionaryEntry entry in dictionary)
+                 {
+                     string key = RedactText(Convert.ToString(entry.Key, CultureInfo.InvariantCulture));
+-                    result[key] = SensitiveKeyPattern.IsMatch(key) ? Redacted : RedactValue(entry.Value);
++                    string rawKey = Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? string.Empty;
++                    result[key] = SensitiveKeyPattern.IsMatch(rawKey)
++                        ? Redacted
++                        : gameplayPayload && IsGameplaySensitiveKeyName(rawKey)
++                            ? RedactGameplaySensitiveValue(entry.Value)
++                            : RedactValue(entry.Value, gameplayPayload);
+                 }
+ 
+                 return result;
+             }
+ 
+             if (!(value is string) && value is IEnumerable enumerable)
+@@ -396,7 +407,7 @@ namespace Linalab.Lux.Runtime
+                 var result = new List<object>();
+                 foreach (var item in enumerable)
+                 {
+-                    result.Add(RedactValue(item));
++                    result.Add(RedactValue(item, gameplayPayload));
+                 }
+ 
+                 return result;
+@@ -410,6 +421,89 @@ namespace Linalab.Lux.Runtime
+             return RedactText(Convert.ToString(value, CultureInfo.InvariantCulture));
+         }
+ 
++        static object RedactGameplaySensitiveValue(object value)
++        {
++            if (value == null)
++            {
++                return null;
++            }
++
++            if (value is IDictionary dictionary)
++            {
++                var result = new Dictionary<string, object>(StringComparer.Ordinal);
++                foreach (DictionaryEntry entry in dictionary)
++                {
++                    string key = RedactText(Convert.ToString(entry.Key, CultureInfo.InvariantCulture));
++                    result[key] = RedactGameplaySensitiveValue(entry.Value);
++                }
++
++                return result;
++            }
++
++            if (!(value is string) && value is IEnumerable enumerable)
++            {
++                var result = new List<object>();
++                foreach (var item in enumerable)
++                {
++                    result.Add(RedactGameplaySensitiveValue(item));
++                }
++
++                return result;
++            }
++
++            return Redacted;
++        }
++
++        static bool IsGameplaySensitiveKeyName(string key)
++        {
++            string normalized = NormalizeKeyForSensitivity(key);
++            if (string.IsNullOrEmpty(normalized))
++            {
++                return false;
++            }
++
++            return normalized.Contains("playerid")
++                || normalized.Contains("userid")
++                || normalized.Contains("accountid")
++                || normalized.Contains("profileid")
++                || normalized.Contains("deviceid")
++                || normalized.Contains("platformuserid")
++                || normalized.Contains("playername")
++                || normalized.Contains("username")
++                || normalized.Contains("displayname")
++                || normalized.Contains("chatmessage")
++                || normalized.Contains("rawinput")
++                || normalized.Contains("inputhistory")
++                || normalized.Contains("savedata")
++                || normalized.Contains("saveblob")
++                || normalized.Contains("savefile")
++                || normalized.Contains("inventory")
++                || normalized.Contains("loadout")
++                || normalized.Contains("wallet")
++                || normalized.Contains("currency")
++                || normalized.Contains("balance")
++                || normalized.Contains("economy")
++                || normalized.Contains("telemetry")
++                || normalized.Contains("analyticspayload")
++                || normalized.Contains("preciseposition")
++                || normalized.Contains("coordinates")
++                || normalized.Contains("geolocation");
++        }
++
++        static string NormalizeKeyForSensitivity(string key)
++        {
++            var builder = new StringBuilder((key ?? string.Empty).Length);
++            foreach (char character in key ?? string.Empty)
++            {
++                if (char.IsLetterOrDigit(character))
++                {
++                    builder.Append(char.ToLowerInvariant(character));
++                }
++            }
++
++            return builder.ToString();
++        }
++
+         static string RedactText(string value)
+         {
+             string redacted = value ?? string.Empty;
+@@ -524,15 +612,51 @@ namespace Linalab.Lux.Runtime
+ 
+         static void AppendRedactionMetadata(StringBuilder builder, LuxRuntimeEventRecord record)
+         {
+             bool applied = ContainsRedaction(record);
++            var fields = RedactedFieldPaths(record).ToArray();
++            var classes = new List<string>();
++            if (applied && fields.Any(field => field.StartsWith("payload.attributes.", StringComparison.Ordinal)))
++            {
++                classes.Add("gameplay-sensitive");
++            }
++            if (applied && classes.Count == 0)
++            {
++                classes.Add("credential");
++            }
++
+             builder.Append('{');
+             AppendJsonProperty(builder, "policyVersion", "lux.redaction.v1", true);
+             AppendJsonProperty(builder, "applied", applied, false);
+-            AppendJsonProperty(builder, "redactedCount", applied ? 1 : 0, false);
++            AppendJsonProperty(builder, "redactedCount", fields.Length > 0 ? fields.Length : (applied ? 1 : 0), false);
+             builder.Append(",\"redactedFields\":");
+-            AppendJsonValue(builder, applied ? new[] { "runtime-event" } : Array.Empty<string>());
++            AppendJsonValue(builder, fields.Length > 0 ? fields : applied ? new[] { "runtime-event" } : Array.Empty<string>());
+             builder.Append(",\"redactionClasses\":");
+-            AppendJsonValue(builder, applied ? new[] { "credential" } : Array.Empty<string>());
++            AppendJsonValue(builder, applied ? classes.ToArray() : Array.Empty<string>());
+             builder.Append('}');
+         }
++
++        static IEnumerable<string> RedactedFieldPaths(LuxRuntimeEventRecord record)
++        {
++            if (record?.payload?.attributes == null)
++            {
++                yield break;
++            }
++
++            foreach (var path in RedactedAttributePaths(record.payload.attributes, "payload.attributes"))
++            {
++                yield return path;
++            }
++        }
++
++        static IEnumerable<string> RedactedAttributePaths(IReadOnlyDictionary<string, object> attributes, string prefix)
++        {
++            foreach (var pair in attributes)
++            {
++                string path = prefix + "." + RedactionFieldSegment(pair.Key);
++                if (ContainsRedactedValue(pair.Value))
++                {
++                    yield return path;
++                }
++            }
++        }
+ 
+@@ -601,6 +744,62 @@ namespace Linalab.Lux.Runtime
+ 
+             builder.Append(value);
+         }
++
++        static bool ContainsRedactedValue(object value)
++        {
++            if (value == null)
++            {
++                return false;
++            }
++
++            if (value is string text)
++            {
++                return string.Equals(text, Redacted, StringComparison.Ordinal);
++            }
++
++            if (value is IDictionary dictionary)
++            {
++                foreach (DictionaryEntry entry in dictionary)
++                {
++                    if (ContainsRedactedValue(entry.Value))
++                    {
++                        return true;
++                    }
++                }
++
++                return false;
++            }
++
++            if (!(value is string) && value is IEnumerable enumerable)
++            {
++                return enumerable.Cast<object>().Any(ContainsRedactedValue);
++            }
++
++            return false;
++        }
++
++        static string RedactionFieldSegment(string key)
++        {
++            if (string.IsNullOrWhiteSpace(key))
++            {
++                return "<empty-key>";
++            }
++
++            if (SensitiveKeyPattern.IsMatch(key))
++            {
++                return "<sensitive-key>";
++            }
++
++            var builder = new StringBuilder(key.Length);
++            foreach (char character in key)
++            {
++                builder.Append(char.IsLetterOrDigit(character) || character == '_' || character == '-'
++                    ? character
++                    : '_');
++            }
++
++            return builder.ToString();
++        }
+ 
+         static void AppendJsonProperty(StringBuilder builder, string name, string value, bool first)
+         {
+diff --git a/LuxEditorTests/Editor/LuxRuntimeEventGameplayRedactionTests.cs b/LuxEditorTests/Editor/LuxRuntimeEventGameplayRedactionTests.cs
+new file mode 100644
+index 0000000..2692fe1
+--- /dev/null
++++ b/LuxEditorTests/Editor/LuxRuntimeEventGameplayRedactionTests.cs
+@@ -0,0 +1,86 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using Linalab.Lux.Runtime;
++using NUnit.Framework;
++
++namespace Linalab.LuxEditor.Tests
++{
++    public sealed class LuxRuntimeEventGameplayRedactionTests
++    {
++        string tempDirectory;
++
++        [SetUp]
++        public void SetUp()
++        {
++            tempDirectory = Path.Combine(Path.GetTempPath(), "LuxRuntimeEventGameplayRedactionTests", Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(tempDirectory);
++            LuxRuntimeEvent.ConfigureForTests(
++                Path.Combine(tempDirectory, "UserSettings", "LuxAiActionLog.jsonl"),
++                tempDirectory,
++                () => new DateTime(2026, 5, 5, 13, 0, 0, DateTimeKind.Utc));
++        }
++
++        [TearDown]
++        public void TearDown()
++        {
++            LuxRuntimeEvent.ResetForTests();
++            if (!string.IsNullOrWhiteSpace(tempDirectory) && Directory.Exists(tempDirectory))
++            {
++                Directory.Delete(tempDirectory, true);
++            }
++        }
++
++        [Test]
++        public void Emit_RedactsGameplaySensitivePayloadFieldsButPreservesSafeStructure()
++        {
++            var record = LuxRuntimeEvent.Emit(
++                "quest_step_completed",
++                new Dictionary<string, object>
++                {
++                    ["questId"] = "quest-7",
++                    ["playerId"] = "player-secret-42",
++                    ["playerName"] = "Raw Player",
++                    ["saveData"] = new Dictionary<string, object>
++                    {
++                        ["slot"] = "slot-raw",
++                        ["checkpoint"] = "castle"
++                    },
++                    ["inventory"] = new[] { "gold-key", "rare-sword" },
++                    ["rawInput"] = "WASD enter",
++                    ["telemetryPayload"] = "{\"fps\":60,\"device\":\"private-device\"}",
++                    ["precisePosition"] = new Dictionary<string, object>
++                    {
++                        ["x"] = 12.25f,
++                        ["y"] = 0f,
++                        ["z"] = -4.5f
++                    }
++                },
++                "Quests/Quest-7",
++                "Quest step completed.");
++
++            string jsonl = File.ReadAllText(Path.Combine(tempDirectory, "UserSettings", "LuxAiActionLog.jsonl"));
++
++            Assert.That(record.payload.attributes["questId"], Is.EqualTo("quest-7"));
++            Assert.That(record.payload.attributes["playerId"], Is.EqualTo("[REDACTED]"));
++            Assert.That(record.payload.attributes["playerName"], Is.EqualTo("[REDACTED]"));
++            Assert.That(record.payload.attributes["rawInput"], Is.EqualTo("[REDACTED]"));
++            Assert.That(record.payload.attributes["telemetryPayload"], Is.EqualTo("[REDACTED]"));
++            Assert.That(record.payload.attributes, Does.ContainKey("saveData"));
++            Assert.That(record.payload.attributes, Does.ContainKey("inventory"));
++            Assert.That(jsonl, Does.Contain("\"questId\":\"quest-7\""));
++            Assert.That(jsonl, Does.Contain("\"playerId\":\"[REDACTED]\""));
++            Assert.That(jsonl, Does.Contain("\"saveData\":{\"slot\":\"[REDACTED]\",\"checkpoint\":\"[REDACTED]\"}"));
++            Assert.That(jsonl, Does.Contain("\"inventory\":[\"[REDACTED]\",\"[REDACTED]\"]"));
++            Assert.That(jsonl, Does.Contain("\"precisePosition\":{\"x\":\"[REDACTED]\",\"y\":\"[REDACTED]\",\"z\":\"[REDACTED]\"}"));
++            Assert.That(jsonl, Does.Contain("\"redactionClasses\":[\"gameplay-sensitive\"]"));
++            Assert.That(jsonl, Does.Contain("\"payload.attributes.playerId\""));
++            Assert.That(jsonl, Does.Contain("\"payload.attributes.saveData\""));
++            Assert.That(jsonl, Does.Not.Contain("player-secret-42"));
++            Assert.That(jsonl, Does.Not.Contain("Raw Player"));
++            Assert.That(jsonl, Does.Not.Contain("slot-raw"));
++            Assert.That(jsonl, Does.Not.Contain("gold-key"));
++            Assert.That(jsonl, Does.Not.Contain("private-device"));
++        }
++    }
++}
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+index 3b9ad4b..700a4fb 100644
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -141,7 +141,11 @@ pub fn build_continuation_context(entries: &[AiLogEntry], filter: Option<&AiLogF
+                 "eventType": event_type,
+                 "summary": summary,
+                 "message": message,
+-                "payload": entry.value.get("payload").cloned().unwrap_or(Value::Null),
++                "payload": entry
++                    .value
++                    .get("payload")
++                    .map(redact_event_value_for_output)
++                    .unwrap_or(Value::Null),
+                 "redactionMetadata": redaction_metadata(&entry.value),
+             })
+         })
+@@ -386,6 +389,74 @@ fn compact_summary(value: &Value) -> Option<String> {
+         .map(|text| redact_secrets(&text))
+ }
+ 
++pub fn redact_event_value_for_output(value: &Value) -> Value {
++    match value {
++        Value::String(text) => Value::String(redact_secrets(text)),
++        Value::Array(items) => Value::Array(items.iter().map(redact_event_value_for_output).collect()),
++        Value::Object(object) => Value::Object(
++            object
++                .iter()
++                .map(|(key, value)| {
++                    if is_sensitive_output_key(key) || is_gameplay_sensitive_output_key(key) {
++                        (key.clone(), Value::String("[REDACTED]".to_string()))
++                    } else {
++                        (key.clone(), redact_event_value_for_output(value))
++                    }
++                })
++                .collect(),
++        ),
++        other => other.clone(),
++    }
++}
++
++fn is_sensitive_output_key(key: &str) -> bool {
++    let normalized = normalize_output_key(key);
++    normalized.contains("token")
++        || normalized.contains("secret")
++        || normalized.contains("password")
++        || normalized.contains("authorization")
++        || normalized.contains("apikey")
++        || normalized.contains("credential")
++        || normalized.contains("privatekey")
++}
++
++fn is_gameplay_sensitive_output_key(key: &str) -> bool {
++    let normalized = normalize_output_key(key);
++    normalized.contains("playerid")
++        || normalized.contains("userid")
++        || normalized.contains("accountid")
++        || normalized.contains("profileid")
++        || normalized.contains("deviceid")
++        || normalized.contains("platformuserid")
++        || normalized.contains("playername")
++        || normalized.contains("username")
++        || normalized.contains("displayname")
++        || normalized.contains("chatmessage")
++        || normalized.contains("rawinput")
++        || normalized.contains("inputhistory")
++        || normalized.contains("savedata")
++        || normalized.contains("saveblob")
++        || normalized.contains("savefile")
++        || normalized.contains("inventory")
++        || normalized.contains("loadout")
++        || normalized.contains("wallet")
++        || normalized.contains("currency")
++        || normalized.contains("balance")
++        || normalized.contains("economy")
++        || normalized.contains("telemetry")
++        || normalized.contains("analyticspayload")
++        || normalized.contains("preciseposition")
++        || normalized.contains("coordinates")
++        || normalized.contains("geolocation")
++}
++
++fn normalize_output_key(key: &str) -> String {
++    key.chars()
++        .filter(|character| character.is_ascii_alphanumeric())
++        .map(|character| character.to_ascii_lowercase())
++        .collect()
++}
++
+ fn sanitize_redaction_location(location: &str) -> String {
+     let trimmed = location.trim();
+     if trimmed.is_empty() {
+@@ -584,6 +644,49 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn ai_log_context_redacts_gameplay_sensitive_payload_fields_without_dropping_shape() {
++        let entries = parse_entries(Cursor::new(
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"gameplay\",\"category\":\"runtime\",\"source\":\"unity-runtime\",\"payload\":{\"kind\":\"runtime-gameplay-event\",\"eventType\":\"quest_step_completed\",\"summary\":\"Quest step completed.\",\"attributes\":{\"questId\":\"quest-7\",\"playerId\":\"player-secret-42\",\"saveData\":{\"slot\":\"slot-raw\",\"checkpoint\":\"castle\"},\"inventory\":[\"gold-key\",\"rare-sword\"],\"telemetryPayload\":{\"device\":\"private-device\"}}}}\n",
++        ));
++
++        let context = build_continuation_context(&entries, None);
++        let payload = &context["entries"][0]["payload"];
++
++        assert_eq!(payload["attributes"]["questId"], "quest-7");
++        assert_eq!(payload["attributes"]["playerId"], "[REDACTED]");
++        assert_eq!(payload["attributes"]["saveData"], "[REDACTED]");
++        assert_eq!(payload["attributes"]["inventory"], "[REDACTED]");
++        assert_eq!(payload["attributes"]["telemetryPayload"], "[REDACTED]");
++        let serialized = serde_json::to_string(payload).unwrap();
++        assert!(!serialized.contains("player-secret-42"));
++        assert!(!serialized.contains("slot-raw"));
++        assert!(!serialized.contains("gold-key"));
++        assert!(!serialized.contains("private-device"));
++        assert!(serialized.contains("quest-7"));
++    }
++
++    #[test]
++    fn redact_event_value_for_output_redacts_gameplay_sensitive_fields_recursively() {
++        let value = json!({
++            "payload": {
++                "attributes": {
++                    "questId": "quest-7",
++                    "playerName": "Raw Player",
++                    "coordinates": { "x": 1, "y": 2 },
++                    "publicResult": "completed"
++                }
++            }
++        });
++
++        let redacted = redact_event_value_for_output(&value);
++
++        assert_eq!(redacted["payload"]["attributes"]["questId"], "quest-7");
++        assert_eq!(redacted["payload"]["attributes"]["playerName"], "[REDACTED]");
++        assert_eq!(redacted["payload"]["attributes"]["coordinates"], "[REDACTED]");
++        assert_eq!(redacted["payload"]["attributes"]["publicResult"], "completed");
++    }
++
+     #[test]
+     fn redaction_result_metadata_exposes_safe_hints_without_original_values() {
+         let result = redact_secrets_with_metadata(
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+index 97ed99f..5fb07c2 100644
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -246,27 +246,4 @@ fn redact_ai_log_response_value(value: &serde_json::Value) -> serde_json::Value
+-    match value {
+-        serde_json::Value::String(text) => {
+-            serde_json::Value::String(redact_ai_log_response_text(text))
+-        }
+-        serde_json::Value::Array(items) => {
+-            serde_json::Value::Array(items.iter().map(redact_ai_log_response_value).collect())
+-        }
+-        serde_json::Value::Object(object) => serde_json::Value::Object(
+-            object
+-                .iter()
+-                .map(|(key, value)| {
+-                    if is_sensitive_ai_log_response_key(key) {
+-                        (
+-                            key.clone(),
+-                            serde_json::Value::String("[REDACTED]".to_string()),
+-                        )
+-                    } else {
+-                        (key.clone(), redact_ai_log_response_value(value))
+-                    }
+-                })
+-                .collect(),
+-        ),
+-        other => other.clone(),
+-    }
++    ai_log::redact_event_value_for_output(value)
+ }
+ 
+ fn is_sensitive_ai_log_response_key(key: &str) -> bool {
+@@ -224,25 +224,4 @@ fn redact_tail_api_value(value: &serde_json::Value) -> serde_json::Value {
+-    match value {
+-        serde_json::Value::String(text) => serde_json::Value::String(redact_tail_api_text(text)),
+-        serde_json::Value::Array(items) => {
+-            serde_json::Value::Array(items.iter().map(redact_tail_api_value).collect())
+-        }
+-        serde_json::Value::Object(object) => serde_json::Value::Object(
+-            object
+-                .iter()
+-                .map(|(key, value)| {
+-                    if is_sensitive_tail_api_key(key) {
+-                        (
+-                            key.clone(),
+-                            serde_json::Value::String("[REDACTED]".to_string()),
+-                        )
+-                    } else {
+-                        (key.clone(), redact_tail_api_value(value))
+-                    }
+-                })
+-                .collect(),
+-        ),
+-        other => other.clone(),
+-    }
++    ai_log::redact_event_value_for_output(value)
+ }
+ 
+ fn is_sensitive_tail_api_key(key: &str) -> bool {
+@@ -246,16 +224,4 @@ fn redact_api_value(value: &serde_json::Value) -> serde_json::Value {
+-    match value {
+-        serde_json::Value::String(text) => serde_json::Value::String(redact_api_text(text)),
+-        serde_json::Value::Array(items) => {
+-            serde_json::Value::Array(items.iter().map(redact_api_value).collect())
+-        }
+-        serde_json::Value::Object(object) => serde_json::Value::Object(
+-            object
+-                .iter()
+-                .map(|(key, value)| (redact_api_text(key), redact_api_value(value)))
+-                .collect(),
+-        ),
+-        other => other.clone(),
+-    }
++    ai_log::redact_event_value_for_output(value)
+ }
+ 
+ fn redact_api_text(text: &str) -> String {
+@@ -438,8 +406,38 @@ async fn ai_log_recent_endpoint_redacts_output_before_response() {
+         assert_eq!(json["entries"][0]["value"]["metadata"]["apiKey"], "[REDACTED]");
+         assert!(!serde_json::to_string(&json).unwrap().contains("response-secret"));
+ 
+         let _ = fs::remove_dir_all(project_root);
+     }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_redacts_gameplay_sensitive_payload_fields_before_response() {
++        let project_root = temp_project_root("recent-gameplay-redact");
++        write_ai_log(
++            &project_root,
++            r#"{"timestampUtc":"2026-05-04T00:00:00Z","actor":"gameplay","category":"runtime","source":"unity-runtime","payload":{"kind":"runtime-gameplay-event","eventType":"quest_step_completed","attributes":{"questId":"quest-7","playerId":"player-secret-42","saveData":{"slot":"slot-raw"},"inventory":["gold-key"]}}}"#,
++        );
++        let app = test_app();
++
++        let response = authenticated_get(
++            app,
++            &format!("/api/ai-log/recent?project_path={}", project_root.display()),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++        let payload = &json["entries"][0]["value"]["payload"];
++
++        assert_eq!(payload["attributes"]["questId"], "quest-7");
++        assert_eq!(payload["attributes"]["playerId"], "[REDACTED]");
++        assert_eq!(payload["attributes"]["saveData"], "[REDACTED]");
++        assert_eq!(payload["attributes"]["inventory"], "[REDACTED]");
++        let serialized = serde_json::to_string(&json).unwrap();
++        assert!(!serialized.contains("player-secret-42"));
++        assert!(!serialized.contains("slot-raw"));
++        assert!(!serialized.contains("gold-key"));
++
++        let _ = fs::remove_dir_all(project_root);
++    }
+ 
+     async fn response_json(response: Response) -> serde_json::Value {
+         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();

@@ -1,0 +1,523 @@
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -71,13 +71,68 @@
+ #[derive(Debug, Deserialize)]
+ struct AiLogQuery {
+     limit: Option<usize>,
++    actor: Option<String>,
++    category: Option<String>,
++    source: Option<String>,
++    action: Option<String>,
++    event_type: Option<String>,
++}
++
++#[derive(Debug, Deserialize)]
++struct AiLogRecentQuery {
++    limit: Option<usize>,
++    actor: Option<String>,
++    category: Option<String>,
++    source: Option<String>,
++    action: Option<String>,
++    event_type: Option<String>,
++    #[serde(alias = "projectPath")]
++    project_path: Option<PathBuf>,
++}
++
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct AiLogRecentResponse {
++    schema_version: u32,
++    protocol: &'static str,
++    project_path: String,
++    path: String,
++    limit: usize,
++    filters: AiLogRecentFilters,
++    count: usize,
++    entries: Vec<AiLogRecentEntry>,
++}
++
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct AiLogRecentFilters {
++    #[serde(skip_serializing_if = "Option::is_none")]
+     actor: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
+     category: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
+     source: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
+     action: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
+     event_type: Option<String>,
++}
++
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct AiLogRecentEntry {
++    line_number: usize,
++    timestamp_utc: String,
++    value: serde_json::Value,
+ }
+ 
++#[derive(Clone, Debug)]
++struct AiLogRecentRequest {
++    project_root: PathBuf,
++    path: PathBuf,
++    filter: AiLogFilter,
++}
++
+ #[derive(Debug, Serialize)]
+ struct HealthResponse {
+     ok: bool,
+@@ -387,6 +442,7 @@
+         .route("/api/health", get(health))
+         .route("/api/heartbeat", post(heartbeat))
+         .route("/api/ai-log", get(list_ai_log))
++        .route("/api/ai-log/recent", get(read_recent_ai_log))
+         .route("/api/ai-log/context", get(get_ai_log_context))
+         .route("/schema", get(schema))
+         .route("/events", get(events_socket))
+@@ -498,6 +554,35 @@
+         .map_err(internal_error)
+ }
+ 
++async fn read_recent_ai_log(
++    State(state): State<GatewayState>,
++    headers: HeaderMap,
++    Query(query): Query<AiLogRecentQuery>,
++) -> Result<Json<AiLogRecentResponse>, Response> {
++    require_token(&state, &headers)?;
++    let request = parse_ai_log_recent_request(&state, query)?;
++    if !request.path.exists() {
++        return Ok(Json(build_ai_log_recent_response(&request, Vec::new())));
++    }
++
++    let limit = request.filter.limit.unwrap_or(AI_LOG_DEFAULT_LIMIT);
++    let read_filter = AiLogFilter {
++        limit: None,
++        actor: request.filter.actor.clone(),
++        category: request.filter.category.clone(),
++        source: request.filter.source.clone(),
++        action: request.filter.action.clone(),
++        event_type: request.filter.event_type.clone(),
++    };
++    let entries = ai_log::read_log_entries(&request.path, &read_filter).map_err(internal_error)?;
++    let entries = recent_entries(entries, limit)
++        .into_iter()
++        .map(redact_ai_log_recent_entry)
++        .collect();
++
++    Ok(Json(build_ai_log_recent_response(&request, entries)))
++}
++
+ async fn get_ai_log_context(
+     State(state): State<GatewayState>,
+     headers: HeaderMap,
+@@ -542,6 +627,189 @@
+     limit
+         .unwrap_or(AI_LOG_DEFAULT_LIMIT)
+         .clamp(1, AI_LOG_MAX_LIMIT)
++}
++
++fn parse_ai_log_recent_request(
++    state: &GatewayState,
++    query: AiLogRecentQuery,
++) -> Result<AiLogRecentRequest, Response> {
++    let project_root = resolve_ai_log_recent_project_root(state, query.project_path.clone())?;
++    let path = ai_log::ensure_log_path(&project_root).map_err(internal_error)?;
++    Ok(AiLogRecentRequest {
++        project_root,
++        path,
++        filter: ai_log_recent_filter(query),
++    })
++}
++
++fn resolve_ai_log_recent_project_root(
++    state: &GatewayState,
++    requested_project_path: Option<PathBuf>,
++) -> Result<PathBuf, Response> {
++    let project_root = match requested_project_path {
++        Some(path) => canonicalize_ai_log_unity_project_path(&path)?,
++        None => {
++            let Some(configured_project_root) = state.config.project_root.as_ref() else {
++                return Err((
++                    StatusCode::SERVICE_UNAVAILABLE,
++                    "project path is not configured",
++                )
++                    .into_response());
++            };
++            canonicalize_ai_log_unity_project_path(configured_project_root)?
++        }
++    };
++
++    if let Some(configured_project_root) = state.config.project_root.as_ref() {
++        let configured_project_root =
++            canonicalize_ai_log_unity_project_path(configured_project_root)?;
++        if configured_project_root != project_root {
++            return Err((
++                StatusCode::FORBIDDEN,
++                "requested project path is outside the configured project scope",
++            )
++                .into_response());
++        }
++    }
++
++    Ok(project_root)
++}
++
++fn canonicalize_ai_log_unity_project_path(path: &Path) -> Result<PathBuf, Response> {
++    if path.as_os_str().is_empty() {
++        return Err((StatusCode::BAD_REQUEST, "project path is required").into_response());
++    }
++
++    let project_root = path.canonicalize().map_err(|_| {
++        (
++            StatusCode::BAD_REQUEST,
++            "project path must be an accessible Unity project directory",
++        )
++            .into_response()
++    })?;
++
++    if !project_root.is_dir()
++        || !project_root.join("Assets").is_dir()
++        || !project_root.join("ProjectSettings").is_dir()
++    {
++        return Err((
++            StatusCode::BAD_REQUEST,
++            "project path must contain Assets and ProjectSettings directories",
++        )
++            .into_response());
++    }
++
++    Ok(project_root)
++}
++
++fn ai_log_recent_filter(query: AiLogRecentQuery) -> AiLogFilter {
++    AiLogFilter {
++        limit: Some(clamp_ai_log_limit(query.limit)),
++        actor: query.actor,
++        category: query.category,
++        source: query.source,
++        action: query.action,
++        event_type: query.event_type,
++    }
++}
++
++fn recent_entries(mut entries: Vec<AiLogEntry>, limit: usize) -> Vec<AiLogEntry> {
++    entries.sort_by(|left, right| {
++        left.timestamp
++            .cmp(&right.timestamp)
++            .then(left.line_number.cmp(&right.line_number))
++    });
++
++    if entries.len() > limit {
++        entries = entries.split_off(entries.len() - limit);
++    }
++
++    entries
++}
++
++fn build_ai_log_recent_response(
++    request: &AiLogRecentRequest,
++    entries: Vec<AiLogRecentEntry>,
++) -> AiLogRecentResponse {
++    AiLogRecentResponse {
++        schema_version: 1,
++        protocol: "lux.ai_log.recent.v1",
++        project_path: request.project_root.display().to_string(),
++        path: request.path.display().to_string(),
++        limit: request.filter.limit.unwrap_or(AI_LOG_DEFAULT_LIMIT),
++        filters: AiLogRecentFilters {
++            actor: request.filter.actor.clone(),
++            category: request.filter.category.clone(),
++            source: request.filter.source.clone(),
++            action: request.filter.action.clone(),
++            event_type: request.filter.event_type.clone(),
++        },
++        count: entries.len(),
++        entries,
++    }
++}
++
++fn redact_ai_log_recent_entry(entry: AiLogEntry) -> AiLogRecentEntry {
++    AiLogRecentEntry {
++        line_number: entry.line_number,
++        timestamp_utc: redact_ai_log_response_text(&entry.timestamp),
++        value: redact_ai_log_response_value(&entry.value),
++    }
++}
++
++fn redact_ai_log_response_value(value: &serde_json::Value) -> serde_json::Value {
++    match value {
++        serde_json::Value::String(text) => {
++            serde_json::Value::String(redact_ai_log_response_text(text))
++        }
++        serde_json::Value::Array(items) => {
++            serde_json::Value::Array(items.iter().map(redact_ai_log_response_value).collect())
++        }
++        serde_json::Value::Object(object) => serde_json::Value::Object(
++            object
++                .iter()
++                .map(|(key, value)| {
++                    if is_sensitive_ai_log_response_key(key) {
++                        (
++                            key.clone(),
++                            serde_json::Value::String("[REDACTED]".to_string()),
++                        )
++                    } else {
++                        (key.clone(), redact_ai_log_response_value(value))
++                    }
++                })
++                .collect(),
++        ),
++        other => other.clone(),
++    }
++}
++
++fn is_sensitive_ai_log_response_key(key: &str) -> bool {
++    let key = key.to_ascii_lowercase();
++    key.contains("token")
++        || key.contains("secret")
++        || key.contains("password")
++        || key.contains("authorization")
++        || key.contains("api_key")
++        || key.contains("apikey")
++}
++
++fn redact_ai_log_response_text(text: &str) -> String {
++    let mut redact_next = false;
++    text.split_whitespace()
++        .map(|part| {
++            if redact_next {
++                redact_next = false;
++                "[REDACTED]".to_string()
++            } else if part.eq_ignore_ascii_case("bearer") {
++                redact_next = true;
++                "[REDACTED]".to_string()
++            } else {
++                ai_log::redact_secrets(part)
++            }
++        })
++        .collect::<Vec<_>>()
++        .join(" ")
+ }
+ 
+ async fn schema() -> Json<EventEnvelope> {
+@@ -1686,6 +1954,8 @@
+             .as_nanos();
+         let root = std::env::temp_dir().join(format!("lux-gateway-{name}-{nanos}"));
+         fs::create_dir_all(root.join(".lux")).unwrap();
++        fs::create_dir_all(root.join("Assets")).unwrap();
++        fs::create_dir_all(root.join("ProjectSettings")).unwrap();
+         root.canonicalize().unwrap()
+     }
+ 
+@@ -1987,7 +2257,207 @@
+         let json = response_json(response).await;
+         assert_eq!(json.as_array().unwrap().len(), 1);
+         assert_eq!(json[0]["value"]["timestampUtc"], "2026-05-04T00:00:03Z");
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_reads_requested_project_events_in_deterministic_order() {
++        let project_root = temp_project_root("recent-query");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:03Z\",\"actor\":\"codex\",\"summary\":\"third\",\"tie\":\"b\"}\n\
++             {\"captured_at_utc\":\"2026-05-04T00:00:01Z\",\"actor\":\"codex\",\"message\":\"first\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"actor\":\"codex\",\"description\":\"second\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:03Z\",\"actor\":\"codex\",\"summary\":\"third tie\",\"tie\":\"a\"}\n",
++        );
++        let app = test_app();
++
++        let response = authenticated_get(
++            app,
++            &format!(
++                "/api/ai-log/recent?project_path={}&limit=3",
++                project_root.display()
++            ),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++
++        assert_eq!(json["schemaVersion"], 1);
++        assert_eq!(json["protocol"], "lux.ai_log.recent.v1");
++        assert_eq!(json["projectPath"], project_root.display().to_string());
++        assert_eq!(
++            json["path"],
++            ai_log::resolve_log_path(&project_root)
++                .display()
++                .to_string()
++        );
++        assert_eq!(json["limit"], 3);
++        assert_eq!(json["count"], 3);
++        assert_eq!(json["entries"][0]["lineNumber"], 3);
++        assert_eq!(json["entries"][0]["timestampUtc"], "2026-05-04T00:00:02Z");
++        assert_eq!(json["entries"][0]["value"]["description"], "second");
++        assert_eq!(json["entries"][1]["lineNumber"], 1);
++        assert_eq!(json["entries"][1]["value"]["summary"], "third");
++        assert_eq!(json["entries"][2]["lineNumber"], 4);
++        assert_eq!(json["entries"][2]["value"]["summary"], "third tie");
++        let serialized = serde_json::to_string(&json).unwrap();
++        assert!(!serialized.contains("first"));
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_accepts_camel_case_project_path_and_filters() {
++        let project_root = temp_project_root("recent-camel-filter");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"category\":\"tool\",\"source\":\"gateway\",\"action\":\"inspect\",\"eventType\":\"start\",\"summary\":\"ignored\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"action\":\"append\",\"eventType\":\"append\",\"summary\":\"kept one\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"actor\":\"opencode\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"action\":\"append\",\"eventType\":\"append\",\"summary\":\"ignored other actor\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:03Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"action\":\"append\",\"eventType\":\"append\",\"summary\":\"kept two\"}\n",
++        );
++        let app = test_app();
++
++        let response = authenticated_get(
++            app,
++            &format!(
++                "/api/ai-log/recent?projectPath={}&limit=10&actor=codex&category=ai-action-log&source=gateway&action=append&event_type=append",
++                project_root.display()
++            ),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++
++        assert_eq!(json["filters"]["actor"], "codex");
++        assert_eq!(json["filters"]["eventType"], "append");
++        assert_eq!(json["count"], 2);
++        assert_eq!(json["entries"][0]["value"]["summary"], "kept one");
++        assert_eq!(json["entries"][1]["value"]["summary"], "kept two");
++        let serialized = serde_json::to_string(&json).unwrap();
++        assert!(!serialized.contains("ignored"));
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_clamps_limit_to_bounds() {
++        let project_root = temp_project_root("recent-limit");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"summary\":\"first\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"summary\":\"second\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"summary\":\"third\"}\n",
++        );
++        let app = test_app_with_project(project_root.clone());
++
++        let response = authenticated_get(app, "/api/ai-log/recent?limit=0").await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++
++        assert_eq!(json["limit"], 1);
++        assert_eq!(json["count"], 1);
++        assert_eq!(json["entries"][0]["lineNumber"], 3);
++        assert_eq!(json["entries"][0]["value"]["summary"], "third");
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_requires_authentication() {
++        let project_root = temp_project_root("recent-auth");
++        let app = test_app_with_project(project_root.clone());
++
++        let response = unauthenticated_get(app, "/api/ai-log/recent").await;
++        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_requires_project_path_when_unconfigured() {
++        let response = authenticated_get(test_app(), "/api/ai-log/recent").await;
++        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_rejects_non_unity_project_path() {
++        let nanos = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .unwrap()
++            .as_nanos();
++        let project_root =
++            std::env::temp_dir().join(format!("lux-gateway-recent-non-unity-{nanos}"));
++        fs::create_dir_all(&project_root).unwrap();
++        let app = test_app();
++
++        let response = authenticated_get(
++            app,
++            &format!("/api/ai-log/recent?project_path={}", project_root.display()),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
++
++        let _ = fs::remove_dir_all(project_root);
++    }
+ 
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_rejects_paths_outside_configured_project_scope() {
++        let configured_project = temp_project_root("recent-configured-scope");
++        let requested_project = temp_project_root("recent-requested-scope");
++        write_ai_log(
++            &requested_project,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"summary\":\"outside scope\"}\n",
++        );
++        let app = test_app_with_project(configured_project.clone());
++
++        let response = authenticated_get(
++            app,
++            &format!(
++                "/api/ai-log/recent?project_path={}",
++                requested_project.display()
++            ),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::FORBIDDEN);
++        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
++        let body = std::str::from_utf8(&body).unwrap();
++        assert!(!body.contains("outside scope"));
++
++        let _ = fs::remove_dir_all(configured_project);
++        let _ = fs::remove_dir_all(requested_project);
++    }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_redacts_output_before_response() {
++        let project_root = temp_project_root("recent-redact");
++        write_ai_log(
++            &project_root,
++            concat!(
++                r#"{"timestampUtc":"2026-05-04T00:00:00Z","actor":"codex","summary":"Authorization: Bearer raw-secret","payload":{"token":"raw-token","safe":"visible","nested":{"apiKey":"raw-key","message":"token=raw-query"}}}"#,
++                "\n",
++            ),
++        );
++        let app = test_app_with_project(project_root.clone());
++
++        let response = authenticated_get(app, "/api/ai-log/recent?limit=1").await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++
++        let entry = &json["entries"][0]["value"];
++        assert_eq!(entry["summary"], "Authorization: [REDACTED] [REDACTED]");
++        assert_eq!(entry["payload"]["token"], "[REDACTED]");
++        assert_eq!(entry["payload"]["safe"], "visible");
++        assert_eq!(entry["payload"]["nested"]["apiKey"], "[REDACTED]");
++        assert_eq!(entry["payload"]["nested"]["message"], "[REDACTED]");
++        let serialized = serde_json::to_string(&json).unwrap();
++        assert!(!serialized.contains("raw-secret"));
++        assert!(!serialized.contains("raw-token"));
++        assert!(!serialized.contains("raw-key"));
++        assert!(!serialized.contains("raw-query"));
++
+         let _ = fs::remove_dir_all(project_root);
+     }
+ 

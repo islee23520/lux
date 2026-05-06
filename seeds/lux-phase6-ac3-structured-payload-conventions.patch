@@ -1,0 +1,868 @@
+diff --git a/RustGateway~/README.md b/RustGateway~/README.md
+--- a/RustGateway~/README.md
++++ b/RustGateway~/README.md
+@@ -74,6 +74,47 @@
+ `screenshot`, and `hierarchy`. Some categories are skeleton/demo events in this
+ slice; production fidelity is deliberately deferred.
+ 
++### Payload Conventions
++
++Every event keeps the top-level envelope stable and stores event-specific data
++under `payload`. Payload objects use camelCase fields and follow this minimal
++convention so editor hooks, AI work steps, and runtime gameplay code remain
++readable through JSONL, CLI, and API read paths:
++
++```json
++{
++  "kind": "editor-action",
++  "eventType": "selection.changed",
++  "summary": "Unity selection changed.",
++  "status": "completed",
++  "attributes": {
++    "objectCount": 1,
++    "targetPath": "Scene/Main Camera"
++  }
++}
++```
++
++Required payload fields:
++
++- `kind`: one of `editor-action`, `ai-work-step`,
++  `runtime-gameplay-event`, `tool-command`, or `gateway-signal`.
++- `eventType`: dotted or snake_case event name, stable enough for filters.
++- `summary`: redacted human-readable summary for AI context.
++
++Optional payload fields:
++
++- `status`: `started`, `completed`, `failed`, `cancelled`, or another
++  producer-specific state when needed.
++- `attributes`: event-specific scalar or structured values after redaction.
++  Nested arrays and objects are valid JSON values and must be encoded as JSON,
++  not flattened into strings, so CLI/API readers can preserve numbers,
++  booleans, nulls, lists, and object fields.
++
++Producers should avoid duplicating raw secrets, source code, or full gameplay
++state in `attributes`; store hashes, counts, identifiers, or redacted summaries
++instead. Readers must decode `payload.attributes` as JSON values instead of a
++string-only map.
++
+ ## Unity Prototype Bridge
+ 
+ Unity can connect through the menu commands under `Tools > Linalab > Lux >
+diff --git a/LuxEditor/LuxAiActionLog.cs b/LuxEditor/LuxAiActionLog.cs
+--- a/LuxEditor/LuxAiActionLog.cs
++++ b/LuxEditor/LuxAiActionLog.cs
+@@ -1,4 +1,5 @@
+ using System;
++using System.Collections;
+ using System.Collections.Concurrent;
+ using System.Collections.Generic;
+ using System.Globalization;
+@@ -12,6 +13,42 @@
+ 
+ namespace UnityEditor
+ {
++    [Serializable]
++    public sealed class LuxAiActionLogPayload
++    {
++        public string kind;
++        public string eventType;
++        public string summary;
++        public string status;
++        public string target;
++        public Dictionary<string, object> attributes;
++
++        public LuxAiActionLogPayload()
++        {
++            kind = "editor-action";
++            eventType = string.Empty;
++            summary = string.Empty;
++            status = string.Empty;
++            target = string.Empty;
++            attributes = new Dictionary<string, object>();
++        }
++
++        public LuxAiActionLogPayload Clone()
++        {
++            return new LuxAiActionLogPayload
++            {
++                kind = kind,
++                eventType = eventType,
++                summary = summary,
++                status = status,
++                target = target,
++                attributes = attributes == null
++                    ? new Dictionary<string, object>()
++                    : LuxAiActionLog.CloneStructuredDictionary(attributes)
++            };
++        }
++    }
++
+     [Serializable]
+     public sealed class LuxAiActionLogEntry
+     {
+@@ -30,6 +67,7 @@
+         public string severity;
+         public bool success;
+         public Dictionary<string, string> metadata;
++        public LuxAiActionLogPayload payload;
+ 
+         public LuxAiActionLogEntry()
+         {
+@@ -48,6 +86,7 @@
+             severity = "info";
+             success = true;
+             metadata = new Dictionary<string, string>();
++            payload = new LuxAiActionLogPayload();
+         }
+ 
+         public LuxAiActionLogEntry Clone()
+@@ -70,7 +109,8 @@
+                 success = success,
+                 metadata = metadata == null
+                     ? new Dictionary<string, string>()
+-                    : new Dictionary<string, string>(metadata)
++                    : new Dictionary<string, string>(metadata),
++                payload = payload == null ? new LuxAiActionLogPayload() : payload.Clone()
+             };
+         }
+     }
+@@ -211,29 +251,35 @@
+             string message,
+             string severity = "info",
+             bool success = true,
+-            IReadOnlyDictionary<string, string> metadata = null)
++            IReadOnlyDictionary<string, string> metadata = null,
++            IReadOnlyDictionary<string, object> payloadAttributes = null)
+         {
+             ThrowIfDisposed();
+ 
+             string redactedAction = RedactText(action);
+             string redactedMessage = RedactText(message);
++            string redactedTarget = RedactText(target);
++            string redactedSource = RedactText(source);
++            string redactedCategory = RedactText(category);
++            string normalizedSeverity = NormalizeSeverity(severity);
+             var entry = new LuxAiActionLogEntry
+             {
+                 schemaVersion = SchemaVersion,
+                 protocol = Protocol,
+                 id = Guid.NewGuid().ToString("N"),
+                 timestampUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+-                source = RedactText(source),
++                source = redactedSource,
+                 actor = RedactText(actor),
+-                category = RedactText(category),
++                category = redactedCategory,
+                 type = redactedAction,
+                 action = redactedAction,
+-                target = RedactText(target),
++                target = redactedTarget,
+                 summary = redactedMessage,
+                 message = redactedMessage,
+-                severity = NormalizeSeverity(severity),
++                severity = normalizedSeverity,
+                 success = success,
+-                metadata = RedactMetadata(metadata)
++                metadata = RedactMetadata(metadata),
++                payload = BuildPayload(redactedSource, redactedCategory, redactedAction, redactedTarget, redactedMessage, normalizedSeverity, success, payloadAttributes)
+             };
+ 
+             lock (_sync)
+@@ -375,6 +421,115 @@
+             }
+ 
+             return result;
++        }
++
++        LuxAiActionLogPayload BuildPayload(
++            string source,
++            string category,
++            string eventType,
++            string target,
++            string summary,
++            string severity,
++            bool success,
++            IReadOnlyDictionary<string, object> attributes)
++        {
++            return new LuxAiActionLogPayload
++            {
++                kind = PayloadKind(source, category),
++                eventType = string.IsNullOrWhiteSpace(eventType) ? "unknown" : eventType,
++                summary = summary ?? string.Empty,
++                status = success ? "completed" : (string.Equals(severity, "warning", StringComparison.Ordinal) ? "completed-with-warnings" : "failed"),
++                target = target ?? string.Empty,
++                attributes = RedactStructuredAttributes(attributes)
++            };
++        }
++
++        Dictionary<string, object> RedactStructuredAttributes(IReadOnlyDictionary<string, object> attributes)
++        {
++            var result = new Dictionary<string, object>(StringComparer.Ordinal);
++            if (attributes == null)
++            {
++                return result;
++            }
++
++            foreach (var pair in attributes)
++            {
++                string key = RedactText(pair.Key);
++                result[key] = SensitiveKeyPattern.IsMatch(pair.Key ?? string.Empty)
++                    ? Redacted
++                    : RedactStructuredValue(pair.Value);
++            }
++
++            return result;
++        }
++
++        object RedactStructuredValue(object value)
++        {
++            switch (value)
++            {
++                case null:
++                    return null;
++                case string text:
++                    return RedactText(text);
++                case bool _:
++                case byte _:
++                case sbyte _:
++                case short _:
++                case ushort _:
++                case int _:
++                case uint _:
++                case long _:
++                case ulong _:
++                case float _:
++                case double _:
++                case decimal _:
++                    return value;
++                case IReadOnlyDictionary<string, object> typedDictionary:
++                    return RedactStructuredAttributes(typedDictionary);
++                case IDictionary dictionary:
++                    return RedactDictionary(dictionary);
++                case IEnumerable enumerable:
++                    return enumerable.Cast<object>().Select(RedactStructuredValue).ToArray();
++                default:
++                    return RedactText(Convert.ToString(value, CultureInfo.InvariantCulture));
++            }
++        }
++
++        Dictionary<string, object> RedactDictionary(IDictionary dictionary)
++        {
++            var result = new Dictionary<string, object>(StringComparer.Ordinal);
++            if (dictionary == null)
++            {
++                return result;
++            }
++
++            foreach (DictionaryEntry entry in dictionary)
++            {
++                string originalKey = Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? string.Empty;
++                string key = RedactText(originalKey);
++                result[key] = SensitiveKeyPattern.IsMatch(originalKey)
++                    ? Redacted
++                    : RedactStructuredValue(entry.Value);
++            }
++
++            return result;
++        }
++
++        static string PayloadKind(string source, string category)
++        {
++            string normalizedSource = (source ?? string.Empty).ToLowerInvariant();
++            string normalizedCategory = (category ?? string.Empty).ToLowerInvariant();
++            if (normalizedSource.Contains("runtime") || normalizedCategory.Contains("runtime") || normalizedCategory.Contains("gameplay"))
++            {
++                return "runtime-gameplay-event";
++            }
++
++            if (normalizedSource.Contains("ai") || normalizedCategory.Contains("ai") || normalizedCategory.Contains("dynamic-code"))
++            {
++                return "ai-work-step";
++            }
++
++            return "editor-action";
+         }
+ 
+         string RedactText(string value)
+@@ -455,6 +610,8 @@
+             AppendJsonProperty(builder, "success", entry.success, false);
+             builder.Append(",\"metadata\":");
+             AppendMetadata(builder, entry.metadata);
++            builder.Append(",\"payload\":");
++            AppendPayload(builder, entry.payload);
+             builder.Append('}');
+             return builder.ToString();
+         }
+@@ -508,6 +665,170 @@
+             }
+ 
+             builder.Append('}');
++        }
++
++        static void AppendPayload(StringBuilder builder, LuxAiActionLogPayload payload)
++        {
++            payload ??= new LuxAiActionLogPayload();
++            builder.Append('{');
++            AppendJsonProperty(builder, "kind", payload.kind, true);
++            AppendJsonProperty(builder, "eventType", payload.eventType, false);
++            AppendJsonProperty(builder, "summary", payload.summary, false);
++            AppendJsonProperty(builder, "status", payload.status, false);
++            AppendJsonProperty(builder, "target", payload.target, false);
++            builder.Append(",\"attributes\":");
++            AppendStructuredObject(builder, payload.attributes);
++            builder.Append('}');
++        }
++
++        static void AppendStructuredObject(StringBuilder builder, IReadOnlyDictionary<string, object> values)
++        {
++            builder.Append('{');
++            bool first = true;
++            if (values != null)
++            {
++                foreach (var pair in values.OrderBy(pair => pair.Key, StringComparer.Ordinal))
++                {
++                    if (!first)
++                    {
++                        builder.Append(',');
++                    }
++
++                    builder.Append('"').Append(EscapeJson(pair.Key)).Append("\":");
++                    AppendJsonValue(builder, pair.Value);
++                    first = false;
++                }
++            }
++
++            builder.Append('}');
++        }
++
++        static void AppendJsonValue(StringBuilder builder, object value)
++        {
++            switch (value)
++            {
++                case null:
++                    builder.Append("null");
++                    break;
++                case string text:
++                    builder.Append('"').Append(EscapeJson(text)).Append('"');
++                    break;
++                case bool boolean:
++                    builder.Append(boolean ? "true" : "false");
++                    break;
++                case byte _:
++                case sbyte _:
++                case short _:
++                case ushort _:
++                case int _:
++                case uint _:
++                case long _:
++                case ulong _:
++                case decimal _:
++                    builder.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
++                    break;
++                case float single:
++                    AppendFloatingPoint(builder, single);
++                    break;
++                case double number:
++                    AppendFloatingPoint(builder, number);
++                    break;
++                case IReadOnlyDictionary<string, object> typedDictionary:
++                    AppendStructuredObject(builder, typedDictionary);
++                    break;
++                case IDictionary dictionary:
++                    AppendStructuredObject(builder, DictionaryToObjectMap(dictionary));
++                    break;
++                case IEnumerable enumerable:
++                    AppendJsonArray(builder, enumerable);
++                    break;
++                default:
++                    builder.Append('"')
++                        .Append(EscapeJson(Convert.ToString(value, CultureInfo.InvariantCulture)))
++                        .Append('"');
++                    break;
++            }
++        }
++
++        static void AppendFloatingPoint(StringBuilder builder, double value)
++        {
++            if (double.IsNaN(value) || double.IsInfinity(value))
++            {
++                builder.Append("null");
++                return;
++            }
++
++            builder.Append(value.ToString("R", CultureInfo.InvariantCulture));
++        }
++
++        static void AppendJsonArray(StringBuilder builder, IEnumerable values)
++        {
++            builder.Append('[');
++            bool first = true;
++            foreach (object value in values)
++            {
++                if (!first)
++                {
++                    builder.Append(',');
++                }
++
++                AppendJsonValue(builder, value);
++                first = false;
++            }
++
++            builder.Append(']');
++        }
++
++        static Dictionary<string, object> DictionaryToObjectMap(IDictionary dictionary)
++        {
++            var result = new Dictionary<string, object>(StringComparer.Ordinal);
++            if (dictionary == null)
++            {
++                return result;
++            }
++
++            foreach (DictionaryEntry entry in dictionary)
++            {
++                string key = Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? string.Empty;
++                result[key] = entry.Value;
++            }
++
++            return result;
++        }
++
++        internal static Dictionary<string, object> CloneStructuredDictionary(IReadOnlyDictionary<string, object> source)
++        {
++            var result = new Dictionary<string, object>(StringComparer.Ordinal);
++            if (source == null)
++            {
++                return result;
++            }
++
++            foreach (var pair in source)
++            {
++                result[pair.Key] = CloneStructuredValue(pair.Value);
++            }
++
++            return result;
++        }
++
++        static object CloneStructuredValue(object value)
++        {
++            switch (value)
++            {
++                case null:
++                    return null;
++                case IReadOnlyDictionary<string, object> typedDictionary:
++                    return CloneStructuredDictionary(typedDictionary);
++                case IDictionary dictionary:
++                    return CloneStructuredDictionary(DictionaryToObjectMap(dictionary));
++                case string _:
++                    return value;
++                case IEnumerable enumerable:
++                    return enumerable.Cast<object>().Select(CloneStructuredValue).ToArray();
++                default:
++                    return value;
++            }
+         }
+ 
+         static string EscapeJson(string value)
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -56,6 +56,11 @@
+             Assert.That(lines[0], Does.Contain("\"action\":\"run\""));
+             Assert.That(lines[0], Does.Contain("\"summary\":\"Compilation requested\""));
+             Assert.That(lines[0], Does.Contain("\"message\":\"Compilation requested\""));
++            Assert.That(lines[0], Does.Contain("\"payload\":{"));
++            Assert.That(lines[0], Does.Contain("\"kind\":\"editor-action\""));
++            Assert.That(lines[0], Does.Contain("\"eventType\":\"run\""));
++            Assert.That(lines[0], Does.Contain("\"status\":\"completed\""));
++            Assert.That(lines[0], Does.Contain("\"attributes\":{}"));
+         }
+ 
+         [Test]
+@@ -100,10 +105,54 @@
+             string jsonl = File.ReadAllText(path);
+ 
+             Assert.That(entry.summary, Does.Not.Contain("secret-token"));
++            Assert.That(entry.payload.summary, Does.Not.Contain("secret-token"));
++            Assert.That(entry.payload.target, Does.Not.Contain("secret-token"));
+             Assert.That(entry.message, Does.Not.Contain("secret-token"));
+             Assert.That(jsonl, Does.Not.Contain("secret-token"));
+             Assert.That(jsonl.ToLowerInvariant(), Does.Not.Contain("bearer secret-token"));
+             Assert.That(jsonl, Does.Contain("[REDACTED]"));
++        }
++
++        [Test]
++        public void Record_StoresStructuredPayloadConventionWithRedactedAttributes()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++
++            var entry = log.Record(
++                "unity-editor",
++                "user",
++                "selection",
++                "changed",
++                "Scene/Main Camera",
++                "Selection changed to Main Camera",
++                payloadAttributes: new Dictionary<string, object>
++                {
++                    ["apiKey"] = "secret-token",
++                    ["isRuntime"] = false,
++                    ["objectCount"] = 1,
++                    ["position"] = new Dictionary<string, object>
++                    {
++                        ["visible"] = true,
++                        ["x"] = 12.5,
++                        ["y"] = 3
++                    },
++                    ["tags"] = new object[] { "camera", 7 }
++                });
++            log.Flush();
++
++            string jsonl = File.ReadAllText(path);
++            Assert.That(entry.payload.kind, Is.EqualTo("editor-action"));
++            Assert.That(entry.payload.eventType, Is.EqualTo("changed"));
++            Assert.That(entry.payload.attributes["apiKey"], Is.EqualTo("[REDACTED]"));
++            Assert.That(entry.payload.attributes["objectCount"], Is.EqualTo(1));
++            Assert.That(jsonl, Does.Contain("\"payload\":{\"kind\":\"editor-action\",\"eventType\":\"changed\""));
++            Assert.That(jsonl, Does.Contain("\"apiKey\":\"[REDACTED]\""));
++            Assert.That(jsonl, Does.Contain("\"isRuntime\":false"));
++            Assert.That(jsonl, Does.Contain("\"objectCount\":1"));
++            Assert.That(jsonl, Does.Contain("\"position\":{\"visible\":true,\"x\":12.5,\"y\":3}"));
++            Assert.That(jsonl, Does.Contain("\"tags\":[\"camera\",7]"));
++            Assert.That(jsonl, Does.Not.Contain("secret-token"));
+         }
+ 
+         [Test]
+@@ -174,6 +223,8 @@
+             Assert.That(broadcasts[0].Item2.actor, Is.EqualTo("user"));
+             Assert.That(broadcasts[0].Item2.type, Is.EqualTo("action-0"));
+             Assert.That(broadcasts[0].Item2.summary, Is.EqualTo("message"));
++            Assert.That(broadcasts[0].Item2.payload.kind, Is.EqualTo("editor-action"));
++            Assert.That(broadcasts[0].Item2.payload.eventType, Is.EqualTo("action-0"));
+         }
+ 
+         [Test]
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -136,14 +136,15 @@
+             let message = compact_message(&entry.value);
+             json!({
+                 "timestampUtc": entry.timestamp,
+-                "actor": string_field(&entry.value, "actor"),
+-                "category": string_field(&entry.value, "category"),
+-                "source": string_field(&entry.value, "source"),
++                "actor": string_field_deep(&entry.value, "actor"),
++                "category": string_field_deep(&entry.value, "category"),
++                "source": string_field_deep(&entry.value, "source"),
+                 "type": event_type.clone(),
+-                "action": string_field(&entry.value, "action"),
++                "action": string_field_deep(&entry.value, "action"),
+                 "eventType": event_type,
+                 "summary": summary,
+                 "message": message,
++                "payload": entry.value.get("payload").cloned().unwrap_or(Value::Null),
+             })
+         })
+         .collect();
+@@ -256,7 +257,7 @@
+ 
+ fn matches_optional(value: &Value, field: &str, expected: Option<&str>) -> bool {
+     expected.map_or(true, |expected| {
+-        string_field(value, field).as_deref() == Some(expected)
++        string_field_deep(value, field).as_deref() == Some(expected)
+     })
+ }
+ 
+@@ -269,23 +270,36 @@
+         .or_else(|| string_field(value, "eventType"))
+         .or_else(|| string_field(value, "event_type"))
+         .or_else(|| string_field(value, "action"))
++        .or_else(|| payload_string_field(value, "eventType"))
++        .or_else(|| payload_string_field(value, "event_type"))
++        .or_else(|| payload_string_field(value, "kind"))
+ }
+ 
+ fn string_field(value: &Value, field: &str) -> Option<String> {
+     value.get(field)?.as_str().map(ToOwned::to_owned)
++}
++
++fn string_field_deep(value: &Value, field: &str) -> Option<String> {
++    string_field(value, field).or_else(|| payload_string_field(value, field))
++}
++
++fn payload_string_field(value: &Value, field: &str) -> Option<String> {
++    value
++        .get("payload")
++        .and_then(|payload| string_field(payload, field))
+ }
+ 
+ fn compact_summary(value: &Value) -> Option<String> {
+     ["summary", "message", "description"]
+         .iter()
+-        .find_map(|field| string_field(value, field))
++        .find_map(|field| string_field_deep(value, field))
+         .map(|text| redact_secrets(&text))
+ }
+ 
+ fn compact_message(value: &Value) -> Option<String> {
+     ["message", "summary", "description"]
+         .iter()
+-        .find_map(|field| string_field(value, field))
++        .find_map(|field| string_field_deep(value, field))
+         .map(|text| redact_secrets(&text))
+ }
+ 
+@@ -401,6 +415,24 @@
+     }
+ 
+     #[test]
++    fn ai_log_context_reads_nested_payload_conventions() {
++        let entries = parse_entries(Cursor::new(
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"payload\":{\"kind\":\"ai-work-step\",\"eventType\":\"tool.apply_patch\",\"summary\":\"Patch applied\",\"status\":\"completed\",\"attributes\":{\"stepName\":\"apply_patch\"}}}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"payload\":{\"kind\":\"runtime-gameplay-event\",\"eventType\":\"enemy_death\",\"summary\":\"Enemy defeated\"}}\n",
++        ));
++
++        let context = build_continuation_context(&entries, None);
++        let items = context["entries"].as_array().unwrap();
++
++        assert_eq!(items[0]["type"], "tool.apply_patch");
++        assert_eq!(items[0]["eventType"], "tool.apply_patch");
++        assert_eq!(items[0]["summary"], "Patch applied");
++        assert_eq!(items[0]["message"], "Patch applied");
++        assert_eq!(items[1]["type"], "enemy_death");
++        assert_eq!(items[1]["summary"], "Enemy defeated");
++    }
++
++    #[test]
+     fn ai_log_redacts_bearer_and_token_values_in_summaries() {
+         assert_eq!(
+             redact_secrets("Authorization: Bearer abc token=secret keep"),
+diff --git a/RustGateway~/src/protocol.rs b/RustGateway~/src/protocol.rs
+--- a/RustGateway~/src/protocol.rs
++++ b/RustGateway~/src/protocol.rs
+@@ -1,5 +1,5 @@
+ use serde::{Deserialize, Serialize};
+-use serde_json::{json, Value};
++use serde_json::{json, Map, Value};
+ 
+ pub const PROTOCOL_VERSION: u32 = 1;
+ 
+@@ -27,6 +27,64 @@
+     pub payload: Value,
+ }
+ 
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(rename_all = "kebab-case")]
++pub enum EventPayloadKind {
++    EditorAction,
++    AiWorkStep,
++    RuntimeGameplayEvent,
++    ToolCommand,
++    GatewaySignal,
++}
++
++#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct EventPayloadConvention {
++    pub kind: EventPayloadKind,
++    pub event_type: String,
++    pub summary: String,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub status: Option<String>,
++    #[serde(default, skip_serializing_if = "Map::is_empty")]
++    pub attributes: Map<String, Value>,
++}
++
++impl EventPayloadConvention {
++    pub fn new(
++        kind: EventPayloadKind,
++        event_type: impl Into<String>,
++        summary: impl Into<String>,
++    ) -> Self {
++        Self {
++            kind,
++            event_type: event_type.into(),
++            summary: summary.into(),
++            status: None,
++            attributes: Map::new(),
++        }
++    }
++
++    pub fn with_status(mut self, status: impl Into<String>) -> Self {
++        self.status = Some(status.into());
++        self
++    }
++
++    pub fn with_attribute(mut self, key: impl Into<String>, value: Value) -> Self {
++        self.attributes.insert(key.into(), value);
++        self
++    }
++
++    #[allow(dead_code)]
++    pub fn to_json_value(&self) -> serde_json::Result<Value> {
++        serde_json::to_value(self)
++    }
++
++    #[allow(dead_code)]
++    pub fn from_json_value(value: Value) -> serde_json::Result<Self> {
++        serde_json::from_value(value)
++    }
++}
++
+ impl EventEnvelope {
+     pub fn schema_example() -> Self {
+         Self {
+@@ -36,10 +94,13 @@
+             source: "unity-editor".to_string(),
+             session_id: "example-session".to_string(),
+             captured_at_utc: "2026-04-30T00:00:00.0000000Z".to_string(),
+-            payload: json!({
+-                "kind": "example",
+-                "message": "Lux gateway event envelope prototype"
+-            }),
++            payload: serde_json::to_value(
++                payload_convention_examples()
++                    .into_iter()
++                    .next()
++                    .expect("payload convention examples include editor action"),
++            )
++            .expect("payload convention example serializes"),
+         }
+     }
+ 
+@@ -52,6 +113,46 @@
+     }
+ }
+ 
++pub fn editor_action_payload_example() -> EventPayloadConvention {
++    EventPayloadConvention::new(
++        EventPayloadKind::EditorAction,
++        "selection.changed",
++        "Unity selection changed.",
++    )
++    .with_status("completed")
++    .with_attribute("objectCount", json!(1))
++    .with_attribute("targetPath", json!("Scene/Main Camera"))
++}
++
++pub fn ai_work_step_payload_example() -> EventPayloadConvention {
++    EventPayloadConvention::new(
++        EventPayloadKind::AiWorkStep,
++        "tool.apply_patch",
++        "AI tool step applied a source edit.",
++    )
++    .with_status("completed")
++    .with_attribute("tool", json!("codex"))
++    .with_attribute("stepName", json!("apply_patch"))
++}
++
++pub fn runtime_gameplay_payload_example() -> EventPayloadConvention {
++    EventPayloadConvention::new(
++        EventPayloadKind::RuntimeGameplayEvent,
++        "enemy_death",
++        "Gameplay runtime event logged.",
++    )
++    .with_attribute("entityId", json!("enemy-7"))
++    .with_attribute("scenePath", json!("Assets/Scenes/Arena.unity"))
++}
++
++pub fn payload_convention_examples() -> Vec<EventPayloadConvention> {
++    vec![
++        editor_action_payload_example(),
++        ai_work_step_payload_example(),
++        runtime_gameplay_payload_example(),
++    ]
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -61,6 +162,47 @@
+         let json = serde_json::to_value(EventEnvelope::schema_example()).unwrap();
+         assert_eq!(json["schema_version"], PROTOCOL_VERSION);
+         assert_eq!(json["category"], "tool");
++        assert_eq!(json["payload"]["kind"], "editor-action");
++        assert_eq!(json["payload"]["eventType"], "selection.changed");
++        assert_eq!(
++            json["payload"]["attributes"]["targetPath"],
++            "Scene/Main Camera"
++        );
++    }
++
++    #[test]
++    fn payload_convention_preserves_nested_attribute_types() {
++        let payload = EventPayloadConvention::new(
++            EventPayloadKind::RuntimeGameplayEvent,
++            "combat.hit",
++            "Runtime combat hit logged.",
++        )
++        .with_status("completed")
++        .with_attribute("damage", json!(12.5))
++        .with_attribute("critical", json!(true))
++        .with_attribute("tags", json!(["runtime", 7, { "source": "ability" }]))
++        .with_attribute(
++            "position",
++            json!({
++                "x": 1,
++                "y": 2.25,
++                "valid": true,
++                "modifiers": ["buff", "area"]
++            }),
++        );
++
++        let encoded = payload.to_json_value().unwrap();
++        assert_eq!(encoded["attributes"]["damage"], json!(12.5));
++        assert_eq!(encoded["attributes"]["critical"], json!(true));
++        assert_eq!(encoded["attributes"]["tags"][2]["source"], "ability");
++        assert_eq!(encoded["attributes"]["position"]["modifiers"][1], "area");
++
++        let decoded = EventPayloadConvention::from_json_value(encoded).unwrap();
++        assert_eq!(decoded.kind, EventPayloadKind::RuntimeGameplayEvent);
++        assert_eq!(decoded.attributes["damage"], json!(12.5));
++        assert_eq!(decoded.attributes["critical"], json!(true));
++        assert_eq!(decoded.attributes["tags"][1], json!(7));
++        assert_eq!(decoded.attributes["position"]["valid"], json!(true));
+     }
+ 
+     #[test]
+@@ -100,4 +242,36 @@
+         let deserialized: EventCategory = serde_json::from_value(json!("ai-action-log")).unwrap();
+         assert_eq!(deserialized, EventCategory::AiActionLog);
+     }
+-}
++
++    #[test]
++    fn payload_conventions_cover_editor_ai_and_runtime_events() {
++        let examples = payload_convention_examples()
++            .into_iter()
++            .map(serde_json::to_value)
++            .collect::<Result<Vec<_>, _>>()
++            .unwrap();
++
++        assert_eq!(examples[0]["kind"], "editor-action");
++        assert_eq!(examples[0]["eventType"], "selection.changed");
++        assert_eq!(examples[0]["status"], "completed");
++        assert!(examples[0]["attributes"].is_object());
++
++        assert_eq!(examples[1]["kind"], "ai-work-step");
++        assert_eq!(examples[1]["attributes"]["stepName"], "apply_patch");
++
++        assert_eq!(examples[2]["kind"], "runtime-gameplay-event");
++        assert_eq!(examples[2]["eventType"], "enemy_death");
++        assert_eq!(examples[2]["attributes"]["entityId"], "enemy-7");
++    }
++
++    #[test]
++    fn payload_convention_roundtrips_through_serde() {
++        let payload = ai_work_step_payload_example();
++        let value = serde_json::to_value(payload).unwrap();
++        let roundtrip: EventPayloadConvention = serde_json::from_value(value).unwrap();
++
++        assert_eq!(roundtrip.kind, EventPayloadKind::AiWorkStep);
++        assert_eq!(roundtrip.event_type, "tool.apply_patch");
++        assert_eq!(roundtrip.status.as_deref(), Some("completed"));
++    }
++}

@@ -1,0 +1,63 @@
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -2375,8 +2375,59 @@ mod tests {
+ 
+         let _ = fs::remove_dir_all(requested_project);
+         let _ = fs::remove_dir_all(other_project);
+     }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoint_rejects_unauthorized_contract_requests_without_leaking_data() {
++        let project_root = temp_project_root("read-contract-unauthorized");
++        write_ai_log(
++            &project_root,
++            concat!(
++                r#"{"timestampUtc":"2026-05-04T00:00:01Z","id":"evt-secret","actor":"codex","category":"ai-action-log","source":"gateway","action":"edit","eventType":"append","target":"Assets/Secret.unity","summary":"raw-secret-sample"}"#,
++                "\n",
++            ),
++        );
++        let log_path = ai_log::resolve_log_path(&project_root);
++        let app = test_app_with_project(project_root.clone());
++        let uri = "/api/ai-log/read?limit=10&actor=codex&category=ai-action-log&source=gateway&action=edit&event_type=append";
++
++        for token in [None, Some("wrong-secret")] {
++            let response = get_with_optional_token(app.clone(), uri, token).await;
++            assert_eq!(
++                response.status(),
++                StatusCode::UNAUTHORIZED,
++                "read contract endpoint accepted token state {token:?}"
++            );
++            let body = response_text(response).await;
++            assert!(
++                !body.contains("raw-secret-sample"),
++                "unauthorized read leaked event summary"
++            );
++            assert!(
++                !body.contains("evt-secret"),
++                "unauthorized read leaked event id"
++            );
++            assert!(
++                !body.contains(&project_root.display().to_string()),
++                "unauthorized read leaked project path"
++            );
++            assert!(
++                !body.contains(&log_path.display().to_string()),
++                "unauthorized read leaked log path"
++            );
++            assert!(
++                !body.contains("lux.ai_log.read.v1"),
++                "unauthorized read returned the authorized contract payload"
++            );
++            assert!(
++                !body.contains("schemaVersion"),
++                "unauthorized read returned contract fields"
++            );
++        }
++
++        let _ = fs::remove_dir_all(project_root);
++    }
+ 
+     #[tokio::test]
+     async fn ai_log_context_orders_entries_by_timestamp() {
+         let project_root = temp_project_root("context");

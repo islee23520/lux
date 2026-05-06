@@ -1,0 +1,235 @@
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -96,7 +96,82 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(jsonl, Does.Not.Contain("secret-token"));
+             Assert.That(jsonl.ToLowerInvariant(), Does.Not.Contain("bearer secret-token"));
+             Assert.That(jsonl, Does.Contain("[REDACTED]"));
+         }
+ 
++        [Test]
++        public void Record_RedactionRegressionDoesNotLeakSecretPathOrMetadataValues()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            string projectRoot = Path.GetFullPath(UnityEditor.LuxBridgeSettings.GetProjectRoot()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++            string rawAssetPath = Path.Combine(projectRoot, "Assets", "Scripts", "RedactionProbe.cs");
++
++            var entry = log.Record(
++                "test",
++                "agent",
++                "remote",
++                "call",
++                rawAssetPath,
++                "Authorization: Bearer raw-secret OPENAI_API_KEY=sk-live opened " + rawAssetPath,
++                metadata: new Dictionary<string, string>
++                {
++                    ["apiKey"] = "metadata-secret",
++                    ["note"] = "token=metadata-token",
++                    ["assetPath"] = rawAssetPath,
++                    ["safe"] = "visible"
++                });
++            log.Flush();
++
++            string jsonl = File.ReadAllText(path).Replace('\\', '/');
++            string normalizedProjectRoot = projectRoot.Replace('\\', '/');
++            string metadataSummary = string.Join(" ", entry.redactionMetadata.redactedFields ?? new List<string>())
++                + " "
++                + string.Join(" ", entry.redactionMetadata.redactionClasses ?? new List<string>());
++
++            Assert.That(entry.metadata["safe"], Is.EqualTo("visible"));
++            Assert.That(jsonl, Does.Contain("[REDACTED]"));
++            Assert.That(jsonl, Does.Not.Contain("raw-secret"));
++            Assert.That(jsonl, Does.Not.Contain("sk-live"));
++            Assert.That(jsonl, Does.Not.Contain("metadata-secret"));
++            Assert.That(jsonl, Does.Not.Contain("metadata-token"));
++            Assert.That(jsonl, Does.Not.Contain(normalizedProjectRoot));
++            Assert.That(metadataSummary, Does.Contain("<sensitive-key>"));
++            Assert.That(metadataSummary, Does.Not.Contain("apiKey"));
++            Assert.That(metadataSummary, Does.Not.Contain("metadata-secret"));
++            Assert.That(metadataSummary, Does.Not.Contain("metadata-token"));
++            Assert.That(metadataSummary.Replace('\\', '/'), Does.Not.Contain(normalizedProjectRoot));
++        }
++
++        [Test]
++        public void Broadcaster_RedactsSecretAndProjectPathBeforeQueuedBroadcast()
++        {
++            var broadcasts = new List<Tuple<string, UnityEditor.LuxAiActionLogEntry>>();
++            ConfigureBroadcasterForTest(0.0, (eventType, payload) => broadcasts.Add(Tuple.Create(eventType, (UnityEditor.LuxAiActionLogEntry)payload)));
++            string projectRoot = Path.GetFullPath(UnityEditor.LuxBridgeSettings.GetProjectRoot()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++            string rawAssetPath = Path.Combine(projectRoot, "Assets", "Scripts", "BroadcastProbe.cs");
++
++            UnityEditor.LuxAiActionLogBroadcaster.Record("remote", "call", rawAssetPath, "Authorization: Bearer broadcast-secret token=broadcast-token " + rawAssetPath);
++            UnityEditor.LuxAiActionLogBroadcaster.PumpForTests();
++            foreach (var configuredLog in _configuredLogs)
++            {
++                configuredLog.Flush();
++            }
++
++            var broadcastParts = new List<string>();
++            foreach (var broadcast in broadcasts)
++            {
++                broadcastParts.Add(broadcast.Item2.target + " " + broadcast.Item2.message);
++            }
++
++            string broadcastText = string.Join(" ", broadcastParts).Replace('\\', '/');
++            string jsonl = File.ReadAllText(GetTempLogPath()).Replace('\\', '/');
++            string normalizedProjectRoot = projectRoot.Replace('\\', '/');
++
++            Assert.That(broadcasts, Has.Count.EqualTo(1));
++            Assert.That(broadcastText + " " + jsonl, Does.Not.Contain("broadcast-secret"));
++            Assert.That(broadcastText + " " + jsonl, Does.Not.Contain("broadcast-token"));
++            Assert.That(broadcastText + " " + jsonl, Does.Not.Contain(normalizedProjectRoot));
++        }
++
+         [Test]
+         public void Compact_KeepsValidJsonlAndReportsCompactedState()
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -383,7 +383,76 @@ mod tests {
+             redact_secrets("Authorization: Bearer abc token=secret keep"),
+             "Authorization: [REDACTED] abc [REDACTED] keep"
+         );
+     }
+ 
++    #[test]
++    fn ai_log_redaction_regression_covers_secret_path_gameplay_and_metadata_non_leaks() {
++        let project_root = temp_project_root("ai-log-redaction-regression");
++        let log_dir = project_root.join(".lux");
++        fs::create_dir_all(&log_dir).unwrap();
++        let log_path = log_dir.join("ai-action-log.jsonl");
++        let raw_asset_path = project_root.join("Assets/Scripts/PlayerSecrets.cs");
++        fs::write(
++            &log_path,
++            format!(
++                "{{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"gameplay\",\"category\":\"runtime\",\"source\":\"unity-runtime\",\"summary\":\"Authorization: Bearer raw-secret token=raw-query opened {}\",\"target\":\"{}\",\"metadata\":{{\"apiKey\":\"token=metadata-token\",\"assetPath\":\"{}\",\"safe\":\"visible\"}},\"payload\":{{\"kind\":\"runtime-gameplay-event\",\"eventType\":\"quest_step_completed\",\"attributes\":{{\"questId\":\"quest-7\",\"playerId\":\"player-secret-42\",\"saveData\":{{\"slot\":\"slot-raw\"}},\"inventory\":[\"gold-key\"],\"publicResult\":\"completed\"}}}},\"redactionMetadata\":{{\"policyVersion\":\"lux.redaction.v1\",\"applied\":true,\"redactedCount\":4,\"redactedFields\":[\"metadata.<sensitive-key>\",\"payload.attributes.playerId\",\"payload.attributes.saveData\",\"target\"],\"redactionClasses\":[\"credential\",\"gameplay-sensitive\",\"project-path\"],\"locationHints\":[{{\"location\":\"metadata.<sensitive-key>\",\"category\":\"credential\"}}]}}}}\n",
++                raw_asset_path.display(),
++                raw_asset_path.display(),
++                raw_asset_path.display()
++            ),
++        )
++        .unwrap();
++
++        let entries = read_log_entries(&log_path, &AiLogFilter::default()).unwrap();
++        let serialized_entries = serde_json::to_string(&entries).unwrap();
++        let context = build_continuation_context(&entries, None);
++        let serialized_context = serde_json::to_string(&context).unwrap();
++        let redaction_metadata =
++            serde_json::to_string(&entries[0].value["redactionMetadata"]).unwrap();
++        let normalized_project_root = project_root.to_string_lossy().replace('\\', "/");
++
++        assert_eq!(entries[0].value["target"], "Assets/Scripts/PlayerSecrets.cs");
++        assert_eq!(entries[0].value["metadata"]["assetPath"], "Assets/Scripts/PlayerSecrets.cs");
++        assert_eq!(entries[0].value["metadata"]["safe"], "visible");
++        assert_eq!(
++            context["entries"][0]["payload"]["attributes"]["questId"],
++            "quest-7"
++        );
++        assert_eq!(
++            context["entries"][0]["payload"]["attributes"]["playerId"],
++            "[REDACTED]"
++        );
++        assert_eq!(
++            context["entries"][0]["payload"]["attributes"]["saveData"],
++            "[REDACTED]"
++        );
++        assert_eq!(
++            context["entries"][0]["payload"]["attributes"]["inventory"],
++            "[REDACTED]"
++        );
++        assert!(serialized_entries.contains("[REDACTED]"));
++        assert!(!serialized_entries.contains("raw-secret"));
++        assert!(!serialized_entries.contains("raw-query"));
++        assert!(!serialized_entries.contains("metadata-token"));
++        assert!(!serialized_entries.contains(&normalized_project_root));
++        assert!(!serialized_context.contains("player-secret-42"));
++        assert!(!serialized_context.contains("slot-raw"));
++        assert!(!serialized_context.contains("gold-key"));
++        assert!(!serialized_context.contains("raw-secret"));
++        assert!(!serialized_context.contains("metadata-token"));
++        assert!(!serialized_context.contains(&normalized_project_root));
++        assert!(redaction_metadata.contains("credential"));
++        assert!(redaction_metadata.contains("gameplay-sensitive"));
++        assert!(redaction_metadata.contains("project-path"));
++        assert!(!redaction_metadata.contains("raw-secret"));
++        assert!(!redaction_metadata.contains("metadata-token"));
++        assert!(!redaction_metadata.contains("player-secret-42"));
++        assert!(!redaction_metadata.contains("slot-raw"));
++        assert!(!redaction_metadata.contains("gold-key"));
++        assert!(!redaction_metadata.contains(&normalized_project_root));
++
++        fs::remove_dir_all(project_root).unwrap();
++    }
++
+     fn temp_project_root(prefix: &str) -> PathBuf {
+         let nanos = SystemTime::now()
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -2014,5 +2014,64 @@ mod tests {
+
+         let _ = fs::remove_dir_all(project_root);
+     }
++
++    #[tokio::test]
++    async fn ai_log_recent_endpoint_redaction_regression_has_no_secret_path_gameplay_or_metadata_leaks() {
++        let project_root = temp_project_root("recent-redaction-regression");
++        let raw_asset_path = project_root.join("Assets/Scripts/PlayerSecrets.cs");
++        write_ai_log(
++            &project_root,
++            &format!(
++                "{{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"gameplay\",\"category\":\"runtime\",\"source\":\"unity-runtime\",\"summary\":\"Authorization: Bearer response-secret token=response-query opened {}\",\"target\":\"{}\",\"metadata\":{{\"apiKey\":\"token=metadata-token\",\"assetPath\":\"{}\",\"safe\":\"visible\"}},\"payload\":{{\"kind\":\"runtime-gameplay-event\",\"eventType\":\"quest_step_completed\",\"attributes\":{{\"questId\":\"quest-7\",\"playerId\":\"player-secret-42\",\"saveData\":{{\"slot\":\"slot-raw\"}},\"inventory\":[\"gold-key\"],\"publicResult\":\"completed\"}}}},\"redactionMetadata\":{{\"policyVersion\":\"lux.redaction.v1\",\"applied\":true,\"redactedCount\":4,\"redactedFields\":[\"metadata.<sensitive-key>\",\"payload.attributes.playerId\",\"payload.attributes.saveData\",\"target\"],\"redactionClasses\":[\"credential\",\"gameplay-sensitive\",\"project-path\"],\"locationHints\":[{{\"location\":\"metadata.<sensitive-key>\",\"category\":\"credential\"}}]}}}}\n",
++                raw_asset_path.display(),
++                raw_asset_path.display(),
++                raw_asset_path.display()
++            ),
++        );
++        let app = test_app();
++
++        let response = authenticated_get(
++            app,
++            &format!("/api/ai-log/recent?project_path={}", project_root.display()),
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::OK);
++        let json = response_json(response).await;
++        let entry = &json["entries"][0]["value"];
++        let serialized = serde_json::to_string(&json).unwrap();
++        let redaction_metadata = serde_json::to_string(&entry["redactionMetadata"]).unwrap();
++        let normalized_project_root = project_root.to_string_lossy().replace('\\', "/");
++
++        assert_eq!(entry["target"], "Assets/Scripts/PlayerSecrets.cs");
++        assert_eq!(entry["metadata"]["assetPath"], "Assets/Scripts/PlayerSecrets.cs");
++        assert_eq!(entry["metadata"]["safe"], "visible");
++        assert_eq!(entry["payload"]["attributes"]["questId"], "quest-7");
++        assert_eq!(entry["payload"]["attributes"]["playerId"], "[REDACTED]");
++        assert_eq!(entry["payload"]["attributes"]["saveData"], "[REDACTED]");
++        assert_eq!(entry["payload"]["attributes"]["inventory"], "[REDACTED]");
++        assert_eq!(
++            entry["payload"]["attributes"]["publicResult"],
++            "completed"
++        );
++        assert!(serialized.contains("[REDACTED]"));
++        assert!(!serialized.contains("response-secret"));
++        assert!(!serialized.contains("response-query"));
++        assert!(!serialized.contains("metadata-token"));
++        assert!(!serialized.contains("player-secret-42"));
++        assert!(!serialized.contains("slot-raw"));
++        assert!(!serialized.contains("gold-key"));
++        assert!(!serialized.contains(&normalized_project_root));
++        assert!(redaction_metadata.contains("credential"));
++        assert!(redaction_metadata.contains("gameplay-sensitive"));
++        assert!(redaction_metadata.contains("project-path"));
++        assert!(!redaction_metadata.contains("response-secret"));
++        assert!(!redaction_metadata.contains("metadata-token"));
++        assert!(!redaction_metadata.contains("player-secret-42"));
++        assert!(!redaction_metadata.contains("slot-raw"));
++        assert!(!redaction_metadata.contains("gold-key"));
++        assert!(!redaction_metadata.contains(&normalized_project_root));
++
++        let _ = fs::remove_dir_all(project_root);
++    }
+ 
+     #[tokio::test]
+     async fn ui_serves_index_html() {

@@ -1,0 +1,308 @@
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -30,6 +30,12 @@
+ 
+ const AI_LOG_DEFAULT_LIMIT: usize = 100;
+ const AI_LOG_MAX_LIMIT: usize = 500;
++
++#[derive(Clone, Debug)]
++struct AiLogScope {
++    project_root: PathBuf,
++    path: PathBuf,
++}
+ 
+ #[derive(Clone, Debug)]
+ pub struct GatewayConfig {
+@@ -421,12 +427,23 @@
+             .is_some_and(|value| value == self.config.token)
+     }
+ 
+-    fn ai_log_path(&self) -> Result<Option<PathBuf>, anyhow::Error> {
+-        self.config
+-            .project_root
+-            .as_ref()
+-            .map(ai_log::ensure_log_path)
+-            .transpose()
++    fn ai_log_scope(&self) -> Result<Option<AiLogScope>, anyhow::Error> {
++        let Some(project_root) = self.config.project_root.as_ref() else {
++            return Ok(None);
++        };
++
++        let project_root = project_root.canonicalize().map_err(|error| {
++            anyhow::anyhow!(
++                "configured project path {} is not accessible: {error}",
++                project_root.display()
++            )
++        })?;
++        let intended_path = ai_log::resolve_log_path(&project_root);
++        validate_ai_log_project_scope(&project_root, &intended_path)?;
++        let path = ai_log::ensure_log_path(&project_root)?;
++        validate_ai_log_project_scope(&project_root, &path)?;
++
++        Ok(Some(AiLogScope { project_root, path }))
+     }
+ 
+     async fn record_event(&self, event: EventEnvelope) {
+@@ -546,7 +563,7 @@
+     Query(query): Query<AiLogQuery>,
+ ) -> Result<Json<Vec<AiLogEntry>>, Response> {
+     require_token(&state, &headers)?;
+-    let Some(path) = state.ai_log_path().map_err(internal_error)? else {
++    let Some(scope) = state.ai_log_scope().map_err(project_scope_error)? else {
+         return Err((
+             StatusCode::SERVICE_UNAVAILABLE,
+             "project path is not configured",
+@@ -554,10 +571,10 @@
+             .into_response());
+     };
+     let filter = ai_log_filter(query);
+-    if !path.exists() {
++    if !scope.path.exists() {
+         return Ok(Json(Vec::new()));
+     }
+-    ai_log::read_log_entries(&path, &filter)
++    ai_log::read_log_entries(&scope.path, &filter)
+         .map(Json)
+         .map_err(internal_error)
+ }
+@@ -568,33 +585,26 @@
+     Query(query): Query<AiLogQuery>,
+ ) -> Result<Json<AiLogReadResponse>, Response> {
+     require_token(&state, &headers)?;
+-    let Some(project_root) = state.config.project_root.as_ref() else {
++    let Some(scope) = state.ai_log_scope().map_err(project_scope_error)? else {
+         return Err((
+             StatusCode::SERVICE_UNAVAILABLE,
+             "project path is not configured",
+         )
+             .into_response());
+     };
+-    let Some(path) = state.ai_log_path().map_err(internal_error)? else {
+-        return Err((
+-            StatusCode::SERVICE_UNAVAILABLE,
+-            "project path is not configured",
+-        )
+-            .into_response());
+-    };
+     let filter = ai_log_filter(query);
+-    if !path.exists() {
++    if !scope.path.exists() {
+         return Ok(Json(build_ai_log_read_response(
+-            project_root,
+-            &path,
++            &scope.project_root,
++            &scope.path,
+             &[],
+             &filter,
+         )));
+     }
+-    let entries = ai_log::read_log_entries(&path, &filter).map_err(internal_error)?;
++    let entries = ai_log::read_log_entries(&scope.path, &filter).map_err(internal_error)?;
+     Ok(Json(build_ai_log_read_response(
+-        project_root,
+-        &path,
++        &scope.project_root,
++        &scope.path,
+         &entries,
+         &filter,
+     )))
+@@ -606,7 +616,7 @@
+     Query(query): Query<AiLogQuery>,
+ ) -> Result<Json<serde_json::Value>, Response> {
+     require_token(&state, &headers)?;
+-    let Some(path) = state.ai_log_path().map_err(internal_error)? else {
++    let Some(scope) = state.ai_log_scope().map_err(project_scope_error)? else {
+         return Err((
+             StatusCode::SERVICE_UNAVAILABLE,
+             "project path is not configured",
+@@ -614,7 +624,7 @@
+             .into_response());
+     };
+     let filter = ai_log_filter(query);
+-    if !path.exists() {
++    if !scope.path.exists() {
+         return Ok(Json(ai_log::build_continuation_context(&[], filter.limit)));
+     }
+     let context_limit = filter.limit;
+@@ -622,7 +632,7 @@
+         limit: None,
+         ..filter
+     };
+-    let entries = ai_log::read_log_entries(&path, &read_filter).map_err(internal_error)?;
++    let entries = ai_log::read_log_entries(&scope.path, &read_filter).map_err(internal_error)?;
+     Ok(Json(ai_log::build_continuation_context(
+         &entries,
+         context_limit,
+@@ -792,6 +802,60 @@
+         })
+         .collect::<Vec<_>>()
+         .join(" ")
++}
++
++fn validate_ai_log_project_scope(project_root: &Path, path: &Path) -> anyhow::Result<()> {
++    let scoped_path = canonical_existing_path_or_parent(path)?;
++    if scoped_path.starts_with(project_root) {
++        Ok(())
++    } else {
++        Err(anyhow::anyhow!(
++            "AI log path {} resolved outside configured project scope {}",
++            scoped_path.display(),
++            project_root.display()
++        ))
++    }
++}
++
++fn canonical_existing_path_or_parent(path: &Path) -> anyhow::Result<PathBuf> {
++    if path.exists() {
++        return path.canonicalize().map_err(|error| {
++            anyhow::anyhow!(
++                "failed to canonicalize AI log path {}: {error}",
++                path.display()
++            )
++        });
++    }
++
++    let mut ancestor = path.parent().ok_or_else(|| {
++        anyhow::anyhow!(
++            "AI log path {} does not have a parent directory",
++            path.display()
++        )
++    })?;
++    while !ancestor.exists() {
++        ancestor = ancestor.parent().ok_or_else(|| {
++            anyhow::anyhow!(
++                "AI log path {} does not have an existing ancestor",
++                path.display()
++            )
++        })?;
++    }
++
++    let canonical_ancestor = ancestor.canonicalize().map_err(|error| {
++        anyhow::anyhow!(
++            "failed to canonicalize AI log ancestor {}: {error}",
++            ancestor.display()
++        )
++    })?;
++    let remainder = path.strip_prefix(ancestor).map_err(|error| {
++        anyhow::anyhow!(
++            "failed to resolve AI log path {} against ancestor {}: {error}",
++            path.display(),
++            ancestor.display()
++        )
++    })?;
++    Ok(canonical_ancestor.join(remainder))
+ }
+ 
+ async fn schema() -> Json<EventEnvelope> {
+@@ -1876,6 +1940,15 @@
+         .into_response()
+ }
+ 
++fn project_scope_error(error: anyhow::Error) -> Response {
++    tracing::warn!(%error, "Lux gateway rejected out-of-scope AI log request");
++    (
++        StatusCode::FORBIDDEN,
++        "AI log path is outside configured project scope",
++    )
++        .into_response()
++}
++
+ async fn publish_event(state: &GatewayState, event: EventEnvelope) {
+     state.record_event(event.clone()).await;
+     let _ = state.events.send(event);
+@@ -1983,6 +2056,46 @@
+     async fn response_json(response: Response) -> serde_json::Value {
+         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+         serde_json::from_slice(&body).unwrap()
++    }
++
++    async fn response_text(response: Response) -> String {
++        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
++        String::from_utf8(body.to_vec()).unwrap()
++    }
++
++    async fn get_with_optional_token(app: Router, uri: &str, token: Option<&str>) -> Response {
++        let mut request = Request::builder().uri(uri);
++        if let Some(token) = token {
++            request = request.header("x-lux-token", token);
++        }
++        app.oneshot(request.body(Body::empty()).unwrap())
++            .await
++            .unwrap()
++    }
++
++    #[tokio::test]
++    async fn ai_log_endpoints_reject_missing_and_invalid_tokens() {
++        let project_root = temp_project_root("auth-all");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"summary\":\"auth-secret-sample\"}\n",
++        );
++        let app = test_app_with_project(project_root.clone());
++
++        for uri in ["/api/ai-log", "/api/ai-log/read", "/api/ai-log/context"] {
++            for token in [None, Some("wrong-secret")] {
++                let response = get_with_optional_token(app.clone(), uri, token).await;
++                assert_eq!(
++                    response.status(),
++                    StatusCode::UNAUTHORIZED,
++                    "{uri} accepted token state {token:?}"
++                );
++                let body = response_text(response).await;
++                assert!(!body.contains("auth-secret-sample"), "{uri} leaked log content");
++            }
++        }
++
++        let _ = fs::remove_dir_all(project_root);
+     }
+ 
+     async fn post_empty(app: Router, uri: &str) -> Response {
+@@ -2273,6 +2393,47 @@
+         assert!(!serialized.contains("retention-secret"));
+ 
+         let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[cfg(unix)]
++    #[tokio::test]
++    async fn ai_log_endpoints_reject_logs_resolving_outside_project_scope() {
++        let project_root = temp_project_root("scope");
++        let external_root = temp_project_root("scope-external");
++        let log_path = ai_log::resolve_log_path(&project_root);
++        let log_parent = log_path
++            .parent()
++            .expect("AI log path should have a parent directory")
++            .to_path_buf();
++        if log_parent.exists() {
++            fs::remove_dir_all(&log_parent).unwrap();
++        }
++        std::os::unix::fs::symlink(&external_root, &log_parent).unwrap();
++        fs::write(
++            external_root.join(
++                log_path
++                    .file_name()
++                    .expect("AI log path should have a file name"),
++            ),
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"summary\":\"outside-project-secret\"}\n",
++        )
++        .unwrap();
++        let app = test_app_with_project(project_root.clone());
++
++        for uri in ["/api/ai-log", "/api/ai-log/read", "/api/ai-log/context"] {
++            let response = authenticated_get(app.clone(), uri).await;
++            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
++            let body = response_text(response).await;
++            assert!(!body.contains("outside-project-secret"));
++        }
++
++        let unauthorized = unauthenticated_get(app, "/api/ai-log/read").await;
++        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
++        let body = response_text(unauthorized).await;
++        assert!(!body.contains("outside-project-secret"));
++
++        let _ = fs::remove_dir_all(project_root);
++        let _ = fs::remove_dir_all(external_root);
+     }
+ 
+     #[tokio::test]

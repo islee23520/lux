@@ -1,0 +1,155 @@
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -2,6 +2,7 @@ using System;
+ using System.Collections.Generic;
+ using System.IO;
+ using NUnit.Framework;
++using UnityEngine;
+ 
+ namespace Linalab.LuxEditor.Tests
+ {
+@@ -113,6 +114,64 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(jsonl, Does.Contain("[REDACTED]"));
+         }
+ 
++        [Test]
++        public void Record_EditorUserActionPayloadSerializesAndDeserializesFromJsonl()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++
++            var entry = log.Record(
++                "unity-editor",
++                "user",
++                "editor",
++                "selection.changed",
++                "Scene/Main Camera",
++                "Unity selection changed.");
++            log.Flush();
++
++            string line = File.ReadAllLines(path)[0];
++            var decoded = JsonUtility.FromJson<EditorActionLogRecordForTests>(line);
++
++            Assert.That(entry.payload.kind, Is.EqualTo("editor-action"));
++            Assert.That(entry.payload.eventType, Is.EqualTo("selection.changed"));
++            Assert.That(entry.payload.summary, Is.EqualTo("Unity selection changed."));
++            Assert.That(entry.payload.status, Is.EqualTo("completed"));
++            Assert.That(entry.payload.target, Is.EqualTo("Scene/Main Camera"));
++            Assert.That(line, Does.Contain("\"payload\":{\"kind\":\"editor-action\""));
++            Assert.That(decoded.source, Is.EqualTo("unity-editor"));
++            Assert.That(decoded.actor, Is.EqualTo("user"));
++            Assert.That(decoded.category, Is.EqualTo("editor"));
++            Assert.That(decoded.payload.kind, Is.EqualTo("editor-action"));
++            Assert.That(decoded.payload.eventType, Is.EqualTo("selection.changed"));
++            Assert.That(decoded.payload.summary, Is.EqualTo("Unity selection changed."));
++            Assert.That(decoded.payload.status, Is.EqualTo("completed"));
++            Assert.That(decoded.payload.target, Is.EqualTo("Scene/Main Camera"));
++        }
++
++        [Test]
++        public void EditorUserActionPayload_DeserializesStructuredAttributes()
++        {
++            const string json = "{\"schemaVersion\":1,\"protocol\":\"lux.ai.action_log.v1\",\"id\":\"editor-selection-1\",\"timestampUtc\":\"2026-05-04T00:00:00.0000000Z\",\"source\":\"unity-editor\",\"actor\":\"user\",\"category\":\"editor\",\"type\":\"selection.changed\",\"action\":\"selection.changed\",\"target\":\"Scene/Main Camera\",\"summary\":\"Unity selection changed.\",\"message\":\"Unity selection changed.\",\"severity\":\"info\",\"success\":true,\"payload\":{\"kind\":\"editor-action\",\"eventType\":\"selection.changed\",\"summary\":\"Unity selection changed.\",\"status\":\"completed\",\"target\":\"Scene/Main Camera\",\"attributes\":{\"objectCount\":1,\"targetPath\":\"Scene/Main Camera\",\"fromSelection\":true}}}";
++
++            var decoded = JsonUtility.FromJson<EditorActionLogRecordForTests>(json);
++
++            Assert.That(decoded.schemaVersion, Is.EqualTo(1));
++            Assert.That(decoded.protocol, Is.EqualTo("lux.ai.action_log.v1"));
++            Assert.That(decoded.source, Is.EqualTo("unity-editor"));
++            Assert.That(decoded.actor, Is.EqualTo("user"));
++            Assert.That(decoded.category, Is.EqualTo("editor"));
++            Assert.That(decoded.type, Is.EqualTo("selection.changed"));
++            Assert.That(decoded.action, Is.EqualTo("selection.changed"));
++            Assert.That(decoded.payload.kind, Is.EqualTo("editor-action"));
++            Assert.That(decoded.payload.eventType, Is.EqualTo("selection.changed"));
++            Assert.That(decoded.payload.summary, Is.EqualTo("Unity selection changed."));
++            Assert.That(decoded.payload.status, Is.EqualTo("completed"));
++            Assert.That(decoded.payload.target, Is.EqualTo("Scene/Main Camera"));
++            Assert.That(decoded.payload.attributes.objectCount, Is.EqualTo(1));
++            Assert.That(decoded.payload.attributes.targetPath, Is.EqualTo("Scene/Main Camera"));
++            Assert.That(decoded.payload.attributes.fromSelection, Is.True);
++        }
++
+         [Test]
+         public void Record_StoresStructuredPayloadConventionWithRedactedAttributes()
+         {
+@@ -357,6 +416,45 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(entry.message, Does.Contain("explicit record method"));
+         }
+ 
++        [Serializable]
++        sealed class EditorActionLogRecordForTests
++        {
++            public int schemaVersion;
++            public string protocol;
++            public string id;
++            public string timestampUtc;
++            public string source;
++            public string actor;
++            public string category;
++            public string type;
++            public string action;
++            public string target;
++            public string summary;
++            public string message;
++            public string severity;
++            public bool success;
++            public EditorActionPayloadForTests payload;
++        }
++
++        [Serializable]
++        sealed class EditorActionPayloadForTests
++        {
++            public string kind;
++            public string eventType;
++            public string summary;
++            public string status;
++            public string target;
++            public EditorActionPayloadAttributesForTests attributes;
++        }
++
++        [Serializable]
++        sealed class EditorActionPayloadAttributesForTests
++        {
++            public int objectCount;
++            public string targetPath;
++            public bool fromSelection;
++        }
++
+         string GetTempLogPath()
+         {
+             return Path.Combine(_tempDirectory, ".lux", "ai-action-log.jsonl");
+diff --git a/RustGateway~/src/protocol.rs b/RustGateway~/src/protocol.rs
+--- a/RustGateway~/src/protocol.rs
++++ b/RustGateway~/src/protocol.rs
+@@ -264,6 +264,29 @@ mod tests {
+         assert_eq!(examples[2]["attributes"]["entityId"], "enemy-7");
+     }
+ 
++    #[test]
++    fn editor_action_payload_roundtrips_through_serde() {
++        let value = serde_json::to_value(editor_action_payload_example()).unwrap();
++
++        assert_eq!(value["kind"], "editor-action");
++        assert_eq!(value["eventType"], "selection.changed");
++        assert_eq!(value["summary"], "Unity selection changed.");
++        assert_eq!(value["status"], "completed");
++        assert_eq!(value["attributes"]["objectCount"], json!(1));
++        assert_eq!(
++            value["attributes"]["targetPath"],
++            json!("Scene/Main Camera")
++        );
++
++        let roundtrip = EventPayloadConvention::from_json_value(value).unwrap();
++
++        assert_eq!(roundtrip.kind, EventPayloadKind::EditorAction);
++        assert_eq!(roundtrip.event_type, "selection.changed");
++        assert_eq!(roundtrip.summary, "Unity selection changed.");
++        assert_eq!(roundtrip.status.as_deref(), Some("completed"));
++        assert_eq!(roundtrip.attributes["objectCount"], json!(1));
++    }
++
+     #[test]
+     fn payload_convention_roundtrips_through_serde() {
+         let payload = ai_work_step_payload_example();

@@ -1,0 +1,36 @@
+goal: >
+  Wire the existing session.rs library into the lux CLI. The session.rs module already has
+  all business logic (start_session, stop_session, replay_session, timeline_session, report_session,
+  current_session_id). The task is to add `mod session` to main.rs, create a `Session(SessionArgs)`
+  variant in the top-level Command enum, define SessionArgs with subcommands (record, stop, replay,
+  timeline, report), and wire each subcommand to call the corresponding session.rs function.
+  Then add 5 smoke tests covering the full record→stop→timeline→report→replay cycle.
+
+constraints:
+- Brownfield Unity package at /Users/ilseoblee/workspace/linalab/neon-glitch/Packages/com.linalab.lux
+- Preserve all existing Phase 1-7 functionality
+- Do not modify session.rs business logic — only add CLI wiring and tests
+- All 116 existing tests must continue to pass
+- Use clap derive macros consistent with existing Command/SkillAction/AiLogCommand patterns
+- Session subcommands: record, stop, replay, timeline, report
+- session_id defaults to current active session when not specified
+- JSON output via --json flag on timeline and report subcommands
+- No new crate dependencies
+
+acceptance_criteria:
+- session_cli_compiled: `lux session --help` prints help with record, stop, replay, timeline,
+  report subcommands. `cargo build` succeeds.
+- session_record_stop: `lux session record` starts recording to a JSONL file in
+  <project>/.lux/sessions/. `lux session stop` writes a header and returns session ID.
+  Smoke test creates a temp project root, runs record→stop, verifies the JSONL file exists.
+- session_timeline: `lux session timeline <session-id>` prints an ordered list of events.
+  `--json` flag outputs structured JSON. Smoke test records events and reads timeline.
+- session_report: `lux session report <session-id>` prints a human-readable summary with
+  action counts, duration, and error count. `--json` flag outputs structured JSON.
+- session_smoke_cycle: Smoke test proving record → record events → stop → timeline → report
+  all work end-to-end without error. At least 5 new smoke tests in gateway_cli_smoke.rs.
+- regression_safe: All 116 pre-existing tests still pass after changes.
+
+exit_conditions:
+- name: phase8_cli_complete
+  criteria: all acceptance_criteria verified

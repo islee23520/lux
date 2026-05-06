@@ -1,0 +1,105 @@
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+index d98a95a..671e792 100644
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -82,7 +82,7 @@ struct SkillInstallArgs {
+     /// Install to project scope (.lux/skills/) instead of global
+     #[arg(short, long)]
+     project: bool,
+-    /// Write project adaptation metadata after compatibility checks
++    /// Write project adaptation metadata after compatibility checks; implies --project
+     #[arg(long, default_value_t = false)]
+     adapt: bool,
+     /// Print machine-readable JSON output
+@@ -932,9 +932,6 @@ fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
+     if let Err(message) = validate_skill_name(&args.name) {
+         fail_skill_install(args.json, &message);
+     }
+-    if args.adapt && !args.project {
+-        fail_skill_install(args.json, "--adapt requires --project");
+-    }
+     if discover_skills()?
+         .iter()
+         .any(|entry| entry.scope == "core" && entry.manifest.name == args.name)
+@@ -945,7 +942,8 @@ fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
+         );
+     }
+ 
+-    let target_root = if args.project {
++    let project_scope = args.project || args.adapt;
++    let target_root = if project_scope {
+         project_skills_dir().context("failed to determine project skills directory")?
+     } else {
+         global_skills_dir().context("failed to determine global skills directory")?
+@@ -999,7 +997,7 @@ fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
+             serde_json::to_string_pretty(&json!({
+                 "installed": true,
+                 "name": args.name,
+-                "scope": if args.project { "project" } else { "global" },
++                "scope": if project_scope { "project" } else { "global" },
+                 "directory_path": target_dir,
+                 "adapted": adaptation.is_some(),
+                 "adaptation_metadata": adaptation.as_ref(),
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+index 1a8be2e..bdafb35 100644
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -406,16 +406,16 @@ fn skill_install_project_adapt_writes_metadata_and_info_json_reads_it() {
+ }
+ 
+ #[test]
+-fn skill_install_adapt_requires_project_scope() {
+-    let home = create_temp_dir("lux-skill-adapt-requires-project-home");
+-    let project = create_test_unity_project("lux-skill-adapt-requires-project", true);
+-    let source = create_test_skill_source("smoke-adapt-requires-project-skill");
++fn skill_install_adapt_implies_project_scope() {
++    let home = create_temp_dir("lux-skill-adapt-implies-project-home");
++    let project = create_test_unity_project("lux-skill-adapt-implies-project", true);
++    let source = create_test_skill_source("smoke-adapt-implies-project-skill");
+ 
+     let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+         .args([
+             "skill",
+             "install",
+-            "smoke-adapt-requires-project-skill",
++            "smoke-adapt-implies-project-skill",
+             "--source",
+             source.to_str().expect("source path UTF-8"),
+             "--adapt",
+@@ -424,16 +424,27 @@ fn skill_install_adapt_requires_project_scope() {
+         .current_dir(&project)
+         .env("HOME", &home)
+         .output()
+-        .expect("run lux skill install --adapt without --project");
++        .expect("run lux skill install --adapt");
+ 
+-    assert!(!output.status.success());
+-    assert_eq!(output.status.code(), Some(1));
+-    let parsed: Value = serde_json::from_slice(&output.stdout).expect("error JSON");
+-    assert_eq!(parsed["installed"], false);
+-    assert!(parsed["error"]
+-        .as_str()
+-        .expect("error string")
+-        .contains("--adapt requires --project"));
++    assert_command_success(&output, "lux skill install --adapt");
++    let parsed: Value = serde_json::from_slice(&output.stdout).expect("install JSON");
++    assert_eq!(parsed["installed"], true);
++    assert_eq!(parsed["scope"], "project");
++    assert_eq!(parsed["adapted"], true);
++    assert_eq!(
++        parsed["adaptation_metadata"]["skill_name"],
++        "smoke-adapt-implies-project-skill"
++    );
++    assert!(
++        project
++            .join(".lux/skills/smoke-adapt-implies-project-skill/lux-adaptation.json")
++            .is_file(),
++        "--adapt must install adaptation metadata in project scope"
++    );
++    assert!(
++        !home.join(".lux/skills/smoke-adapt-implies-project-skill").exists(),
++        "--adapt must not install to global scope when --project is omitted"
++    );
+ }
+ 
+ #[test]

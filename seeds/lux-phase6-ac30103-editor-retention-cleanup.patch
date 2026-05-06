@@ -1,0 +1,177 @@
+--- a/LuxEditor/LuxAiActionLog.cs
++++ b/LuxEditor/LuxAiActionLog.cs
+@@ -110,6 +110,8 @@ namespace UnityEditor
+ 
+         const int DefaultRecentCapacity = 200;
+         const int DefaultMaxTextLength = 4096;
++        const int DefaultRetentionMaxLines = 1000;
++        const int DefaultRetentionCheckInterval = 100;
+         const string LuxDirectoryName = ".lux";
+         const string LogFileName = "ai-action-log.jsonl";
+         const string LegacyUserSettingsDirectoryName = "UserSettings";
+@@ -143,13 +145,19 @@ namespace UnityEditor
+         readonly string _logPath;
+         readonly int _recentCapacity;
+         readonly int _maxTextLength;
++        readonly int _retentionMaxLines;
++        readonly int _retentionCheckInterval;
+         readonly Thread _writerThread;
++        int _recordsSinceRetentionCleanup;
++        bool _retentionCleanupPending;
+         bool _disposed;
+ 
+-        public LuxAiActionLog(int recentCapacity = DefaultRecentCapacity, string logPath = null, int maxTextLength = DefaultMaxTextLength)
++        public LuxAiActionLog(int recentCapacity = DefaultRecentCapacity, string logPath = null, int maxTextLength = DefaultMaxTextLength, int retentionMaxLines = DefaultRetentionMaxLines, int retentionCheckInterval = DefaultRetentionCheckInterval)
+         {
+             _recentCapacity = Math.Max(1, recentCapacity);
+             _maxTextLength = Math.Max(128, maxTextLength);
++            _retentionMaxLines = Math.Max(0, retentionMaxLines);
++            _retentionCheckInterval = Math.Max(1, retentionCheckInterval);
+             _logPath = string.IsNullOrWhiteSpace(logPath) ? GetLogPath() : Path.GetFullPath(logPath);
+             if (string.IsNullOrWhiteSpace(logPath))
+             {
+@@ -234,6 +242,7 @@ namespace UnityEditor
+                 }
+ 
+                 _recent.Enqueue(entry.Clone());
++                MarkRetentionCleanupPendingIfDueLocked();
+             }
+ 
+             _pendingLines.Enqueue(ToJson(entry));
+@@ -274,31 +283,50 @@ namespace UnityEditor
+         public LuxAiActionLogCompactResult Compact(int maxLines = 1000)
+         {
+             ThrowIfDisposed();
++            int normalizedMaxLines = NormalizeRetentionMaxLines(maxLines);
+             Flush();
+ 
+-            int normalizedMaxLines = Math.Max(1, maxLines);
++            lock (_sync)
++            {
++                return CompactLocked(normalizedMaxLines);
++            }
++        }
++
++        LuxAiActionLogCompactResult CompactLocked(int normalizedMaxLines)
++        {
+             Directory.CreateDirectory(Path.GetDirectoryName(_logPath));
++            string[] originalLines = File.Exists(_logPath) ? File.ReadAllLines(_logPath) : Array.Empty<string>();
++            var validLines = originalLines
++                .Where(IsValidJsonLine)
++                .ToList();
++            var keptLines = validLines
++                .Skip(Math.Max(0, validLines.Count - normalizedMaxLines))
++                .ToArray();
+ 
+-            lock (_sync)
++            string tempPath = _logPath + ".tmp";
++            File.WriteAllLines(tempPath, keptLines, Encoding.UTF8);
++            if (File.Exists(_logPath))
+             {
+-                string[] originalLines = File.Exists(_logPath) ? File.ReadAllLines(_logPath) : Array.Empty<string>();
+-                var validLines = originalLines
+-                    .Where(IsValidJsonLine)
+-                    .ToList();
+-                var keptLines = validLines
+-                    .Skip(Math.Max(0, validLines.Count - normalizedMaxLines))
+-                    .ToArray();
++                File.Delete(_logPath);
++            }
+ 
+-                string tempPath = _logPath + ".tmp";
+-                File.WriteAllLines(tempPath, keptLines, Encoding.UTF8);
+-                if (File.Exists(_logPath))
+-                {
+-                    File.Delete(_logPath);
+-                }
++            File.Move(tempPath, _logPath);
++            return new LuxAiActionLogCompactResult(_logPath, originalLines.Length, validLines.Count, keptLines.Length);
++        }
+ 
+-                File.Move(tempPath, _logPath);
+-                return new LuxAiActionLogCompactResult(_logPath, originalLines.Length, validLines.Count, keptLines.Length);
++        void MarkRetentionCleanupPendingIfDueLocked()
++        {
++            if (_retentionMaxLines <= 0)
++            {
++                return;
+             }
++
++            _recordsSinceRetentionCleanup++;
++            if (_recordsSinceRetentionCleanup >= _retentionCheckInterval)
++            {
++                _recordsSinceRetentionCleanup = 0;
++                _retentionCleanupPending = true;
++            }
+         }
+ 
+         public void Flush()
+@@ -340,14 +368,27 @@ namespace UnityEditor
+             lock (_sync)
+             {
+                 Directory.CreateDirectory(Path.GetDirectoryName(_logPath));
++                bool wroteLines = false;
+                 using (var writer = new StreamWriter(_logPath, true, Encoding.UTF8))
+                 {
+                     while (_pendingLines.TryDequeue(out string line))
+                     {
+                         writer.WriteLine(line);
++                        wroteLines = true;
+                     }
+                 }
++
++                if (wroteLines && _retentionCleanupPending && _retentionMaxLines > 0)
++                {
++                    _retentionCleanupPending = false;
++                    CompactLocked(NormalizeRetentionMaxLines(_retentionMaxLines));
++                }
+             }
++        }
++
++        static int NormalizeRetentionMaxLines(int maxLines)
++        {
++            return Math.Max(1, maxLines);
+         }
+ 
+         Dictionary<string, string> RedactMetadata(IReadOnlyDictionary<string, string> metadata)
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -145,6 +145,38 @@ namespace Linalab.LuxEditor.Tests
+         }
+ 
+         [Test]
++        public void Broadcaster_EditorEventsUseRetentionCleanupPathOnPersistence()
++        {
++            string path = GetTempLogPath();
++            using (var seedLog = new UnityEditor.LuxAiActionLog(logPath: path))
++            {
++                seedLog.Record("unity-editor", "user", "editor", "old.editor.event", "Editor", "Old editor event");
++                seedLog.Flush();
++            }
++
++            File.AppendAllText(path, "not-json\n");
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path, retentionMaxLines: 2, retentionCheckInterval: 1);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(log, null, () => 0.0);
++
++            UnityEditor.LuxAiActionLogBroadcaster.Record("editor", "selection.changed", "Selection", "Unity selection changed.");
++            UnityEditor.LuxAiActionLogBroadcaster.Record("editor", "project.changed", "Project", "Unity project assets changed.");
++            log.Flush();
++
++            string[] lines = File.ReadAllLines(path);
++            string jsonl = string.Join("\n", lines);
++
++            Assert.That(lines, Has.Length.EqualTo(2));
++            Assert.That(jsonl, Does.Contain("\"source\":\"unity-editor\""));
++            Assert.That(jsonl, Does.Contain("\"actor\":\"user\""));
++            Assert.That(jsonl, Does.Contain("\"category\":\"editor\""));
++            Assert.That(jsonl, Does.Contain("\"action\":\"selection.changed\""));
++            Assert.That(jsonl, Does.Contain("\"action\":\"project.changed\""));
++            Assert.That(jsonl, Does.Not.Contain("old.editor.event"));
++            Assert.That(jsonl, Does.Not.Contain("not-json"));
++            Assert.That(File.Exists(path + ".tmp"), Is.False);
++        }
++
++        [Test]
+         public void Broadcaster_QueuesBroadcastAndPumpsInBatches()
+         {
+             var broadcasts = new List<Tuple<string, UnityEditor.LuxAiActionLogEntry>>();

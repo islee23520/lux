@@ -1,0 +1,228 @@
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -1494,6 +1494,83 @@ fn verify_skill_context_slimming_result(context_slimming: &Value) -> Value {
+         },
+     );
+ 
++    let source_bytes = context_slimming
++        .pointer("/metrics/source_bytes")
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let retained_preview_chars = context_slimming
++        .pointer("/metrics/retained_preview_chars")
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let emitted_context_bytes = serde_json::to_vec(&slimmed_context)
++        .map(|bytes| bytes.len() as u64)
++        .unwrap_or_default();
++    let estimated_reduction_percent = context_slimming
++        .pointer("/metrics/estimated_reduction_percent")
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let context_reduction_ok = source_bytes > 0
++        && retained_preview_chars > 0
++        && retained_preview_chars < source_bytes
++        && estimated_reduction_percent > 0;
++    push_context_slimming_check(
++        &mut checks,
++        "context_reduction",
++        context_reduction_ok,
++        if context_reduction_ok {
++            format!(
++                "Slimmed context emits {emitted_context_bytes} bytes from {source_bytes} source bytes."
++            )
++        } else {
++            format!(
++                "Slimmed context did not reduce emitted context: source_bytes={source_bytes}, retained_preview_chars={retained_preview_chars}, emitted_context_bytes={emitted_context_bytes}, estimated_reduction_percent={estimated_reduction_percent}."
++            )
++        },
++    );
++
++    let manifest_object = context_slimming
++        .pointer("/slimmed_context/manifest")
++        .and_then(Value::as_object);
++    let missing_project_adapting_fields = [
++        "name",
++        "version",
++        "description",
++        "displayName",
++        "luxVersion",
++        "type",
++        "keywords",
++    ]
++    .iter()
++    .filter(|field| !manifest_object.is_some_and(|manifest| manifest.contains_key(**field)))
++    .copied()
++    .collect::<Vec<_>>();
++    let project_adapting_fields_ok = missing_project_adapting_fields.is_empty()
++        && context_slimming_required_field_present(context_slimming, "/skill_name")
++        && context_slimming_required_field_present(context_slimming, "/project_root")
++        && context_slimming.pointer("/mode").and_then(Value::as_str)
++            == Some("adapted_skill_generation")
++        && context_slimming
++            .pointer("/artifacts/json")
++            .and_then(Value::as_str)
++            == Some("lux-context-slimming.json")
++        && context_slimming
++            .pointer("/artifacts/markdown")
++            .and_then(Value::as_str)
++            == Some("lux-context-slimming.md");
++    push_context_slimming_check(
++        &mut checks,
++        "project_adapting_fields",
++        project_adapting_fields_ok,
++        if project_adapting_fields_ok {
++            "Slimmed context preserves the required Project-Adapting Skill fields.".to_string()
++        } else {
++            format!(
++                "Slimmed context dropped required Project-Adapting Skill fields: {}",
++                missing_project_adapting_fields.join(", ")
++            )
++        },
++    );
++
+     let all_ok = checks
+         .iter()
+         .all(|check: &Value| check.get("ok").and_then(Value::as_bool) == Some(true));
+@@ -1671,10 +1748,14 @@ mod phase6_context_slimming_tests {
+         assert_context_slimming_check_failed(&verification, "required_fields");
+         assert_context_slimming_check_failed(&verification, "redaction");
+         assert_context_slimming_check_failed(&verification, "context_boundaries");
++        assert_context_slimming_check_failed(&verification, "context_reduction");
++        assert_context_slimming_check_failed(&verification, "project_adapting_fields");
+         let messages = context_slimming_failed_check_messages(&verification);
+         assert!(messages.contains("Missing required fields"));
+         assert!(messages.contains("Unredacted sensitive markers remain"));
+         assert!(messages.contains("Slimmed context exceeded"));
++        assert!(messages.contains("did not reduce emitted context"));
++        assert!(messages.contains("dropped required Project-Adapting Skill fields"));
+     }
+ 
+     fn assert_context_slimming_check_failed(verification: &Value, name: &str) {
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -559,7 +559,13 @@ fn skill_install_adapt_verifies_slimming_redaction_and_boundaries() {
+     let checks = context_slimming["verification"]["checks"]
+         .as_array()
+         .expect("verification checks");
+-    for expected_check in ["required_fields", "redaction", "context_boundaries"] {
++    for expected_check in [
++        "required_fields",
++        "redaction",
++        "context_boundaries",
++        "context_reduction",
++        "project_adapting_fields",
++    ] {
+         assert!(
+             checks
+                 .iter()
+@@ -614,11 +620,20 @@ fn skill_install_adapt_context_slimming_fixture_generates_and_reads_back() {
+         .output()
+         .expect("run lux skill install --project --adapt --json for context slimming fixture");
+ 
+-    assert_command_success(&install, "lux skill install --adapt context slimming fixture");
++    assert_command_success(
++        &install,
++        "lux skill install --adapt context slimming fixture",
++    );
+     let install_json: Value = serde_json::from_slice(&install.stdout).expect("install JSON");
+     let install_context = &install_json["adaptation_metadata"]["context_slimming"];
+-    assert_eq!(install_context["schema"], "lux.skill.context_slimming_result.v1");
+-    assert_eq!(install_context["skill_name"], "smoke-context-slimming-fixture");
++    assert_eq!(
++        install_context["schema"],
++        "lux.skill.context_slimming_result.v1"
++    );
++    assert_eq!(
++        install_context["skill_name"],
++        "smoke-context-slimming-fixture"
++    );
+     assert_eq!(install_context["verification"]["status"], "passed");
+     assert_eq!(
+         install_json["adaptation_metadata"]["context_slimming_verification"]["status"],
+@@ -634,11 +649,14 @@ fn skill_install_adapt_context_slimming_fixture_generates_and_reads_back() {
+     let artifact_json: Value =
+         serde_json::from_str(&artifact_text).expect("context slimming artifact JSON");
+     assert_eq!(&artifact_json, install_context);
+-    assert_eq!(artifact_json["slimmed_context"]["skill_md_preview"]
+-        .as_array()
+-        .expect("skill preview")
+-        .len(), 24);
+     assert_eq!(
++        artifact_json["slimmed_context"]["skill_md_preview"]
++            .as_array()
++            .expect("skill preview")
++            .len(),
++        24
++    );
++    assert_eq!(
+         artifact_json["slimmed_context"]["deferred_reference_paths"],
+         serde_json::json!(["references/advanced.md", "references/usage.md"])
+     );
+@@ -650,17 +668,58 @@ fn skill_install_adapt_context_slimming_fixture_generates_and_reads_back() {
+             .expect("estimated reduction percent")
+             > 0
+     );
++    let verification_checks = artifact_json["verification"]["checks"]
++        .as_array()
++        .expect("context slimming verification checks");
++    for expected_check in [
++        "required_fields",
++        "redaction",
++        "context_boundaries",
++        "context_reduction",
++        "project_adapting_fields",
++    ] {
++        assert!(
++            verification_checks
++                .iter()
++                .any(|check| check["name"] == expected_check && check["ok"] == true),
++            "missing passing context slimming verification check {expected_check}"
++        );
++    }
++    let source_bytes = artifact_json["metrics"]["source_bytes"]
++        .as_u64()
++        .expect("source bytes");
++    let emitted_context_bytes = serde_json::to_vec(&artifact_json["slimmed_context"])
++        .expect("serialize emitted slimmed context")
++        .len() as u64;
++    assert!(
++        emitted_context_bytes < source_bytes,
++        "slimmed context should emit fewer bytes than source context"
++    );
++    let manifest = artifact_json["slimmed_context"]["manifest"]
++        .as_object()
++        .expect("slimmed context manifest object");
++    for required_field in [
++        "name",
++        "version",
++        "description",
++        "displayName",
++        "luxVersion",
++        "type",
++        "keywords",
++    ] {
++        assert!(
++            manifest.contains_key(required_field),
++            "missing {required_field}"
++        );
++    }
++    assert_eq!(manifest["name"], "smoke-context-slimming-fixture");
++    assert_eq!(manifest["type"], "test");
+     let markdown = fs::read_to_string(&markdown_path).expect("read context slimming markdown");
+     assert!(markdown.contains("references/advanced.md"));
+     assert!(markdown.contains("references/usage.md"));
+ 
+     let info = Command::new(env!("CARGO_BIN_EXE_lux"))
+-        .args([
+-            "skill",
+-            "info",
+-            "smoke-context-slimming-fixture",
+-            "--json",
+-        ])
++        .args(["skill", "info", "smoke-context-slimming-fixture", "--json"])
+         .current_dir(&project)
+         .env("HOME", &home)
+         .output()

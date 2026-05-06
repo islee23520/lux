@@ -1,0 +1,182 @@
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -1,4 +1,5 @@
+ use std::{
++    cmp::Ordering,
+     fs::{self, File},
+     io::{BufRead, BufReader, Write},
+     path::{Path, PathBuf},
+@@ -28,6 +29,14 @@ pub struct AiLogEntry {
+     pub value: Value,
+ }
+ 
++#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ProjectEventLogReadResult {
++    pub project_path: PathBuf,
++    pub path: PathBuf,
++    pub entries: Vec<AiLogEntry>,
++}
++
+ #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct AiLogCompactResult {
+@@ -99,6 +108,38 @@ pub fn read_log_entries(path: impl AsRef<Path>, filter: &AiLogFilter) -> Result<
+     Ok(filter_entries(parse_entries(BufReader::new(file)), filter))
+ }
+ 
++pub fn read_project_event_log(
++    project_root: impl AsRef<Path>,
++    filter: &AiLogFilter,
++) -> Result<ProjectEventLogReadResult> {
++    let project_root = project_root.as_ref();
++    let path = resolve_log_path(project_root);
++    let entries = read_jsonl_event_entries(&path, filter)?;
++
++    Ok(ProjectEventLogReadResult {
++        project_path: project_root.to_path_buf(),
++        path,
++        entries,
++    })
++}
++
++pub fn read_jsonl_event_entries(
++    path: impl AsRef<Path>,
++    filter: &AiLogFilter,
++) -> Result<Vec<AiLogEntry>> {
++    let path = path.as_ref();
++    if !path.exists() {
++        return Ok(Vec::new());
++    }
++
++    let file = File::open(path)
++        .with_context(|| format!("failed to open project event log {}", path.display()))?;
++    Ok(filter_ordered_entries(
++        parse_entries(BufReader::new(file)),
++        filter,
++    ))
++}
++
+ pub fn filter_entries(entries: Vec<AiLogEntry>, filter: &AiLogFilter) -> Vec<AiLogEntry> {
+     let mut filtered: Vec<_> = entries
+         .into_iter()
+@@ -114,6 +155,40 @@ pub fn filter_entries(entries: Vec<AiLogEntry>, filter: &AiLogFilter) -> Vec<AiL
+     filtered
+ }
+ 
++pub fn filter_ordered_entries(entries: Vec<AiLogEntry>, filter: &AiLogFilter) -> Vec<AiLogEntry> {
++    let mut ordered = filter_entries(
++        entries,
++        &AiLogFilter {
++            limit: None,
++            actor: filter.actor.clone(),
++            category: filter.category.clone(),
++            source: filter.source.clone(),
++            action: filter.action.clone(),
++            event_type: filter.event_type.clone(),
++        },
++    );
++
++    ordered.sort_by(compare_entries_chronologically);
++
++    if let Some(limit) = filter.limit {
++        if ordered.len() > limit {
++            ordered = ordered.split_off(ordered.len() - limit);
++        }
++    }
++
++    ordered
++}
++
++fn compare_entries_chronologically(left: &AiLogEntry, right: &AiLogEntry) -> Ordering {
++    match (!left.timestamp.is_empty(), !right.timestamp.is_empty()) {
++        (true, true) => left.timestamp.cmp(&right.timestamp),
++        (true, false) => Ordering::Less,
++        (false, true) => Ordering::Greater,
++        (false, false) => Ordering::Equal,
++    }
++    .then(left.line_number.cmp(&right.line_number))
++}
++
+ pub fn build_continuation_context(entries: &[AiLogEntry], limit: Option<usize>) -> Value {
+     let mut ordered = entries.to_vec();
+     ordered.sort_by(|left, right| {
+@@ -352,6 +427,77 @@ mod tests {
+     }
+ 
+     #[test]
++    fn read_project_event_log_loads_editor_originated_jsonl_in_chronological_order() {
++        let project_root = temp_project_root("project-event-reader");
++        let log_path = resolve_log_path(&project_root);
++        fs::create_dir_all(log_path.parent().unwrap()).unwrap();
++        fs::write(
++            &log_path,
++            concat!(
++                r#"{"timestampUtc":"2026-05-04T00:00:03Z","source":"unity-editor","actor":"user","category":"editor","eventType":"scene.saved","summary":"third"}"#,
++                "\n",
++                "not-json\n",
++                r#"{"timestampUtc":"2026-05-04T00:00:01Z","source":"unity-editor","actor":"user","category":"editor","eventType":"selection.changed","summary":"first"}"#,
++                "\n",
++                r#"{"captured_at_utc":"2026-05-04T00:00:01Z","source":"unity-editor","actor":"user","category":"editor","event_type":"hierarchy.changed","summary":"same-time second"}"#,
++                "\n",
++                r#"{"source":"unity-editor","actor":"user","category":"editor","eventType":"untimed","summary":"untimed"}"#,
++                "\n",
++            ),
++        )
++        .unwrap();
++
++        let result = read_project_event_log(&project_root, &AiLogFilter::default()).unwrap();
++
++        assert_eq!(result.project_path, project_root);
++        assert_eq!(result.path, log_path);
++        assert_eq!(result.entries.len(), 4);
++        assert_eq!(result.entries[0].line_number, 3);
++        assert_eq!(result.entries[0].value["summary"], "first");
++        assert_eq!(result.entries[1].line_number, 4);
++        assert_eq!(result.entries[1].value["summary"], "same-time second");
++        assert_eq!(result.entries[2].line_number, 1);
++        assert_eq!(result.entries[2].value["summary"], "third");
++        assert_eq!(result.entries[3].line_number, 5);
++        assert_eq!(result.entries[3].value["summary"], "untimed");
++
++        fs::remove_dir_all(result.project_path).unwrap();
++    }
++
++    #[test]
++    fn read_jsonl_event_entries_filters_before_applying_chronological_limit() {
++        let entries = parse_entries(Cursor::new(
++            "{\"timestampUtc\":\"2026-05-04T00:00:03Z\",\"source\":\"unity-editor\",\"category\":\"editor\",\"eventType\":\"selection.changed\",\"summary\":\"newest editor\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"source\":\"codex\",\"category\":\"ai-tool\",\"eventType\":\"tool.apply_patch\",\"summary\":\"ai step\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"source\":\"unity-editor\",\"category\":\"editor\",\"eventType\":\"selection.changed\",\"summary\":\"oldest editor\"}\n",
++        ));
++        let filter = AiLogFilter {
++            limit: Some(1),
++            source: Some("unity-editor".to_string()),
++            event_type: Some("selection.changed".to_string()),
++            ..AiLogFilter::default()
++        };
++
++        let ordered = filter_ordered_entries(entries, &filter);
++
++        assert_eq!(ordered.len(), 1);
++        assert_eq!(ordered[0].value["summary"], "newest editor");
++    }
++
++    #[test]
++    fn read_project_event_log_returns_empty_entries_when_log_file_is_missing() {
++        let project_root = temp_project_root("project-event-reader-missing");
++
++        let result = read_project_event_log(&project_root, &AiLogFilter::default()).unwrap();
++
++        assert_eq!(result.project_path, project_root);
++        assert_eq!(result.path, resolve_log_path(&result.project_path));
++        assert!(result.entries.is_empty());
++
++        fs::remove_dir_all(result.project_path).unwrap();
++    }
++
++    #[test]
+     fn ai_log_compact_preserves_valid_jsonl_and_drops_excess_invalid_lines() {
+         let path = std::env::temp_dir().join(format!(
+             "lux-ai-log-test-{}.jsonl",

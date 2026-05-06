@@ -1,0 +1,749 @@
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -770,7 +770,7 @@
+ // lux skill
+ // ---------------------------------------------------------------------------
+ 
+-#[derive(Debug, serde::Deserialize, serde::Serialize)]
++#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+ struct SkillManifest {
+     name: String,
+     version: String,
+@@ -787,7 +787,7 @@
+     dependencies: Option<Value>,
+ }
+ 
+-#[derive(Debug, serde::Deserialize, serde::Serialize)]
++#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+ struct SkillAuthor {
+     name: String,
+     email: Option<String>,
+@@ -805,6 +805,17 @@
+ struct SkillInfo<'a> {
+     manifest: &'a SkillManifest,
+     directory_path: &'a Path,
++    references: Vec<String>,
++    skill_md_preview: Vec<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    adaptation_metadata: Option<Value>,
++}
++
++#[derive(Debug, serde::Serialize)]
++struct SkillInfoOutput {
++    manifest: SkillManifest,
++    directory_path: PathBuf,
++    scope: String,
+     references: Vec<String>,
+     skill_md_preview: Vec<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+@@ -846,43 +857,34 @@
+ }
+ 
+ fn print_skill_info(args: SkillInfoArgs) -> anyhow::Result<()> {
+-    let entries = discover_skills()?;
+-    let Some(entry) = entries
+-        .iter()
+-        .find(|entry| entry.manifest.name == args.name)
+-    else {
++    let Some(info) = skill_info_for_project(&args.name, None)? else {
+         eprintln!("Error: skill '{}' not found", args.name);
+         std::process::exit(1);
+     };
+ 
+-    let references = read_skill_references(&entry.directory_path);
+-    let preview = read_skill_md_preview(&entry.directory_path);
+-    let adaptation_metadata = read_skill_adaptation_metadata(&entry.directory_path);
+-
+     if args.json {
+         let info = SkillInfo {
+-            manifest: &entry.manifest,
+-            directory_path: &entry.directory_path,
+-            references,
+-            skill_md_preview: preview,
+-            adaptation_metadata,
++            manifest: &info.manifest,
++            directory_path: &info.directory_path,
++            references: info.references,
++            skill_md_preview: info.skill_md_preview,
++            adaptation_metadata: info.adaptation_metadata,
+         };
+         println!("{}", serde_json::to_string_pretty(&info)?);
+         return Ok(());
+     }
+ 
+-    println!("Name:         {}", entry.manifest.name);
++    println!("Name:         {}", info.manifest.name);
+     println!(
+         "Display Name: {}",
+-        entry.manifest.display_name.as_deref().unwrap_or("N/A")
++        info.manifest.display_name.as_deref().unwrap_or("N/A")
+     );
+-    println!("Version:      {}", entry.manifest.version);
+-    println!("Description:  {}", entry.manifest.description);
+-    println!("Type:         {}", entry.manifest.skill_type);
++    println!("Version:      {}", info.manifest.version);
++    println!("Description:  {}", info.manifest.description);
++    println!("Type:         {}", info.manifest.skill_type);
+     println!(
+         "Author:       {}",
+-        entry
+-            .manifest
++        info.manifest
+             .author
+             .as_ref()
+             .map(|author| author.name.as_str())
+@@ -890,8 +892,7 @@
+     );
+     println!(
+         "Keywords:     {}",
+-        entry
+-            .manifest
++        info.manifest
+             .keywords
+             .as_ref()
+             .filter(|keywords| !keywords.is_empty())
+@@ -900,27 +901,27 @@
+     );
+     println!(
+         "Lux Version:  {}",
+-        entry.manifest.lux_version.as_deref().unwrap_or("N/A")
++        info.manifest.lux_version.as_deref().unwrap_or("N/A")
+     );
+-    println!("Location:     {}", entry.directory_path.display());
+-    if adaptation_metadata.is_some() {
++    println!("Location:     {}", info.directory_path.display());
++    if info.adaptation_metadata.is_some() {
+         println!("Adapted:      yes");
+     }
+     println!();
+     println!("References:");
+-    if references.is_empty() {
++    if info.references.is_empty() {
+         println!("  N/A");
+     } else {
+-        for reference in references {
++        for reference in info.references {
+             println!("  - {}", reference);
+         }
+     }
+     println!();
+     println!("SKILL.md preview:");
+-    if preview.is_empty() {
++    if info.skill_md_preview.is_empty() {
+         println!("  N/A");
+     } else {
+-        for line in preview {
++        for line in info.skill_md_preview {
+             println!("  {}", line);
+         }
+     }
+@@ -929,53 +930,72 @@
+ }
+ 
+ fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
+-    if let Err(message) = validate_skill_name(&args.name) {
+-        fail_skill_install(args.json, &message);
++    let result =
++        install_skill_for_project(&args.name, &args.source, args.project, args.adapt, None);
++    let result = match result {
++        Ok(result) => result,
++        Err(error) => fail_skill_install(args.json, &error.to_string()),
++    };
++    if args.json {
++        println!("{}", serde_json::to_string_pretty(&result)?);
++        return Ok(());
+     }
+-    if args.adapt && !args.project {
+-        fail_skill_install(args.json, "--adapt requires --project");
++    let target_dir = result["directory_path"]
++        .as_str()
++        .unwrap_or("unknown skill directory");
++    println!("Installed skill '{}' to {}", args.name, target_dir);
++    Ok(())
++}
++
++fn install_skill_for_project(
++    name: &str,
++    source: &str,
++    project: bool,
++    adapt: bool,
++    project_root: Option<&Path>,
++) -> anyhow::Result<Value> {
++    if let Err(message) = validate_skill_name(name) {
++        bail!(message);
+     }
+-    if discover_skills()?
++    if adapt && !project {
++        bail!("--adapt requires --project");
++    }
++    if discover_skills_for_project(project_root)?
+         .iter()
+-        .any(|entry| entry.scope == "core" && entry.manifest.name == args.name)
++        .any(|entry| entry.scope == "core" && entry.manifest.name == name)
+     {
+-        fail_skill_install(
+-            args.json,
+-            &format!("refusing to overwrite core skill '{}'", args.name),
+-        );
++        bail!("refusing to overwrite core skill '{}'", name);
+     }
+ 
+-    let target_root = if args.project {
+-        project_skills_dir().context("failed to determine project skills directory")?
++    let target_root = if project {
++        project_skills_dir_for(project_root)
++            .context("failed to determine project skills directory")?
+     } else {
+         global_skills_dir().context("failed to determine global skills directory")?
+     };
+-    let target_dir = target_root.join(&args.name);
++    let target_dir = target_root.join(name);
+ 
+-    let adaptation = if args.adapt {
+-        match build_skill_adaptation_metadata(&args.name, &args.source) {
+-            Ok(adaptation) => Some(adaptation),
+-            Err(error) => fail_skill_install(args.json, &error.to_string()),
+-        }
++    let adaptation = if adapt {
++        Some(match project_root {
++            Some(_) => build_skill_adaptation_metadata_for_project(name, source, project_root)?,
++            None => build_skill_adaptation_metadata(name, source)?,
++        })
+     } else {
+         None
+     };
+ 
+     if target_dir.exists() {
+-        fail_skill_install(
+-            args.json,
+-            &format!(
+-                "skill '{}' already exists at {}",
+-                args.name,
+-                target_dir.display()
+-            ),
++        bail!(
++            "skill '{}' already exists at {}",
++            name,
++            target_dir.display()
+         );
+     }
+ 
+     fs::create_dir_all(&target_dir)
+         .with_context(|| format!("failed to create skill directory {}", target_dir.display()))?;
+ 
+-    let result = install_skill_from_source(&args.source, &target_dir);
++    let result = install_skill_from_source(source, &target_dir);
+     if let Err(error) = result {
+         let _ = fs::remove_dir_all(&target_dir);
+         return Err(error);
+@@ -993,26 +1013,14 @@
+         )?;
+     }
+ 
+-    if args.json {
+-        println!(
+-            "{}",
+-            serde_json::to_string_pretty(&json!({
+-                "installed": true,
+-                "name": args.name,
+-                "scope": if args.project { "project" } else { "global" },
+-                "directory_path": target_dir,
+-                "adapted": adaptation.is_some(),
+-                "adaptation_metadata": adaptation.as_ref(),
+-            }))?
+-        );
+-        return Ok(());
+-    }
+-    println!(
+-        "Installed skill '{}' to {}",
+-        args.name,
+-        target_dir.display()
+-    );
+-    Ok(())
++    Ok(json!({
++        "installed": true,
++        "name": name,
++        "scope": if project { "project" } else { "global" },
++        "directory_path": target_dir,
++        "adapted": adaptation.is_some(),
++        "adaptation_metadata": adaptation.as_ref(),
++    }))
+ }
+ 
+ fn remove_skill(args: SkillRemoveArgs) -> anyhow::Result<()> {
+@@ -1137,11 +1145,22 @@
+ }
+ 
+ fn build_skill_adaptation_metadata(name: &str, source: &str) -> anyhow::Result<Value> {
++    build_skill_adaptation_metadata_for_project(name, source, None)
++}
++
++fn build_skill_adaptation_metadata_for_project(
++    name: &str,
++    source: &str,
++    project_root: Option<&Path>,
++) -> anyhow::Result<Value> {
+     if is_url_source(source) {
+         bail!("--adapt requires a local skill source directory");
+     }
+ 
+-    let project_root = std::env::current_dir().context("failed to determine project root")?;
++    let project_root = match project_root {
++        Some(project_root) => project_root.to_path_buf(),
++        None => std::env::current_dir().context("failed to determine project root")?,
++    };
+     let source_dir = Path::new(source);
+     if !source_dir.is_dir() {
+         bail!("source is not a directory: {}", source_dir.display());
+@@ -1355,10 +1374,14 @@
+ }
+ 
+ fn discover_skills() -> anyhow::Result<Vec<SkillEntry>> {
++    discover_skills_for_project(None)
++}
++
++fn discover_skills_for_project(project_root: Option<&Path>) -> anyhow::Result<Vec<SkillEntry>> {
+     let mut entries = Vec::new();
+ 
+     scan_skill_scope(&core_skills_dir(), "core", &mut entries)?;
+-    if let Some(skills_dir) = project_skills_dir() {
++    if let Some(skills_dir) = project_skills_dir_for(project_root) {
+         scan_skill_scope(&skills_dir, "project", &mut entries)?;
+     }
+     if let Some(skills_dir) = global_skills_dir() {
+@@ -1447,11 +1470,19 @@
+ }
+ 
+ fn project_skills_dir() -> Option<PathBuf> {
+-    std::env::current_dir()
+-        .ok()
+-        .map(|d| d.join(".lux").join("skills"))
++    project_skills_dir_for(None)
+ }
+ 
++fn project_skills_dir_for(project_root: Option<&Path>) -> Option<PathBuf> {
++    project_root
++        .map(|project_root| project_root.join(".lux").join("skills"))
++        .or_else(|| {
++            std::env::current_dir()
++                .ok()
++                .map(|d| d.join(".lux").join("skills"))
++        })
++}
++
+ fn global_skills_dir() -> Option<PathBuf> {
+     let home = if cfg!(windows) {
+         std::env::var("USERPROFILE").ok()
+@@ -1507,6 +1538,34 @@
+     }
+ }
+ 
++fn skill_info_for_project(
++    name: &str,
++    project_root: Option<&Path>,
++) -> anyhow::Result<Option<SkillInfoOutput>> {
++    let entries = discover_skills_for_project(project_root)?;
++    let Some(entry) = entries
++        .iter()
++        .find(|entry| entry.manifest.name == name && entry.scope == "project")
++        .or_else(|| {
++            entries
++                .iter()
++                .find(|entry| entry.manifest.name == name && entry.scope == "global")
++        })
++        .or_else(|| entries.iter().find(|entry| entry.manifest.name == name))
++    else {
++        return Ok(None);
++    };
++
++    Ok(Some(SkillInfoOutput {
++        manifest: entry.manifest.clone(),
++        directory_path: entry.directory_path.clone(),
++        scope: entry.scope.clone(),
++        references: read_skill_references(&entry.directory_path),
++        skill_md_preview: read_skill_md_preview(&entry.directory_path),
++        adaptation_metadata: read_skill_adaptation_metadata(&entry.directory_path),
++    }))
++}
++
+ // ---------------------------------------------------------------------------
+ // lux unity status
+ // ---------------------------------------------------------------------------
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -309,6 +309,15 @@
+     tool_type: String,
+ }
+ 
++#[derive(Debug, Deserialize)]
++#[serde(rename_all = "camelCase")]
++struct InstallSkillRequest {
++    name: String,
++    source: String,
++    #[serde(default)]
++    adapt: bool,
++}
++
+ impl GatewayState {
+     pub fn new(config: GatewayConfig) -> Self {
+         let (events, _) = broadcast::channel(config.history_capacity.max(1));
+@@ -388,6 +397,8 @@
+         .route("/api/heartbeat", post(heartbeat))
+         .route("/api/ai-log", get(list_ai_log))
+         .route("/api/ai-log/context", get(get_ai_log_context))
++        .route("/api/skills/install", post(install_project_skill))
++        .route("/api/skills/:skill_name/info", get(get_project_skill_info))
+         .route("/schema", get(schema))
+         .route("/events", get(events_socket))
+         .route("/remote/signaling/:session_id", get(signaling_socket))
+@@ -527,6 +538,48 @@
+     )))
+ }
+ 
++async fn install_project_skill(
++    State(state): State<GatewayState>,
++    headers: HeaderMap,
++    Json(request): Json<InstallSkillRequest>,
++) -> Result<(StatusCode, Json<serde_json::Value>), Response> {
++    require_token(&state, &headers)?;
++    let Some(project_root) = state.config.project_root.as_deref() else {
++        return Err(project_path_required());
++    };
++
++    crate::install_skill_for_project(
++        &request.name,
++        &request.source,
++        true,
++        request.adapt,
++        Some(project_root),
++    )
++    .map(|result| (StatusCode::CREATED, Json(result)))
++    .map_err(bad_request)
++}
++
++async fn get_project_skill_info(
++    State(state): State<GatewayState>,
++    headers: HeaderMap,
++    AxumPath(skill_name): AxumPath<String>,
++) -> Result<Json<serde_json::Value>, Response> {
++    require_token(&state, &headers)?;
++    let Some(project_root) = state.config.project_root.as_deref() else {
++        return Err(project_path_required());
++    };
++
++    let Some(info) =
++        crate::skill_info_for_project(&skill_name, Some(project_root)).map_err(internal_error)?
++    else {
++        return Err(not_found());
++    };
++
++    serde_json::to_value(info)
++        .map(Json)
++        .map_err(|error| internal_error(error.into()))
++}
++
+ fn ai_log_filter(query: AiLogQuery) -> AiLogFilter {
+     AiLogFilter {
+         limit: Some(clamp_ai_log_limit(query.limit)),
+@@ -1617,6 +1670,18 @@
+     (StatusCode::NOT_FOUND, "Lux gateway resource not found").into_response()
+ }
+ 
++fn bad_request(error: anyhow::Error) -> Response {
++    (StatusCode::BAD_REQUEST, error.to_string()).into_response()
++}
++
++fn project_path_required() -> Response {
++    (
++        StatusCode::SERVICE_UNAVAILABLE,
++        "project path is not configured",
++    )
++        .into_response()
++}
++
+ fn internal_error(error: anyhow::Error) -> Response {
+     tracing::warn!(%error, "Lux gateway request failed");
+     (
+@@ -1693,6 +1758,47 @@
+         fs::write(ai_log::resolve_log_path(project_root), contents).unwrap();
+     }
+ 
++    fn make_unity_project(project_root: &Path) {
++        fs::create_dir_all(project_root.join("Assets")).unwrap();
++        fs::create_dir_all(project_root.join("ProjectSettings")).unwrap();
++        fs::create_dir_all(project_root.join("Packages")).unwrap();
++        fs::write(
++            project_root.join("Packages/manifest.json"),
++            r#"{"dependencies":{"com.linalab.lux":"file:Packages/com.linalab.lux"}}"#,
++        )
++        .unwrap();
++    }
++
++    fn test_skill_source(name: &str) -> PathBuf {
++        let source = temp_project_root(&format!("skill-source-{name}"));
++        fs::write(
++            source.join("manifest.json"),
++            format!(
++                r#"{{
++  "name": "{name}",
++  "version": "0.1.0",
++  "description": "API test skill",
++  "displayName": "API Test Skill",
++  "luxVersion": "0.1.0",
++  "author": {{ "name": "Lux Tests" }},
++  "keywords": ["api"],
++  "type": "test",
++  "source": "{}"
++}}"#,
++                source.display()
++            ),
++        )
++        .unwrap();
++        fs::write(
++            source.join("SKILL.md"),
++            format!("# {name}\n\nAPI test skill.\n"),
++        )
++        .unwrap();
++        fs::create_dir_all(source.join("references")).unwrap();
++        fs::write(source.join("references/usage.md"), "# Usage\n").unwrap();
++        source
++    }
++
+     async fn json_request(
+         app: Router,
+         method: Method,
+@@ -2015,6 +2121,75 @@
+     }
+ 
+     #[tokio::test]
++    async fn skill_api_installs_adapted_project_skill_and_reads_info() {
++        let project_root = temp_project_root("skill-api");
++        make_unity_project(&project_root);
++        let source = test_skill_source("api-adapt-skill");
++        let source = source.to_str().unwrap().to_string();
++        let app = test_app_with_project(project_root.clone());
++
++        let unauthorized = app
++            .clone()
++            .oneshot(
++                Request::builder()
++                    .method(Method::POST)
++                    .uri("/api/skills/install")
++                    .header(header::CONTENT_TYPE, "application/json")
++                    .body(Body::from(
++                        serde_json::json!({
++                            "name": "api-adapt-skill",
++                            "source": source.clone(),
++                            "adapt": true
++                        })
++                        .to_string(),
++                    ))
++                    .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
++
++        let installed = json_request(
++            app.clone(),
++            Method::POST,
++            "/api/skills/install",
++            serde_json::json!({
++                "name": "api-adapt-skill",
++                "source": source.clone(),
++                "adapt": true
++            }),
++        )
++        .await;
++        assert_eq!(installed.status(), StatusCode::CREATED);
++        let installed_json = response_json(installed).await;
++        assert_eq!(installed_json["installed"], true);
++        assert_eq!(installed_json["scope"], "project");
++        assert_eq!(installed_json["adapted"], true);
++        assert_eq!(
++            installed_json["adaptation_metadata"]["protocol"],
++            "lux.skill.adaptation.v1"
++        );
++
++        let installed_dir = project_root.join(".lux/skills/api-adapt-skill");
++        assert!(installed_dir.join("manifest.json").is_file());
++        assert!(installed_dir.join("SKILL.md").is_file());
++        assert!(installed_dir.join("references/usage.md").is_file());
++        assert!(installed_dir.join("lux-adaptation.json").is_file());
++
++        let info = authenticated_get(app, "/api/skills/api-adapt-skill/info").await;
++        assert_eq!(info.status(), StatusCode::OK);
++        let info_json = response_json(info).await;
++        assert_eq!(info_json["manifest"]["name"], "api-adapt-skill");
++        assert_eq!(info_json["scope"], "project");
++        assert_eq!(
++            info_json["adaptation_metadata"]["skill_name"],
++            "api-adapt-skill"
++        );
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
+     async fn ui_serves_index_html() {
+         let response = test_app()
+             .oneshot(Request::builder().uri("/ui/").body(Body::empty()).unwrap())
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -402,6 +402,53 @@
+     assert_eq!(
+         info_json["adaptation_metadata"]["skill_name"],
+         "smoke-adapt-skill"
++    );
++}
++
++#[test]
++fn skill_api_install_matches_cli_project_info_read_path() {
++    let port = reserve_local_port();
++    let project = create_test_unity_project("lux-skill-api-parity-project", true);
++    let source = create_test_skill_source("smoke-api-parity-skill");
++    let _gateway = start_gateway_with_project(port, Some(&project));
++    wait_for_health(port);
++
++    let (install_status, install_json) = http_json_request(
++        port,
++        "POST",
++        "/api/skills/install",
++        &serde_json::json!({
++            "name": "smoke-api-parity-skill",
++            "source": source,
++            "adapt": true
++        }),
++        &[("x-lux-token", TOKEN)],
++    );
++    assert_eq!(install_status, 201);
++    assert_eq!(install_json["installed"], true);
++    assert_eq!(install_json["scope"], "project");
++    assert_eq!(install_json["adapted"], true);
++
++    let cli_info = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args(["skill", "info", "smoke-api-parity-skill", "--json"])
++        .current_dir(&project)
++        .output()
++        .expect("run lux skill info after API install");
++    assert_command_success(&cli_info, "lux skill info after API install");
++    let cli_json: Value = serde_json::from_slice(&cli_info.stdout).expect("CLI info JSON");
++
++    let (info_status, api_info) = http_json_request(
++        port,
++        "GET",
++        "/api/skills/smoke-api-parity-skill/info",
++        &Value::Null,
++        &[("x-lux-token", TOKEN)],
++    );
++    assert_eq!(info_status, 200);
++    assert_eq!(api_info["manifest"]["name"], cli_json["manifest"]["name"]);
++    assert_eq!(
++        api_info["adaptation_metadata"]["skill_name"],
++        cli_json["adaptation_metadata"]["skill_name"]
+     );
+ }
+ 
+@@ -2441,16 +2488,26 @@
+ }
+ 
+ fn start_gateway(port: u16) -> GatewayProcess {
+-    let child = Command::new(env!("CARGO_BIN_EXE_lux"))
+-        .args([
+-            "serve",
+-            "--token",
+-            TOKEN,
+-            "--host",
+-            "127.0.0.1",
+-            "--port",
+-            &port.to_string(),
+-        ])
++    start_gateway_with_project(port, None)
++}
++
++fn start_gateway_with_project(port: u16, project_path: Option<&Path>) -> GatewayProcess {
++    let mut command = Command::new(env!("CARGO_BIN_EXE_lux"));
++    command.args([
++        "serve",
++        "--token",
++        TOKEN,
++        "--host",
++        "127.0.0.1",
++        "--port",
++        &port.to_string(),
++    ]);
++    if let Some(project_path) = project_path {
++        command.arg("--project-path");
++        command.arg(project_path);
++    }
++
++    let child = command
+         .stdin(Stdio::null())
+         .stdout(Stdio::null())
+         .stderr(Stdio::null())
+@@ -2519,3 +2576,62 @@
+         .parse()
+         .ok()
+ }
++
++fn http_json_request(
++    port: u16,
++    method: &str,
++    path: &str,
++    body: &Value,
++    headers: &[(&str, &str)],
++) -> (u16, Value) {
++    use std::io::{Read, Write};
++    use std::net::TcpStream;
++
++    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect HTTP server");
++    stream
++        .set_read_timeout(Some(Duration::from_secs(2)))
++        .expect("set read timeout");
++
++    let body_text = if body.is_null() {
++        String::new()
++    } else {
++        body.to_string()
++    };
++    let mut request =
++        format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
++    for (name, value) in headers {
++        request.push_str(name);
++        request.push_str(": ");
++        request.push_str(value);
++        request.push_str("\r\n");
++    }
++    if !body_text.is_empty() {
++        request.push_str("Content-Type: application/json\r\n");
++        request.push_str(&format!("Content-Length: {}\r\n", body_text.len()));
++    }
++    request.push_str("\r\n");
++    request.push_str(&body_text);
++    stream
++        .write_all(request.as_bytes())
++        .expect("write HTTP request");
++
++    let mut response = String::new();
++    stream
++        .read_to_string(&mut response)
++        .expect("read HTTP response");
++    let mut parts = response.splitn(2, "\r\n\r\n");
++    let head = parts.next().unwrap_or_default();
++    let body = parts.next().unwrap_or_default();
++    let status = head
++        .lines()
++        .next()
++        .and_then(|line| line.split_whitespace().nth(1))
++        .and_then(|status| status.parse().ok())
++        .expect("HTTP status");
++    let json = if body.trim().is_empty() {
++        Value::Null
++    } else {
++        serde_json::from_str(body.trim()).expect("HTTP JSON body")
++    };
++    (status, json)
++}

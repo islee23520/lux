@@ -1,0 +1,55 @@
+goal: >
+  Extend LUX to support Windows and Linux editors, establish CI/CD pipelines for automated
+  testing, and implement visual regression testing for UI screenshots. Make LUX a reliable
+  cross-platform Unity package with automated quality gates.
+
+constraints:
+- Brownfield Unity package
+- Preserve Phase 1-8 functionality
+- macOS remains the primary platform; Windows/Linux are best-effort
+- CI/CD uses GitHub Actions
+- Visual regression compares screenshots, not live rendering
+- No changes to Unity Editor platform-specific APIs that break macOS
+
+acceptance_criteria:
+- cross_platform_paths_complete: All file path handling in Rust and C# uses cross-platform
+  path separators. Rust code compiles on Windows and Linux targets. Path resolution tests
+  pass for Windows (backslash), macOS (forward slash), and mixed separator inputs.
+- cross_platform_cli_complete: `lux` CLI commands work on Windows (PowerShell/CMD) and
+  Linux (bash). Shell command execution handles platform differences. Help text and error
+  messages are platform-appropriate.
+- cicd_pipeline_complete: GitHub Actions workflow runs `cargo test` on macOS, Windows, and
+  Linux. Workflow runs on push to main and on pull requests. Failed builds block merge.
+  C# compilation is verified via Unity batchmode in CI.
+- visual_regression_complete: `lux screenshot --baseline <path>` captures a baseline screenshot.
+  `lux screenshot --compare <baseline>` captures a new screenshot and reports pixel differences.
+  Differences exceeding a configurable threshold (default 1%) are reported as failures.
+  Baseline and comparison images are stored as PNG files.
+- cicd_visual_regression_complete: GitHub Actions workflow includes a visual regression step
+  that compares current screenshots against baselines. Baseline images are stored in the
+  repository under a designated directory.
+- phase9_verification_complete: cargo test passes on all three platforms. CI pipeline is green
+  on GitHub Actions. Visual regression test proves pixel comparison works with known test images.
+
+evaluation_principles:
+- name: platform_parity
+  description: Core LUX functionality works identically on macOS, Windows, and Linux.
+  weight: 0.3
+- name: ci_reliability
+  description: CI pipeline is deterministic, fast, and catches real issues.
+  weight: 0.25
+- name: visual_accuracy
+  description: Screenshot comparison correctly identifies visual changes.
+  weight: 0.25
+- name: regression_resistance
+  description: No regressions on macOS from cross-platform changes.
+  weight: 0.2
+
+exit_conditions:
+- name: phase9_complete
+  description: All Phase 9 acceptance criteria pass on all supported platforms.
+  criteria: all acceptance_criteria verified on macOS, Windows, Linux
+
+metadata:
+  generated_by: Sisyphus from Phase 7+ planning session
+  version: '1.0'

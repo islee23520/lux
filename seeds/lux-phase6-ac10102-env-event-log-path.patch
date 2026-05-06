@@ -1,0 +1,147 @@
+diff --git a/LuxEditor/LuxBridgeSettings.cs b/LuxEditor/LuxBridgeSettings.cs
+--- a/LuxEditor/LuxBridgeSettings.cs
++++ b/LuxEditor/LuxBridgeSettings.cs
+@@ -78,7 +78,7 @@ namespace Linalab.Lux.Editor
+             return Path.GetFullPath(resolvedPath);
+         }
+ 
+-        static string GetAiActionLogPathForProject(string projectRoot)
++        public static string GetAiActionLogPathForProject(string projectRoot)
+         {
+             string environmentPath = Environment.GetEnvironmentVariable(AiActionLogPathEnvironmentVariable);
+             if (!string.IsNullOrWhiteSpace(environmentPath))
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -238,6 +238,64 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(resolved, Is.EqualTo(Path.GetFullPath(Path.Combine(projectRoot, "Logs", "events.jsonl"))));
+         }
+ 
++        [Test]
++        public void BridgeSettings_EnvironmentAiActionLogPathOverrideWinsOverSettingsPath()
++        {
++            string projectRoot = Path.Combine(_tempDirectory, "Project");
++            string settingsDirectory = Path.Combine(projectRoot, "UserSettings");
++            Directory.CreateDirectory(settingsDirectory);
++            File.WriteAllText(
++                Path.Combine(settingsDirectory, "LuxBridgeSettings.json"),
++                "{\"ai_action_log_path\":\"Settings/events.jsonl\"}");
++            string previousEnvironmentPath = Environment.GetEnvironmentVariable(
++                Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable);
++
++            try
++            {
++                Environment.SetEnvironmentVariable(
++                    Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable,
++                    "Env/events.jsonl");
++
++                string resolved = Linalab.Lux.Editor.LuxBridgeSettings.GetAiActionLogPathForProject(projectRoot);
++
++                Assert.That(
++                    resolved,
++                    Is.EqualTo(Path.GetFullPath(Path.Combine(projectRoot, "Env", "events.jsonl"))));
++            }
++            finally
++            {
++                Environment.SetEnvironmentVariable(
++                    Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable,
++                    previousEnvironmentPath);
++            }
++        }
++
++        [Test]
++        public void BridgeSettings_EnvironmentAiActionLogPathSupportsAbsolutePath()
++        {
++            string projectRoot = Path.Combine(_tempDirectory, "Project");
++            string absolutePath = Path.Combine(_tempDirectory, "ExternalLogs", "events.jsonl");
++            string previousEnvironmentPath = Environment.GetEnvironmentVariable(
++                Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable);
++
++            try
++            {
++                Environment.SetEnvironmentVariable(
++                    Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable,
++                    absolutePath);
++
++                string resolved = Linalab.Lux.Editor.LuxBridgeSettings.GetAiActionLogPathForProject(projectRoot);
++
++                Assert.That(resolved, Is.EqualTo(Path.GetFullPath(absolutePath)));
++            }
++            finally
++            {
++                Environment.SetEnvironmentVariable(
++                    Linalab.Lux.Editor.LuxBridgeSettings.AiActionLogPathEnvironmentVariable,
++                    previousEnvironmentPath);
++            }
++        }
++
+         string GetTempLogPath()
+         {
+             return Path.Combine(_tempDirectory, "UserSettings", "LuxAiActionLog.jsonl");
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -6,8 +6,8 @@ use std::{
+     os::unix::fs::PermissionsExt,
+     path::Path,
+     process::{Child, Command, Stdio},
+     thread,
+-    time::{Duration, Instant},
++    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+ };
+ 
+ const TOKEN: &str = "lux-cli-smoke-token";
+@@ -145,6 +145,53 @@ fn ai_log_recent_json_filters_fixture_jsonl() {
+     assert_eq!(entries[1]["value"]["summary"], "third codex edit");
+ }
+ 
++#[test]
++fn ai_log_recent_json_reads_env_log_path_override() {
++    let nanos = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .expect("system time after Unix epoch")
++        .as_nanos();
++    let project_root = std::env::temp_dir()
++        .join(format!("lux-ai-log-env-override-{}-{nanos}", std::process::id()))
++        .join("Project");
++    let override_relative_path = "EnvLogs/override-events.jsonl";
++    let override_path = project_root.join(override_relative_path);
++    fs::create_dir_all(override_path.parent().expect("override log parent"))
++        .expect("create override log directory");
++    fs::write(
++        &override_path,
++        "{\"timestampUtc\":\"2026-05-04T00:00:05Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"cli\",\"action\":\"env-path\",\"eventType\":\"append\",\"summary\":\"env override event\"}\n",
++    )
++    .expect("write override AI log fixture");
++
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "recent",
++            "--project-path",
++            project_root.to_str().expect("project path UTF-8"),
++            "--limit",
++            "5",
++            "--json",
++        ])
++        .env("LUX_AI_ACTION_LOG_PATH", override_relative_path)
++        .output()
++        .expect("run lux ai-log recent with env override");
++
++    assert_command_success(&output, "lux ai-log recent env override");
++    let parsed: Value = serde_json::from_slice(&output.stdout).expect("recent JSON");
++    assert_eq!(parsed["path"], override_path.to_string_lossy().as_ref());
++    assert_eq!(parsed["count"], 1);
++    assert_eq!(
++        parsed["entries"][0]["value"]["summary"],
++        "env override event"
++    );
++    assert_eq!(
++        parsed["entries"][0]["value"]["action"],
++        "env-path"
++    );
++}
++
+ #[test]
+ fn ai_log_context_json_builds_continuation_context() {
+     let project_root = create_ai_log_fixture_project("lux-ai-log-context");

@@ -1,0 +1,269 @@
+diff --git a/RustGateway~/src/main.rs b/RustGateway~/src/main.rs
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -1618,6 +1618,80 @@ fn sensitive_context_slimming_markers(text: &str) -> Vec<&'static str> {
+     markers
+ }
+ 
++#[cfg(test)]
++mod phase6_context_slimming_tests {
++    use super::*;
++
++    #[test]
++    fn context_slimming_verification_reports_failures_for_invalid_fixture() {
++        let invalid_context_slimming = json!({
++            "schema": "lux.skill.context_slimming_result.v1",
++            "skill_name": "invalid-slimming-fixture",
++            "project_root": "/tmp/lux-project",
++            "mode": "adapted_skill_generation",
++            "rules": {
++                "skill_md_preview_lines": 1,
++                "reference_policy": "inline_reference_bodies",
++                "default_context_policy": "full_source_context",
++                "redaction_policy": "none"
++            },
++            "redaction": {
++                "policy": "lux.skill.context_slimming.redaction.v1",
++                "applied": false
++            },
++            "slimmed_context": {
++                "manifest": {
++                    "name": "invalid-slimming-fixture",
++                    "version": "0.1.0",
++                    "description": "token=raw-phase6-verification-token"
++                },
++                "skill_md_preview": [
++                    "first line",
++                    "second line"
++                ],
++                "deferred_reference_paths": [
++                    "/absolute/reference.md",
++                    "../escaping-reference.md"
++                ],
++                "reference_bodies": {
++                    "usage.md": "Reference body should never be in the slimmed context."
++                }
++            },
++            "included_sources": [
++                { "path": "manifest.json" }
++            ],
++            "excluded_sources": [],
++            "metrics": {
++                "source_bytes": 100,
++                "retained_preview_chars": 500,
++                "deferred_reference_count": 1,
++                "estimated_reduction_percent": 0
++            }
++        });
++
++        let verification = verify_skill_context_slimming_result(&invalid_context_slimming);
++
++        assert_eq!(verification["status"], "failed");
++        assert_context_slimming_check_failed(&verification, "required_fields");
++        assert_context_slimming_check_failed(&verification, "redaction");
++        assert_context_slimming_check_failed(&verification, "context_boundaries");
++        let messages = context_slimming_failed_check_messages(&verification);
++        assert!(messages.contains("Missing required fields"));
++        assert!(messages.contains("Unredacted sensitive markers remain"));
++        assert!(messages.contains("Slimmed context exceeded"));
++    }
++
++    fn assert_context_slimming_check_failed(verification: &Value, name: &str) {
++        let checks = verification["checks"].as_array().expect("checks array");
++        assert!(
++            checks
++                .iter()
++                .any(|check| check["name"] == name && check["ok"] == false),
++            "expected failed context slimming check {name}"
++        );
++    }
++}
++
+ fn write_context_slimming_artifacts(target_dir: &Path, adaptation: &Value) -> anyhow::Result<()> {
+     let Some(context_slimming) = adaptation.get("context_slimming") else {
+         return Ok(());
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -592,6 +592,123 @@ fn skill_install_adapt_verifies_slimming_redaction_and_boundaries() {
+     assert!(!slimmed_context_text.contains("Reference body"));
+ }
+ 
++#[test]
++fn skill_install_adapt_context_slimming_fixture_generates_and_reads_back() {
++    let home = create_temp_dir("lux-skill-adapt-slimming-fixture-home");
++    let project = create_test_unity_project("lux-skill-adapt-slimming-fixture-project", true);
++    let source = create_context_slimming_fixture_skill_source("smoke-context-slimming-fixture");
++
++    let install = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "skill",
++            "install",
++            "smoke-context-slimming-fixture",
++            "--source",
++            source.to_str().expect("source path UTF-8"),
++            "--project",
++            "--adapt",
++            "--json",
++        ])
++        .current_dir(&project)
++        .env("HOME", &home)
++        .output()
++        .expect("run lux skill install --project --adapt --json for context slimming fixture");
++
++    assert_command_success(&install, "lux skill install --adapt context slimming fixture");
++    let install_json: Value = serde_json::from_slice(&install.stdout).expect("install JSON");
++    let install_context = &install_json["adaptation_metadata"]["context_slimming"];
++    assert_eq!(install_context["schema"], "lux.skill.context_slimming_result.v1");
++    assert_eq!(install_context["skill_name"], "smoke-context-slimming-fixture");
++    assert_eq!(install_context["verification"]["status"], "passed");
++    assert_eq!(
++        install_json["adaptation_metadata"]["context_slimming_verification"]["status"],
++        "passed"
++    );
++
++    let installed_dir = project.join(".lux/skills/smoke-context-slimming-fixture");
++    let context_path = installed_dir.join("lux-context-slimming.json");
++    let markdown_path = installed_dir.join("lux-context-slimming.md");
++    assert!(context_path.is_file());
++    assert!(markdown_path.is_file());
++    let artifact_text = fs::read_to_string(&context_path).expect("read context slimming artifact");
++    let artifact_json: Value =
++        serde_json::from_str(&artifact_text).expect("context slimming artifact JSON");
++    assert_eq!(&artifact_json, install_context);
++    assert_eq!(artifact_json["slimmed_context"]["skill_md_preview"]
++        .as_array()
++        .expect("skill preview")
++        .len(), 24);
++    assert_eq!(
++        artifact_json["slimmed_context"]["deferred_reference_paths"],
++        serde_json::json!(["references/advanced.md", "references/usage.md"])
++    );
++    assert_eq!(artifact_json["metrics"]["deferred_reference_count"], 2);
++    assert!(
++        artifact_json["metrics"]["estimated_reduction_percent"]
++            .as_u64()
++            .expect("estimated reduction percent")
++            > 0
++    );
++    let markdown = fs::read_to_string(&markdown_path).expect("read context slimming markdown");
++    assert!(markdown.contains("references/advanced.md"));
++    assert!(markdown.contains("references/usage.md"));
++
++    let info = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "skill",
++            "info",
++            "smoke-context-slimming-fixture",
++            "--json",
++        ])
++        .current_dir(&project)
++        .env("HOME", &home)
++        .output()
++        .expect("run lux skill info --json for context slimming fixture");
++    assert_command_success(&info, "lux skill info context slimming fixture");
++    let info_json: Value = serde_json::from_slice(&info.stdout).expect("info JSON");
++    assert_eq!(
++        info_json["adaptation_metadata"]["context_slimming"],
++        artifact_json
++    );
++    assert_eq!(
++        info_json["adaptation_metadata"]["context_slimming_verification"]["status"],
++        "passed"
++    );
++
++    let recent = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "recent",
++            "--project-path",
++            project.to_str().expect("project path UTF-8"),
++            "--limit",
++            "1",
++            "--json",
++        ])
++        .env("HOME", &home)
++        .output()
++        .expect("run lux ai-log recent for context slimming event");
++    assert_command_success(&recent, "lux ai-log recent context slimming event");
++    let recent_json: Value = serde_json::from_slice(&recent.stdout).expect("recent JSON");
++    assert_eq!(recent_json["count"], 1);
++    let event = &recent_json["entries"][0]["value"];
++    assert_eq!(event["payload"]["stepName"], "context-slimming");
++    assert_eq!(
++        event["payload"]["attributes"]["contextSlimming"]["verification"]["status"],
++        "passed"
++    );
++    assert_eq!(
++        event["payload"]["attributes"]["contextSlimming"]["metrics"]["deferred_reference_count"],
++        2
++    );
++    assert!(
++        event["payload"]["attributes"]["contextSlimming"]
++            .get("slimmedContext")
++            .is_none(),
++        "AI log readback must keep the bulky slimmed context in the artifact, not the event"
++    );
++}
++
+ #[test]
+ fn skill_install_adapt_requires_project_scope() {
+     let home = create_temp_dir("lux-skill-adapt-requires-project-home");
+@@ -2380,6 +2497,57 @@ fn create_test_skill_source(name: &str) -> std::path::PathBuf {
+     source
+ }
+ 
++fn create_context_slimming_fixture_skill_source(name: &str) -> std::path::PathBuf {
++    let source = create_temp_dir(&format!("lux-context-slimming-fixture-{name}"));
++    fs::write(
++        source.join("manifest.json"),
++        format!(
++            r#"{{
++  "name": "{name}",
++  "version": "0.1.0",
++  "description": "Context slimming fixture skill",
++  "displayName": "Context Slimming Fixture",
++  "luxVersion": "0.1.0",
++  "author": {{ "name": "Lux Tests" }},
++  "keywords": ["context", "slimming", "fixture"],
++  "type": "test",
++  "source": "{}"
++}}"#,
++            source.display()
++        ),
++    )
++    .expect("write context slimming fixture manifest");
++
++    let skill_lines = (1..=36)
++        .map(|index| format!("Instruction line {index}: keep only the leading preview."))
++        .collect::<Vec<_>>()
++        .join("\n");
++    fs::write(
++        source.join("SKILL.md"),
++        format!("# {name}\n\n{skill_lines}\n"),
++    )
++    .expect("write context slimming fixture skill body");
++
++    let references = source.join("references");
++    fs::create_dir_all(&references).expect("create context slimming fixture references");
++    fs::write(
++        references.join("usage.md"),
++        "# Usage\nThis full usage reference should be deferred out of the default context.\n",
++    )
++    .expect("write context slimming usage reference");
++    fs::write(
++        references.join("advanced.md"),
++        concat!(
++            "# Advanced\n",
++            "Detailed advanced notes provide enough bytes to prove context reduction.\n",
++            "These notes must remain in a deferred reference artifact path only.\n",
++        ),
++    )
++    .expect("write context slimming advanced reference");
++
++    source
++}
++
+ fn create_test_unity_project(prefix: &str, include_lux_package: bool) -> std::path::PathBuf {
+     let project = create_temp_dir(prefix);
+     fs::create_dir_all(project.join("Assets")).expect("create Assets dir");

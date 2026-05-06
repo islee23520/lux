@@ -1,0 +1,241 @@
+diff --git a/RustGateway~/src/server.rs b/RustGateway~/src/server.rs
+--- a/RustGateway~/src/server.rs
++++ b/RustGateway~/src/server.rs
+@@ -2456,6 +2456,237 @@ mod tests {
+ 
+         let _ = fs::remove_dir_all(project_root);
+     }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoints_cover_valid_project_scoped_reads() {
++        let project_root = temp_project_root("endpoint-valid-reads");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"action\":\"append\",\"eventType\":\"append\",\"summary\":\"first\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"actor\":\"codex\",\"category\":\"ai-action-log\",\"source\":\"gateway\",\"action\":\"append\",\"eventType\":\"append\",\"summary\":\"second\"}\n",
++        );
++        let app = test_app();
++        let project_path = project_root.display();
++
++        let list_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log?project_path={project_path}&limit=10"),
++        )
++        .await;
++        assert_eq!(list_response.status(), StatusCode::OK);
++        let list_json = response_json(list_response).await;
++        assert_eq!(list_json.as_array().unwrap().len(), 2);
++        assert_eq!(list_json[0]["value"]["summary"], "first");
++        assert_eq!(list_json[1]["value"]["summary"], "second");
++
++        let context_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/context?project_path={project_path}&limit=2"),
++        )
++        .await;
++        assert_eq!(context_response.status(), StatusCode::OK);
++        let context_json = response_json(context_response).await;
++        assert_eq!(context_json["count"], 2);
++        assert_eq!(context_json["entries"][0]["summary"], "first");
++        assert_eq!(context_json["entries"][1]["summary"], "second");
++
++        let files_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/files?project_path={project_path}"),
++        )
++        .await;
++        assert_eq!(files_response.status(), StatusCode::OK);
++        let files_json = response_json(files_response).await;
++        assert_eq!(files_json["count"], 1);
++        assert_eq!(files_json["files"][0]["relativePath"], ".lux/ai-action-log.jsonl");
++        assert_eq!(files_json["files"][0]["validEventCount"], 2);
++
++        let tail_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/tail?project_path={project_path}&limit=1"),
++        )
++        .await;
++        assert_eq!(tail_response.status(), StatusCode::OK);
++        let tail_json = response_json(tail_response).await;
++        assert_eq!(tail_json["count"], 1);
++        assert_eq!(tail_json["entries"][0]["value"]["summary"], "second");
++
++        let recent_response = authenticated_get(
++            app,
++            &format!("/api/ai-log/recent?project_path={project_path}&limit=1"),
++        )
++        .await;
++        assert_eq!(recent_response.status(), StatusCode::OK);
++        let recent_json = response_json(recent_response).await;
++        assert_eq!(recent_json["count"], 1);
++        assert_eq!(recent_json["entries"][0]["value"]["summary"], "second");
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoints_report_missing_configured_project() {
++        for path in [
++            "/api/ai-log",
++            "/api/ai-log/context",
++            "/api/ai-log/files",
++            "/api/ai-log/tail",
++            "/api/ai-log/recent",
++        ] {
++            let response = authenticated_get(test_app(), path).await;
++            assert_eq!(
++                response.status(),
++                StatusCode::SERVICE_UNAVAILABLE,
++                "{path} should require a configured or requested project path"
++            );
++        }
++    }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoints_reject_invalid_project_paths() {
++        let nanos = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .unwrap()
++            .as_nanos();
++        let missing_project =
++            std::env::temp_dir().join(format!("lux-gateway-missing-project-{nanos}"));
++        let invalid_project =
++            std::env::temp_dir().join(format!("lux-gateway-invalid-project-{nanos}"));
++        fs::create_dir_all(&invalid_project).unwrap();
++
++        for endpoint in [
++            "/api/ai-log",
++            "/api/ai-log/context",
++            "/api/ai-log/files",
++            "/api/ai-log/tail",
++            "/api/ai-log/recent",
++        ] {
++            let missing_response = authenticated_get(
++                test_app(),
++                &format!("{endpoint}?project_path={}", missing_project.display()),
++            )
++            .await;
++            assert_eq!(
++                missing_response.status(),
++                StatusCode::BAD_REQUEST,
++                "{endpoint} should reject inaccessible project paths"
++            );
++
++            let invalid_response = authenticated_get(
++                test_app(),
++                &format!("{endpoint}?project_path={}", invalid_project.display()),
++            )
++            .await;
++            assert_eq!(
++                invalid_response.status(),
++                StatusCode::BAD_REQUEST,
++                "{endpoint} should reject directories without Unity project markers"
++            );
++        }
++
++        let _ = fs::remove_dir_all(invalid_project);
++    }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoints_return_empty_results_for_projects_without_logs() {
++        let project_root = temp_project_root("endpoint-empty-log");
++        let app = test_app();
++        let project_path = project_root.display();
++
++        let list_response =
++            authenticated_get(app.clone(), &format!("/api/ai-log?project_path={project_path}"))
++                .await;
++        assert_eq!(list_response.status(), StatusCode::OK);
++        let list_json = response_json(list_response).await;
++        assert_eq!(list_json.as_array().unwrap().len(), 0);
++
++        let context_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/context?project_path={project_path}"),
++        )
++        .await;
++        assert_eq!(context_response.status(), StatusCode::OK);
++        let context_json = response_json(context_response).await;
++        assert_eq!(context_json["count"], 0);
++        assert_eq!(context_json["entries"].as_array().unwrap().len(), 0);
++
++        let files_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/files?project_path={project_path}"),
++        )
++        .await;
++        assert_eq!(files_response.status(), StatusCode::OK);
++        let files_json = response_json(files_response).await;
++        assert_eq!(files_json["count"], 0);
++        assert_eq!(files_json["files"].as_array().unwrap().len(), 0);
++
++        let tail_response = authenticated_get(
++            app.clone(),
++            &format!("/api/ai-log/tail?project_path={project_path}"),
++        )
++        .await;
++        assert_eq!(tail_response.status(), StatusCode::OK);
++        let tail_json = response_json(tail_response).await;
++        assert_eq!(tail_json["count"], 0);
++        assert_eq!(tail_json["entries"].as_array().unwrap().len(), 0);
++
++        let recent_response = authenticated_get(
++            app,
++            &format!("/api/ai-log/recent?project_path={project_path}"),
++        )
++        .await;
++        assert_eq!(recent_response.status(), StatusCode::OK);
++        let recent_json = response_json(recent_response).await;
++        assert_eq!(recent_json["count"], 0);
++        assert_eq!(recent_json["entries"].as_array().unwrap().len(), 0);
++
++        let _ = fs::remove_dir_all(project_root);
++    }
++
++    #[tokio::test]
++    async fn ai_log_read_endpoints_clamp_and_apply_limit_behavior() {
++        let project_root = temp_project_root("endpoint-limit");
++        write_ai_log(
++            &project_root,
++            "{\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"summary\":\"line one latest\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"summary\":\"line two earliest\"}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"summary\":\"line three middle\"}\n",
++        );
++        let app = test_app_with_project(project_root.clone());
++
++        let list_response = authenticated_get(app.clone(), "/api/ai-log?limit=0").await;
++        assert_eq!(list_response.status(), StatusCode::OK);
++        let list_json = response_json(list_response).await;
++        assert_eq!(list_json.as_array().unwrap().len(), 1);
++        assert_eq!(list_json[0]["line_number"], 3);
++        assert_eq!(list_json[0]["value"]["summary"], "line three middle");
++
++        let context_response = authenticated_get(app.clone(), "/api/ai-log/context?limit=0").await;
++        assert_eq!(context_response.status(), StatusCode::OK);
++        let context_json = response_json(context_response).await;
++        assert_eq!(context_json["count"], 1);
++        assert_eq!(context_json["entries"][0]["summary"], "line one latest");
++
++        let tail_response = authenticated_get(app.clone(), "/api/ai-log/tail?limit=2").await;
++        assert_eq!(tail_response.status(), StatusCode::OK);
++        let tail_json = response_json(tail_response).await;
++        assert_eq!(tail_json["limit"], 2);
++        assert_eq!(tail_json["count"], 2);
++        assert_eq!(tail_json["entries"][0]["lineNumber"], 2);
++        assert_eq!(tail_json["entries"][0]["value"]["summary"], "line two earliest");
++        assert_eq!(tail_json["entries"][1]["lineNumber"], 3);
++        assert_eq!(tail_json["entries"][1]["value"]["summary"], "line three middle");
++
++        let recent_response = authenticated_get(app, "/api/ai-log/recent?limit=2").await;
++        assert_eq!(recent_response.status(), StatusCode::OK);
++        let recent_json = response_json(recent_response).await;
++        assert_eq!(recent_json["limit"], 2);
++        assert_eq!(recent_json["count"], 2);
++        assert_eq!(recent_json["entries"][0]["value"]["summary"], "line three middle");
++        assert_eq!(recent_json["entries"][1]["value"]["summary"], "line one latest");
++
++        let _ = fs::remove_dir_all(project_root);
++    }
+ 
+     #[tokio::test]
+     async fn ai_log_context_orders_entries_by_timestamp() {

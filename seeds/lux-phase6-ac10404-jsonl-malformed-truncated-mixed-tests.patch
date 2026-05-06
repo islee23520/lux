@@ -1,0 +1,143 @@
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -317,6 +317,54 @@ mod tests {
+         assert_eq!(values[1]["actor"], "opencode");
+     }
+ 
++    #[test]
++    fn ai_log_reader_skips_malformed_truncated_and_mixed_invalid_jsonl_files() {
++        let path = std::env::temp_dir().join(format!(
++            "lux-ai-log-malformed-truncated-mixed-{}.jsonl",
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap()
++                .as_nanos()
++        ));
++        fs::write(
++            &path,
++            concat!(
++                r#"{"timestampUtc":"2026-05-04T00:00:01Z","actor":"codex","summary":"valid before malformed"}"#,
++                "\n",
++                r#"{"timestampUtc":"2026-05-04T00:00:02Z","actor":"broken",,"summary":"malformed-secret"}"#,
++                "\n",
++                r#"{"timestampUtc":"2026-05-04T00:00:03Z","actor":"truncated","summary":"truncated-secret""#,
++                "\n",
++                r#"{"timestampUtc":"2026-05-04T00:00:04Z","actor":"opencode","summary":"valid after truncated"}"#,
++                "\n",
++                "not-json plain-invalid-secret\n",
++                r#"{"captured_at_utc":"2026-05-04T00:00:06Z","actor":"runtime","message":"valid after mixed invalid"}"#,
++                "\n",
++            ),
++        )
++        .unwrap();
++
++        let entries = read_log_entries(&path, &AiLogFilter::default()).unwrap();
++
++        assert_eq!(entries.len(), 3);
++        assert_eq!(entries[0].line_number, 1);
++        assert_eq!(entries[0].timestamp, "2026-05-04T00:00:01Z");
++        assert_eq!(entries[0].value["summary"], "valid before malformed");
++        assert_eq!(entries[1].line_number, 4);
++        assert_eq!(entries[1].timestamp, "2026-05-04T00:00:04Z");
++        assert_eq!(entries[1].value["summary"], "valid after truncated");
++        assert_eq!(entries[2].line_number, 6);
++        assert_eq!(entries[2].timestamp, "2026-05-04T00:00:06Z");
++        assert_eq!(entries[2].value["message"], "valid after mixed invalid");
++        assert!(
++            entries
++                .iter()
++                .all(|entry| !entry.value.to_string().contains("secret"))
++        );
++
++        let _ = fs::remove_file(path);
++    }
++
+     #[test]
+     fn ai_log_filter_applies_actor_category_event_type_and_tail_limit() {
+         let entries = parse_entries(Cursor::new(
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -144,6 +144,44 @@ fn ai_log_recent_json_filters_fixture_jsonl() {
+     assert_eq!(entries[1]["value"]["summary"], "third codex edit");
+ }
+ 
++#[test]
++fn ai_log_recent_json_skips_malformed_truncated_and_mixed_invalid_jsonl_files() {
++    let project_root = create_malformed_ai_log_fixture_project("lux-ai-log-malformed-mixed");
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "recent",
++            "--project-path",
++            project_root.to_str().expect("project path UTF-8"),
++            "--limit",
++            "10",
++            "--json",
++        ])
++        .output()
++        .expect("run lux ai-log recent against malformed fixture");
++
++    assert_command_success(&output, "lux ai-log recent malformed fixture");
++    let stdout = String::from_utf8(output.stdout).expect("recent JSON stdout is UTF-8");
++    assert!(!stdout.contains("malformed-secret"));
++    assert!(!stdout.contains("truncated-secret"));
++    assert!(!stdout.contains("plain-invalid-secret"));
++
++    let parsed: Value = serde_json::from_str(&stdout).expect("recent JSON");
++    assert_eq!(parsed["count"], 3);
++    let entries = parsed["entries"].as_array().expect("entries array");
++    assert_eq!(entries[0]["line_number"], 1);
++    assert_eq!(entries[0]["value"]["summary"], "valid before malformed");
++    assert_eq!(entries[1]["line_number"], 4);
++    assert_eq!(entries[1]["value"]["summary"], "valid after truncated");
++    assert_eq!(entries[2]["line_number"], 6);
++    assert_eq!(
++        entries[2]["value"]["message"],
++        "valid after mixed invalid"
++    );
++
++    let _ = fs::remove_dir_all(project_root);
++}
++
+ #[test]
+ fn ai_log_context_json_builds_continuation_context() {
+     let project_root = create_ai_log_fixture_project("lux-ai-log-context");
+@@ -2346,6 +2384,36 @@ fn create_ai_log_fixture_project(prefix: &str) -> std::path::PathBuf {
+     project_root
+ }
+ 
++fn create_malformed_ai_log_fixture_project(prefix: &str) -> std::path::PathBuf {
++    let nanos = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .unwrap()
++        .as_nanos();
++    let project_root = std::env::temp_dir()
++        .join(format!("{prefix}-{}-{nanos}", std::process::id()))
++        .join("Project");
++    let lux_directory = project_root.join(".lux");
++    fs::create_dir_all(&lux_directory).expect("create .lux");
++    fs::write(
++        lux_directory.join("ai-action-log.jsonl"),
++        concat!(
++            r#"{"timestampUtc":"2026-05-04T00:00:01Z","actor":"codex","category":"ai-action-log","source":"cli","action":"edit","eventType":"append","summary":"valid before malformed"}"#,
++            "\n",
++            r#"{"timestampUtc":"2026-05-04T00:00:02Z","actor":"broken","summary":,"detail":"malformed-secret"}"#,
++            "\n",
++            r#"{"timestampUtc":"2026-05-04T00:00:03Z","actor":"truncated","summary":"truncated-secret""#,
++            "\n",
++            r#"{"timestampUtc":"2026-05-04T00:00:04Z","actor":"codex","category":"ai-action-log","source":"cli","action":"edit","eventType":"append","summary":"valid after truncated"}"#,
++            "\n",
++            "not-json plain-invalid-secret\n",
++            r#"{"captured_at_utc":"2026-05-04T00:00:06Z","actor":"runtime","category":"gameplay","source":"runtime","action":"custom","event_type":"runtime.custom","message":"valid after mixed invalid"}"#,
++            "\n",
++        ),
++    )
++    .expect("write malformed AI log fixture");
++    project_root
++}
++
+ fn create_test_skill_source(name: &str) -> std::path::PathBuf {
+     let source = create_temp_dir(&format!("lux-skill-source-{name}"));
+     fs::write(

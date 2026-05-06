@@ -1,0 +1,127 @@
+diff --git a/RustGateway~/README.md b/RustGateway~/README.md
+--- a/RustGateway~/README.md
++++ b/RustGateway~/README.md
+@@ -58,6 +58,123 @@ The prototype streams JSON envelopes:
+ }
+ ```
+ 
++### Canonical AI Action Log Schema
++
++Phase 6 project event logs use one canonical JSON object per JSONL line. The
++schema is intentionally readable by humans and AI agents without a dedicated
++timeline UI, while still preserving structured payloads for editor hooks, AI
++work steps, and runtime gameplay events.
++
++```json
++{
++  "schemaVersion": 1,
++  "protocol": "lux.ai.action_log.v1",
++  "id": "018f0f8a1f7d4f8c93e5cdb71f2d6e5a",
++  "timestampUtc": "2026-05-04T00:00:00.0000000Z",
++  "projectPath": "/path/to/unity-project",
++  "source": "unity-editor",
++  "actor": "user",
++  "category": "editor",
++  "type": "selection.changed",
++  "summary": "Selection changed.",
++  "message": "Selection changed.",
++  "severity": "info",
++  "success": true,
++  "metadata": {
++    "correlationId": "corr-1"
++  },
++  "redactionMetadata": {
++    "policyVersion": "lux.redaction.v1",
++    "applied": false,
++    "redactedCount": 0,
++    "redactedFields": [],
++    "redactionClasses": []
++  },
++  "retentionMetadata": {
++    "policyVersion": "lux.retention.v1",
++    "policyName": "project-jsonl-30d-or-10000",
++    "lifecycleState": "active",
++    "retentionDays": 30,
++    "maxEntries": 10000,
++    "expiresAtUtc": "2026-06-03T00:00:00.0000000Z",
++    "cleanupEligible": false,
++    "cleanupReason": ""
++  },
++  "payload": {
++    "kind": "editor-action",
++    "eventType": "selection.changed",
++    "summary": "Selection changed.",
++    "status": "completed",
++    "attributes": {
++      "objectCount": 1
++    }
++  }
++}
++```
++
++Required top-level fields:
++
++| Field | Type | Description |
++| :--- | :--- | :--- |
++| `schemaVersion` | number | Canonical event schema version. Phase 6 writes `1`. |
++| `protocol` | string | Protocol identifier, currently `lux.ai.action_log.v1`. |
++| `id` | string | Stable per-event identifier. Use a GUID/UUID-style value or another producer-stable unique id. |
++| `timestampUtc` | string | UTC ISO-8601 timestamp captured at event creation time. |
++| `projectPath` or `projectId` | string | Project scope. JSONL files are project-scoped; CLI/API read responses must include `projectPath`, and event producers should write one of these when available. |
++| `source` | string | Producer such as `unity-editor`, `unity-runtime`, `codex`, `opencode`, or `lux-gateway`. |
++| `category` | string | Broad class such as `editor`, `ai-action-log`, `runtime`, `scene`, `tool`, `input`, `log`, `screenshot`, or `hierarchy`. |
++| `type` | string | Stable event type used for filtering, for example `selection.changed`, `ai.step.completed`, or `enemy_death`. |
++| `summary` | string | Short redacted human-readable summary for compact AI context. |
++| `message` | string | Redacted user-facing detail. May match `summary` for compact events. |
++| `payload` | object | Structured event-specific payload. Keep values as JSON types, not stringified JSON. |
++| `redactionMetadata` | object | Metadata proving redaction policy application without leaking original sensitive values. |
++| `retentionMetadata` | object | Metadata describing lifecycle and cleanup policy for project JSONL retention. |
++
++Optional top-level fields:
++
++| Field | Type | Description |
++| :--- | :--- | :--- |
++| `actor` | string | Initiator, for example `user`, `agent`, `codex`, `opencode`, or a tool name. |
++| `action` | string | Legacy-compatible action name. Prefer matching `type` for new events. |
++| `target` | string | Redacted target path, object name, scene name, asset id, or runtime entity id. |
++| `severity` | string | `debug`, `info`, `warning`, or `error`; defaults to `info` for Unity-originated records. |
++| `success` | boolean | Whether the step/action completed successfully. |
++| `status` | string | Producer state such as `started`, `completed`, `failed`, or `cancelled`. |
++| `tool` | string | Tool or skill name when the event is emitted by an AI/tooling workflow. |
++| `sessionId` | string | Session identifier for editor, AI, gateway, or runtime producer grouping. |
++| `correlationId` | string | Cross-event correlation id for a command, tool execution, or request. |
++| `metadata` | object | Small redacted scalar metadata for indexing and compatibility. |
++| `projectId` | string | Stable project identifier when `projectPath` is unavailable or intentionally suppressed. |
++
++Payload required fields:
++
++| Field | Type | Description |
++| :--- | :--- | :--- |
++| `kind` | string | One of `editor-action`, `ai-work-step`, `runtime-gameplay-event`, `tool-command`, or `gateway-signal`. |
++| `eventType` | string | Same semantic event type as top-level `type`, kept for payload-local readers. |
++| `summary` | string | Redacted payload-local summary. |
++
++Payload optional fields:
++
++| Field | Type | Description |
++| :--- | :--- | :--- |
++| `status` | string | Payload-local state, normally mirroring top-level `status` when present. |
++| `target` | string | Redacted payload-local target. |
++| `attributes` | object | Event-specific JSON attributes. Values may be strings, numbers, booleans, nulls, arrays, or nested objects after redaction. |
++
++Compatibility notes:
++
++- Older gateway stream envelopes use `schema_version`, `event_id`,
++  `captured_at_utc`, and `session_id`. Readers should continue accepting those
++  aliases and normalize them to `schemaVersion`, `id`, `timestampUtc`, and
++  `sessionId` for AI action log output.
++- Redaction must run before JSONL persistence, HTTP responses, and WebSocket
++  broadcasts. Redaction metadata may name classes such as `credential`,
++  `authorization-header`, `private-key`, `project-path`,
++  `gameplay-sensitive`, or `oversize-text`, but must not include raw values.
++- Retention metadata is required for persisted Phase 6 records so cleanup can
++  enforce both age-based and count-based policies without inspecting payloads.
++
+ Supported Phase 1 categories are `playmode`, `scene`, `log`, `tool`, `input`,
+ `screenshot`, and `hierarchy`. Some categories are skeleton/demo events in this
+ slice; production fidelity is deliberately deferred.

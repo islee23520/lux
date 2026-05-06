@@ -1,0 +1,63 @@
+diff --git a/RustGateway~/README.md b/RustGateway~/README.md
+--- a/RustGateway~/README.md
++++ b/RustGateway~/README.md
+@@ -103,6 +103,59 @@ Optional top-level fields:
+ | `metadata` | object | Small redacted scalar metadata for indexing and compatibility. |
+ | `projectId` | string | Stable project identifier when `projectPath` is unavailable or intentionally suppressed. |
+ 
++#### Event Naming Conventions
++
++`source`, `category`, and `type` are the primary fields used by CLI/API
++filters, compact AI context, and plain JSONL readers. Producers should keep
++these names stable, lowercase, and free of project-specific secrets. Do not put
++asset paths, player names, tokens, prompts, branch names, or machine-specific
++paths in these fields; use redacted `target`, `summary`, `message`, `metadata`,
++or `payload.attributes` when event-specific detail is needed.
++
++`source` identifies the producer, not the action. Use lowercase
++kebab-case names and prefer one of these stable values:
++
++| Source | Use when |
++| :--- | :--- |
++| `unity-editor` | The Unity Editor package emits the event from editor hooks, menu items, inspectors, or editor automation. |
++| `unity-runtime` | Play mode or player-side gameplay code emits the event through the runtime API or event channel. |
++| `codex` | Codex or an OMX/Ouroboros Codex lane records an AI work step. |
++| `opencode` | OpenCode records an AI work step or review result. |
++| `lux-gateway` | The Rust gateway, CLI, or HTTP server records a command, API, auth, or transport event. |
++| `lux-skill` | A packaged LUX skill records install, adaptation, compatibility, or context-slimming work. |
++
++`category` is a broad filter bucket. Use lowercase kebab-case and reuse an
++existing category before adding a new one:
++
++| Category | Examples |
++| :--- | :--- |
++| `editor` | Selection, hierarchy, play mode, scene, asset, inspector, or menu actions from Unity Editor code. |
++| `ai-action-log` | AI planning, tool execution, patching, verification, review, and summarized agent steps. |
++| `runtime` | Gameplay events emitted from play mode or player runtime code. |
++| `tool` | CLI, gateway, skill-manager, install, configuration, or utility commands. |
++| `log` | Unity log, gateway log, warning, exception, or diagnostic log events that are safe for AI context. |
++| `screenshot` | Screenshot capture, thumbnail, or visual-observation records. |
++| `hierarchy` | Scene hierarchy snapshots, diffs, and object tree observations. |
++
++`type` is the most specific stable event name and should be useful as a
++long-lived filter. Use dotted lowercase names for system-defined editor, AI,
++gateway, and skill events. Use snake_case for gameplay events when that is more
++natural for Unity gameplay code. Avoid embedding ids or timestamps in `type`.
++Prefer `domain.verb` or `domain.object.verb` for dotted names.
++
++Examples:
++
++| Event source | Category | Type | Payload kind |
++| :--- | :--- | :--- | :--- |
++| `unity-editor` | `editor` | `selection.changed` | `editor-action` |
++| `unity-editor` | `editor` | `scene.saved` | `editor-action` |
++| `codex` | `ai-action-log` | `ai.step.started` | `ai-work-step` |
++| `codex` | `ai-action-log` | `tool.apply_patch.completed` | `ai-work-step` |
++| `lux-gateway` | `tool` | `ai-log.read` | `tool-command` |
++| `lux-skill` | `tool` | `skill.adaptation.completed` | `tool-command` |
++| `unity-runtime` | `runtime` | `enemy_death` | `runtime-gameplay-event` |
++| `unity-runtime` | `runtime` | `quest_step_completed` | `runtime-gameplay-event` |
++
+ Payload required fields:
+ 
+ | Field | Type | Description |

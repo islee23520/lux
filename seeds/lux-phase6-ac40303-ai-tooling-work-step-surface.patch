@@ -1,0 +1,534 @@
+diff --git a/McpHelper~/src/ai-work-steps.ts b/McpHelper~/src/ai-work-steps.ts
+new file mode 100644
+index 0000000..5ec8a5a
+--- /dev/null
++++ b/McpHelper~/src/ai-work-steps.ts
+@@ -0,0 +1,356 @@
++import fs from 'node:fs/promises';
++import path from 'node:path';
++
++export const LUX_AI_WORK_STEPS_TOOL_NAME = 'lux_ai_work_steps';
++
++const PRIMARY_LOG_RELATIVE_PATH = path.join('.lux', 'ai-action-log.jsonl');
++const LEGACY_LOG_RELATIVE_PATH = path.join('UserSettings', 'LuxAiActionLog.jsonl');
++const LOG_PATH_ENV = 'LUX_AI_ACTION_LOG_PATH';
++const DEFAULT_LIMIT = 100;
++const MAX_LIMIT = 500;
++const REDACTED = '[REDACTED]';
++
++interface AiWorkStepsArguments {
++  limit?: number;
++}
++
++interface AiWorkStepSortKey {
++  timestampUtc: string;
++  sequence: number;
++  lineNumber: number;
++  id: string;
++}
++
++interface AiWorkStepEntry {
++  lineNumber: number;
++  timestampUtc: string;
++  sequence: number;
++  id: string;
++  actor: string;
++  source: string;
++  category: string;
++  type: string;
++  stepName: string;
++  status: string;
++  summary: string;
++  sortKey: AiWorkStepSortKey;
++  value: unknown;
++}
++
++interface AiWorkStepWarning {
++  lineNumber: number;
++  reason: string;
++}
++
++interface ResolvedLogPath {
++  path: string;
++  source: 'environment' | 'project' | 'legacy';
++}
++
++export interface AiWorkStepsReadResult {
++  schemaVersion: 1;
++  protocol: 'lux.ai_work_steps.read.v1';
++  surface: 'mcp';
++  projectPath: string;
++  path: string;
++  pathSource: ResolvedLogPath['source'];
++  limit: number;
++  count: number;
++  warningCount: number;
++  entries: AiWorkStepEntry[];
++  warnings: AiWorkStepWarning[];
++}
++
++export async function readProjectAiWorkSteps(projectRoot: string, argumentsValue: unknown): Promise<AiWorkStepsReadResult> {
++  const args = parseArguments(argumentsValue);
++  const resolvedPath = await resolveLogPath(projectRoot);
++  const { entries, warnings } = await readEntries(resolvedPath.path);
++  const limitedEntries = entries.length > args.limit ? entries.slice(entries.length - args.limit) : entries;
++  const redactedEntries = limitedEntries.map(redactEntry);
++  const redactedWarnings = warnings.map((warning) => ({
++    lineNumber: warning.lineNumber,
++    reason: redactText(warning.reason),
++  }));
++
++  return {
++    schemaVersion: 1,
++    protocol: 'lux.ai_work_steps.read.v1',
++    surface: 'mcp',
++    projectPath: projectRoot,
++    path: resolvedPath.path,
++    pathSource: resolvedPath.source,
++    limit: args.limit,
++    count: redactedEntries.length,
++    warningCount: redactedWarnings.length,
++    entries: redactedEntries,
++    warnings: redactedWarnings,
++  };
++}
++
++function parseArguments(argumentsValue: unknown): Required<AiWorkStepsArguments> {
++  if (argumentsValue === undefined || argumentsValue === null) {
++    return { limit: DEFAULT_LIMIT };
++  }
++
++  if (!isPlainObject(argumentsValue)) {
++    throw new Error('Lux AI work step arguments must be an object.');
++  }
++
++  const limit = argumentsValue.limit;
++  if (limit === undefined) {
++    return { limit: DEFAULT_LIMIT };
++  }
++
++  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
++    throw new Error('limit must be a positive integer.');
++  }
++
++  return { limit: Math.min(limit, MAX_LIMIT) };
++}
++
++async function resolveLogPath(projectRoot: string): Promise<ResolvedLogPath> {
++  const override = process.env[LOG_PATH_ENV];
++  if (override && override.trim().length > 0) {
++    return {
++      path: path.isAbsolute(override) ? override : path.join(projectRoot, override),
++      source: 'environment',
++    };
++  }
++
++  const primaryPath = path.join(projectRoot, PRIMARY_LOG_RELATIVE_PATH);
++  if (await fileExists(primaryPath)) {
++    return { path: primaryPath, source: 'project' };
++  }
++
++  const legacyPath = path.join(projectRoot, LEGACY_LOG_RELATIVE_PATH);
++  if (await fileExists(legacyPath)) {
++    return { path: legacyPath, source: 'legacy' };
++  }
++
++  return { path: primaryPath, source: 'project' };
++}
++
++async function fileExists(candidate: string): Promise<boolean> {
++  try {
++    const stat = await fs.stat(candidate);
++    return stat.isFile();
++  } catch (error) {
++    if (isNodeError(error) && error.code === 'ENOENT') {
++      return false;
++    }
++
++    throw error;
++  }
++}
++
++async function readEntries(logPath: string): Promise<{ entries: AiWorkStepEntry[]; warnings: AiWorkStepWarning[] }> {
++  let rawLog: string;
++  try {
++    rawLog = await fs.readFile(logPath, 'utf8');
++  } catch (error) {
++    if (isNodeError(error) && error.code === 'ENOENT') {
++      return { entries: [], warnings: [] };
++    }
++
++    throw error;
++  }
++
++  const entries: AiWorkStepEntry[] = [];
++  const warnings: AiWorkStepWarning[] = [];
++
++  rawLog.split(/\r?\n/).forEach((line, index) => {
++    const lineNumber = index + 1;
++    const trimmed = line.trim();
++    if (trimmed.length === 0) {
++      return;
++    }
++
++    let parsed: unknown;
++    try {
++      parsed = JSON.parse(trimmed);
++    } catch (error) {
++      warnings.push({
++        lineNumber,
++        reason: `line is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
++      });
++      return;
++    }
++
++    const entry = toWorkStepEntry(parsed, lineNumber);
++    if (entry) {
++      entries.push(entry);
++      return;
++    }
++
++    warnings.push({
++      lineNumber,
++      reason: 'line is not an AI work step record',
++    });
++  });
++
++  entries.sort(compareEntries);
++  return { entries, warnings };
++}
++
++function toWorkStepEntry(value: unknown, lineNumber: number): AiWorkStepEntry | undefined {
++  if (!isPlainObject(value) || !isAiWorkStepRecord(value)) {
++    return undefined;
++  }
++
++  const payload = isPlainObject(value.payload) ? value.payload : {};
++  const timestampUtc = stringValue(value.timestampUtc) ?? stringValue(value.captured_at_utc);
++  const id = stringValue(value.id) ?? stringValue(value.eventId) ?? `line-${lineNumber}`;
++  const stepName = stringValue(payload.stepName)
++    ?? stringValue(value.stepName)
++    ?? stringValue(value.action)
++    ?? stringValue(value.type)
++    ?? stringValue(value.eventType);
++
++  if (!timestampUtc || !stepName) {
++    return undefined;
++  }
++
++  const sequence = numberValue(isPlainObject(payload.ordering) ? payload.ordering.sequence : undefined)
++    ?? numberValue(value.sequence)
++    ?? lineNumber;
++  const status = stringValue(payload.status) ?? stringValue(value.status) ?? statusFromSuccess(value.success);
++  const summary = stringValue(payload.summary)
++    ?? stringValue(value.summary)
++    ?? stringValue(value.message)
++    ?? stringValue(value.description)
++    ?? '';
++  const source = stringValue(value.source) ?? '';
++  const actor = stringValue(value.actor) ?? '';
++  const category = stringValue(value.category) ?? '';
++  const type = stringValue(value.type) ?? stringValue(value.eventType) ?? stringValue(value.action) ?? stepName;
++  const sortKey = { timestampUtc, sequence, lineNumber, id };
++
++  return {
++    lineNumber,
++    timestampUtc,
++    sequence,
++    id,
++    actor,
++    source,
++    category,
++    type,
++    stepName,
++    status,
++    summary,
++    sortKey,
++    value,
++  };
++}
++
++function isAiWorkStepRecord(value: Record<string, unknown>): boolean {
++  const payload = isPlainObject(value.payload) ? value.payload : undefined;
++  if (payload?.kind === 'ai-work-step') {
++    return true;
++  }
++
++  const category = stringValue(value.category)?.toLowerCase() ?? '';
++  const source = stringValue(value.source)?.toLowerCase() ?? '';
++  const actor = stringValue(value.actor)?.toLowerCase() ?? '';
++
++  return category === 'ai-action-log'
++    || category === 'ai-tool'
++    || source.includes('ai-tool')
++    || source === 'codex'
++    || source === 'opencode'
++    || actor === 'codex'
++    || actor === 'opencode';
++}
++
++function compareEntries(left: AiWorkStepEntry, right: AiWorkStepEntry): number {
++  return compareString(left.sortKey.timestampUtc, right.sortKey.timestampUtc)
++    || left.sortKey.sequence - right.sortKey.sequence
++    || left.sortKey.lineNumber - right.sortKey.lineNumber
++    || compareString(left.sortKey.id, right.sortKey.id);
++}
++
++function redactEntry(entry: AiWorkStepEntry): AiWorkStepEntry {
++  return {
++    ...entry,
++    timestampUtc: redactText(entry.timestampUtc),
++    id: redactText(entry.id),
++    actor: redactText(entry.actor),
++    source: redactText(entry.source),
++    category: redactText(entry.category),
++    type: redactText(entry.type),
++    stepName: redactText(entry.stepName),
++    status: redactText(entry.status),
++    summary: redactText(entry.summary),
++    sortKey: {
++      ...entry.sortKey,
++      timestampUtc: redactText(entry.sortKey.timestampUtc),
++      id: redactText(entry.sortKey.id),
++    },
++    value: redactJsonValue(entry.value),
++  };
++}
++
++function redactJsonValue(value: unknown, key = ''): unknown {
++  if (typeof value === 'string') {
++    return isSensitiveKey(key) ? REDACTED : redactText(value);
++  }
++
++  if (Array.isArray(value)) {
++    return value.map((item) => redactJsonValue(item));
++  }
++
++  if (isPlainObject(value)) {
++    return Object.fromEntries(
++      Object.entries(value).map(([entryKey, entryValue]) => [
++        entryKey,
++        isSensitiveKey(entryKey) ? REDACTED : redactJsonValue(entryValue, entryKey),
++      ]),
++    );
++  }
++
++  return value;
++}
++
++function redactText(text: string): string {
++  return text
++    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, REDACTED)
++    .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;"'}]+/gi, `$1${REDACTED}`)
++    .replace(/\bbearer\s+[^\s,;"'}]+/gi, REDACTED)
++    .replace(/\btoken=[^\s,;"'}]+/gi, `token=${REDACTED}`)
++    .replace(/\b(secret-token|api[_-]?key=[^\s,;"'}]+|password=[^\s,;"'}]+)/gi, REDACTED);
++}
++
++function isSensitiveKey(key: string): boolean {
++  return /authorization|credential|password|secret|token|api[_-]?key/i.test(key);
++}
++
++function statusFromSuccess(value: unknown): string {
++  if (value === true) {
++    return 'completed';
++  }
++
++  if (value === false) {
++    return 'failed';
++  }
++
++  return 'unknown';
++}
++
++function compareString(left: string, right: string): number {
++  return left < right ? -1 : left > right ? 1 : 0;
++}
++
++function stringValue(value: unknown): string | undefined {
++  return typeof value === 'string' ? value : undefined;
++}
++
++function numberValue(value: unknown): number | undefined {
++  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
++}
++
++function isPlainObject(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++
++function isNodeError(error: unknown): error is NodeJS.ErrnoException {
++  return error instanceof Error && 'code' in error;
++}
+diff --git a/McpHelper~/src/server.ts b/McpHelper~/src/server.ts
+index 359f2fa..f5bb1cb 100644
+--- a/McpHelper~/src/server.ts
++++ b/McpHelper~/src/server.ts
+@@ -1,6 +1,7 @@
+ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+ import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
++import { LUX_AI_WORK_STEPS_TOOL_NAME, readProjectAiWorkSteps } from './ai-work-steps.js';
+ import { logToStderr } from './logger.js';
+ import { findUnityProjectRoot } from './project-root.js';
+ import {
+@@ -62,6 +63,30 @@ export function createServer(config: HelperServerConfig = {}): Server {
+           openWorldHint: false,
+         },
+       },
++      {
++        name: LUX_AI_WORK_STEPS_TOOL_NAME,
++        title: 'Lux AI Work Steps',
++        description: 'Reads ordered AI work step events from the project-scoped Lux action log without requiring Unity UI access.',
++        inputSchema: {
++          type: 'object',
++          properties: {
++            limit: {
++              type: 'integer',
++              minimum: 1,
++              maximum: 500,
++              default: 100,
++            },
++          },
++          required: [],
++          additionalProperties: false,
++        },
++        annotations: {
++          readOnlyHint: true,
++          destructiveHint: false,
++          idempotentHint: true,
++          openWorldHint: false,
++        },
++      },
+       {
+         name: LUX_EXECUTE_SHELL_TOOL_NAME,
+         title: 'Lux Execute Shell',
+@@ -138,6 +161,7 @@ function isKnownTool(toolName: string): boolean {
+   return toolName === UNITY_SELECTED_FILE_CONTEXT_TOOL_NAME
+     || toolName === LUX_CONTEXT_TOOL_NAME
+     || toolName === LUX_EXECUTE_SHELL_TOOL_NAME
++    || toolName === LUX_AI_WORK_STEPS_TOOL_NAME
+     || toolName === LUX_EXECUTE_GIT_TOOL_NAME;
+ }
+ 
+@@ -148,6 +172,8 @@ async function callUnityTool(projectRoot: string, toolName: string, argumentsVal
+       return getSelectedFileContextFromUnity(projectRoot);
+     case LUX_CONTEXT_TOOL_NAME:
+       return getLuxContextFromUnity(projectRoot);
++    case LUX_AI_WORK_STEPS_TOOL_NAME:
++      return readProjectAiWorkSteps(projectRoot, argumentsValue);
+     case LUX_EXECUTE_SHELL_TOOL_NAME:
+       return executeLuxShellInUnity(projectRoot, parseAutomationArguments(argumentsValue, 'commandText'));
+     case LUX_EXECUTE_GIT_TOOL_NAME:
+diff --git a/McpHelper~/test/server.test.ts b/McpHelper~/test/server.test.ts
+index a35fa0b..f6bce1c 100644
+--- a/McpHelper~/test/server.test.ts
++++ b/McpHelper~/test/server.test.ts
+@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+ import { createServer } from '../src/server.js';
++import { LUX_AI_WORK_STEPS_TOOL_NAME } from '../src/ai-work-steps.js';
+ import {
+   LUX_CONTEXT_COMMAND,
+   LUX_CONTEXT_TOOL_NAME,
+@@ -167,6 +168,7 @@ test('tools/list exposes Unity context and Lux tools', async () => {
+       assert.deepEqual(toolNames, [
+         UNITY_SELECTED_FILE_CONTEXT_TOOL_NAME,
+         LUX_CONTEXT_TOOL_NAME,
++        LUX_AI_WORK_STEPS_TOOL_NAME,
+         'lux_execute_shell',
+         'lux_execute_git',
+       ]);
+@@ -175,6 +177,91 @@ test('tools/list exposes Unity context and Lux tools', async () => {
+   });
+ });
+ 
++test('tools/call reads ordered AI work steps from project log without Unity TCP discovery', async () => {
++  await withTempProject(async (projectRoot) => {
++    const logDirectory = path.join(projectRoot, '.lux');
++    fs.mkdirSync(logDirectory, { recursive: true });
++    fs.writeFileSync(
++      path.join(logDirectory, 'ai-action-log.jsonl'),
++      [
++        JSON.stringify({
++          timestampUtc: '2026-05-04T00:00:03Z',
++          id: 'ai-step-third',
++          source: 'codex',
++          actor: 'codex',
++          category: 'ai-action-log',
++          type: 'tool.test.completed',
++          summary: 'third token=raw-secret',
++          payload: {
++            kind: 'ai-work-step',
++            eventType: 'tool.test.completed',
++            stepName: 'test',
++            status: 'completed',
++            summary: 'third token=raw-secret',
++            ordering: { sequence: 3 },
++            credentials: { token: 'raw-secret' },
++          },
++        }),
++        'not-json',
++        JSON.stringify({
++          timestampUtc: '2026-05-04T00:00:01Z',
++          id: 'ai-step-first',
++          source: 'codex',
++          actor: 'codex',
++          category: 'ai-action-log',
++          type: 'tool.read.completed',
++          payload: { kind: 'ai-work-step', stepName: 'read', status: 'completed', summary: 'first', ordering: { sequence: 1 } },
++        }),
++        JSON.stringify({
++          timestampUtc: '2026-05-04T00:00:02Z',
++          id: 'ai-step-second',
++          source: 'codex',
++          actor: 'codex',
++          category: 'ai-action-log',
++          type: 'tool.patch.completed',
++          payload: { kind: 'ai-work-step', stepName: 'apply_patch', status: 'completed', summary: 'second', ordering: { sequence: 2 } },
++        }),
++        JSON.stringify({
++          timestampUtc: '2026-05-04T00:00:04Z',
++          id: 'editor-only',
++          source: 'unity-editor',
++          actor: 'user',
++          category: 'editor',
++          action: 'selection.changed',
++          message: 'editor-only',
++        }),
++      ].join('\n'),
++      'utf8',
++    );
++    const pair = await connectMcpServer(projectRoot);
++
++    try {
++      const result = await pair.client.callTool({ name: LUX_AI_WORK_STEPS_TOOL_NAME, arguments: { limit: 2 } });
++      const content = (result as { content: Array<{ type: string; text?: string }> }).content;
++      const parsed = JSON.parse(content[0]?.text ?? '{}');
++      const serialized = content[0]?.text ?? '';
++
++      assert.equal(parsed.protocol, 'lux.ai_work_steps.read.v1');
++      assert.equal(parsed.surface, 'mcp');
++      assert.equal(parsed.projectPath, projectRoot);
++      assert.equal(parsed.pathSource, 'project');
++      assert.equal(parsed.limit, 2);
++      assert.equal(parsed.count, 2);
++      assert.equal(parsed.warningCount, 2);
++      assert.deepEqual(parsed.entries.map((entry: { id: string }) => entry.id), ['ai-step-second', 'ai-step-third']);
++      assert.equal(parsed.entries[0].stepName, 'apply_patch');
++      assert.equal(parsed.entries[1].summary, 'third token=[REDACTED]');
++      assert.equal(parsed.entries[1].value.payload.credentials, '[REDACTED]');
++      assert.equal(parsed.warnings[0].lineNumber, 2);
++      assert.equal(parsed.warnings[1].lineNumber, 5);
++      assert.ok(!serialized.includes('raw-secret'));
++      assert.ok(!serialized.includes('editor-only'));
++    } finally {
++      await pair.close();
++    }
++  });
++});
++
+ test('tools/call sends one Lux context TCP command and returns context JSON text', async () => {
+   await withTempProject(async (projectRoot) => {
+     const luxContext = {

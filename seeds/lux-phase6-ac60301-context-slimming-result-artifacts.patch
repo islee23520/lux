@@ -1,0 +1,293 @@
+--- a/RustGateway~/src/main.rs
++++ b/RustGateway~/src/main.rs
+@@ -991,6 +991,7 @@
+                 )
+             },
+         )?;
++        write_context_slimming_artifacts(&target_dir, adaptation)?;
+     }
+ 
+     if args.json {
+@@ -1168,6 +1169,8 @@
+             name
+         );
+     }
++    let skill_md_text = fs::read_to_string(&skill_md_path)
++        .with_context(|| format!("failed to read {}", skill_md_path.display()))?;
+ 
+     let mut checks = Vec::new();
+     let assets_dir = project_root.join("Assets");
+@@ -1226,17 +1229,232 @@
+         )),
+     }
+ 
++    let context_slimming = build_skill_context_slimming_result(
++        name,
++        source_dir,
++        &project_root,
++        &manifest,
++        &skill_md_text,
++    );
++
+     Ok(json!({
+         "schema_version": 1,
+         "protocol": "lux.skill.adaptation.v1",
+         "skill_name": name,
+         "source": source,
+         "project_root": project_root,
++        "context_slimming": context_slimming,
+         "checks": checks,
+         "warnings": warnings,
+     }))
++}
++
++fn build_skill_context_slimming_result(
++    name: &str,
++    source_dir: &Path,
++    project_root: &Path,
++    manifest: &SkillManifest,
++    skill_md_text: &str,
++) -> Value {
++    const SKILL_PREVIEW_LINES: usize = 24;
++
++    let manifest_path = source_dir.join("manifest.json");
++    let skill_md_path = source_dir.join("SKILL.md");
++    let reference_paths = list_skill_reference_paths(source_dir);
++    let source_bytes = file_size(&manifest_path)
++        + file_size(&skill_md_path)
++        + reference_paths
++            .iter()
++            .map(|relative_path| file_size(&source_dir.join(relative_path)))
++            .sum::<u64>();
++    let preview = preview_lines(skill_md_text, SKILL_PREVIEW_LINES);
++    let retained_preview_chars: usize = manifest.description.len()
++        + manifest
++            .display_name
++            .as_ref()
++            .map(|display_name| display_name.len())
++            .unwrap_or_default()
++        + preview.iter().map(String::len).sum::<usize>();
++    let deferred_references = reference_paths
++        .iter()
++        .map(|path| {
++            json!({
++                "path": path,
++                "reason": "reference content is loaded on demand after adaptation instead of being placed in the default prompt context",
++                "byte_size": file_size(&source_dir.join(path)),
++            })
++        })
++        .collect::<Vec<_>>();
++    let included_sources = vec![
++        json!({
++            "path": "manifest.json",
++            "role": "skill_identity",
++            "reason": "compact manifest fields identify the adapted skill and compatibility envelope",
++            "byte_size": file_size(&manifest_path),
++        }),
++        json!({
++            "path": "SKILL.md",
++            "role": "primary_instructions_preview",
++            "reason": "only the leading instruction lines are retained in the slimmed default context",
++            "byte_size": file_size(&skill_md_path),
++            "retained_preview_lines": preview.len(),
++        }),
++    ];
++
++    json!({
++        "schema": "lux.skill.context_slimming_result.v1",
++        "skill_name": name,
++        "project_root": project_root,
++        "mode": "adapted_skill_generation",
++        "artifacts": {
++            "json": "lux-context-slimming.json",
++            "markdown": "lux-context-slimming.md",
++        },
++        "rules": {
++            "skill_md_preview_lines": SKILL_PREVIEW_LINES,
++            "reference_policy": "defer_reference_bodies",
++            "default_context_policy": "manifest_summary_plus_skill_preview",
++        },
++        "slimmed_context": {
++            "manifest": {
++                "name": &manifest.name,
++                "version": &manifest.version,
++                "description": &manifest.description,
++                "displayName": &manifest.display_name,
++                "luxVersion": &manifest.lux_version,
++                "type": &manifest.skill_type,
++                "keywords": &manifest.keywords,
++            },
++            "skill_md_preview": preview,
++            "deferred_reference_paths": reference_paths,
++        },
++        "included_sources": included_sources,
++        "excluded_sources": deferred_references,
++        "metrics": {
++            "source_bytes": source_bytes,
++            "retained_preview_chars": retained_preview_chars,
++            "deferred_reference_count": reference_paths.len(),
++            "estimated_reduction_percent": estimated_reduction_percent(
++                source_bytes,
++                retained_preview_chars as u64
++            ),
++        },
++        "summary": [
++            "Use the manifest summary and SKILL.md preview as the default adapted-skill context.",
++            "Load reference files only when the active task needs their specific detail.",
++            "Keep generated context-slimming artifacts beside lux-adaptation.json for CLI/API readers."
++        ],
++    })
++}
++
++fn write_context_slimming_artifacts(target_dir: &Path, adaptation: &Value) -> anyhow::Result<()> {
++    let Some(context_slimming) = adaptation.get("context_slimming") else {
++        return Ok(());
++    };
++    let json_path = target_dir.join("lux-context-slimming.json");
++    fs::write(&json_path, serde_json::to_string_pretty(context_slimming)?).with_context(|| {
++        format!(
++            "failed to write context slimming artifact {}",
++            json_path.display()
++        )
++    })?;
++
++    let markdown_path = target_dir.join("lux-context-slimming.md");
++    fs::write(
++        &markdown_path,
++        render_context_slimming_markdown(context_slimming),
++    )
++    .with_context(|| {
++        format!(
++            "failed to write context slimming artifact {}",
++            markdown_path.display()
++        )
++    })?;
++    Ok(())
++}
++
++fn render_context_slimming_markdown(context_slimming: &Value) -> String {
++    let skill_name = context_slimming
++        .get("skill_name")
++        .and_then(Value::as_str)
++        .unwrap_or("unknown-skill");
++    let source_bytes = context_slimming
++        .get("metrics")
++        .and_then(|metrics| metrics.get("source_bytes"))
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let retained_preview_chars = context_slimming
++        .get("metrics")
++        .and_then(|metrics| metrics.get("retained_preview_chars"))
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let estimated_reduction_percent = context_slimming
++        .get("metrics")
++        .and_then(|metrics| metrics.get("estimated_reduction_percent"))
++        .and_then(Value::as_u64)
++        .unwrap_or_default();
++    let deferred_references = context_slimming
++        .get("slimmed_context")
++        .and_then(|context| context.get("deferred_reference_paths"))
++        .and_then(Value::as_array)
++        .map(|references| {
++            references
++                .iter()
++                .filter_map(Value::as_str)
++                .map(|path| format!("- {path}\n"))
++                .collect::<String>()
++        })
++        .filter(|text| !text.is_empty())
++        .unwrap_or_else(|| "- none\n".to_string());
++
++    format!(
++        "# Lux Context Slimming Result\n\nSkill: {skill_name}\nSchema: lux.skill.context_slimming_result.v1\n\n## Metrics\n- Source bytes: {source_bytes}\n- Retained preview chars: {retained_preview_chars}\n- Estimated reduction percent: {estimated_reduction_percent}\n\n## Deferred References\n{deferred_references}"
++    )
+ }
+ 
++fn list_skill_reference_paths(source_dir: &Path) -> Vec<String> {
++    let references_dir = source_dir.join("references");
++    let mut paths = Vec::new();
++    if let Ok(entries) = fs::read_dir(references_dir) {
++        for entry in entries.flatten() {
++            let Ok(file_type) = entry.file_type() else {
++                continue;
++            };
++            if !file_type.is_file() {
++                continue;
++            }
++            let path = entry.path();
++            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
++                continue;
++            };
++            paths.push(format!("references/{file_name}"));
++        }
++    }
++    paths.sort();
++    paths
++}
++
++fn preview_lines(text: &str, limit: usize) -> Vec<String> {
++    text.lines()
++        .take(limit)
++        .map(str::trim_end)
++        .map(str::to_string)
++        .collect()
++}
++
++fn file_size(path: &Path) -> u64 {
++    fs::metadata(path)
++        .map(|metadata| metadata.len())
++        .unwrap_or_default()
++}
++
++fn estimated_reduction_percent(source_bytes: u64, retained_bytes: u64) -> u64 {
++    if source_bytes == 0 || retained_bytes >= source_bytes {
++        return 0;
++    }
++    ((source_bytes - retained_bytes) * 100) / source_bytes
++}
++
+ fn install_skill_from_source(source: &str, target_dir: &Path) -> anyhow::Result<()> {
+     if is_url_source(source) {
+         eprintln!("Note: URL-based skill install/update is a placeholder");
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -388,7 +388,38 @@
+     assert!(installed_dir.join("references/usage.md").is_file());
+     let adaptation_path = installed_dir.join("lux-adaptation.json");
+     assert!(adaptation_path.is_file());
++    assert_eq!(
++        install_json["adaptation_metadata"]["context_slimming"]["artifacts"]["json"],
++        "lux-context-slimming.json"
++    );
++    assert_eq!(
++        install_json["adaptation_metadata"]["context_slimming"]["artifacts"]["markdown"],
++        "lux-context-slimming.md"
++    );
+ 
++    let context_slimming_path = installed_dir.join("lux-context-slimming.json");
++    assert!(context_slimming_path.is_file());
++    let context_slimming: Value = serde_json::from_str(
++        &fs::read_to_string(&context_slimming_path).expect("read context slimming artifact"),
++    )
++    .expect("context slimming JSON");
++    assert_eq!(
++        context_slimming["schema"],
++        "lux.skill.context_slimming_result.v1"
++    );
++    assert_eq!(context_slimming["skill_name"], "smoke-adapt-skill");
++    assert_eq!(
++        context_slimming["slimmed_context"]["deferred_reference_paths"][0],
++        "references/usage.md"
++    );
++    assert!(
++        context_slimming["metrics"]["source_bytes"]
++            .as_u64()
++            .unwrap()
++            > 0
++    );
++    assert!(installed_dir.join("lux-context-slimming.md").is_file());
++
+     let info = Command::new(env!("CARGO_BIN_EXE_lux"))
+         .args(["skill", "info", "smoke-adapt-skill", "--json"])
+         .current_dir(&project)

@@ -1,0 +1,104 @@
+diff --git a/RustGateway~/tests/gateway_cli_smoke.rs b/RustGateway~/tests/gateway_cli_smoke.rs
+--- a/RustGateway~/tests/gateway_cli_smoke.rs
++++ b/RustGateway~/tests/gateway_cli_smoke.rs
+@@ -2328,6 +2328,100 @@ fn assert_command_success(output: &std::process::Output, label: &str) {
+     );
+ }
+ 
++#[test]
++fn ai_log_recent_json_reads_unity_editor_originated_project_jsonl_event() {
++    let nanos = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .expect("system time after Unix epoch")
++        .as_nanos();
++    let project_root = std::env::temp_dir()
++        .join(format!(
++            "lux-editor-origin-cli-smoke-{}-{nanos}",
++            std::process::id()
++        ))
++        .join("Project");
++    fs::create_dir_all(project_root.join("Assets")).expect("create Unity Assets marker");
++    fs::create_dir_all(project_root.join("ProjectSettings")).expect("create Unity ProjectSettings marker");
++    let user_settings = project_root.join("UserSettings");
++    fs::create_dir_all(&user_settings).expect("create UserSettings log directory");
++    let log_path = user_settings.join("LuxAiActionLog.jsonl");
++    fs::write(
++        &log_path,
++        concat!(
++            r#"{"schemaVersion":1,"protocol":"lux.ai.action_log.v1","id":"editor-selection-1","timestampUtc":"2026-05-04T00:00:01Z","source":"unity-editor","actor":"user","category":"editor","type":"selection.changed","action":"selection.changed","eventType":"selection.changed","target":"Scene/Main Camera","summary":"Unity selection changed.","message":"Unity selection changed.","severity":"info","success":true,"metadata":{"hookName":"Selection.selectionChanged","eventType":"selection.changed","eventSource":"unity-editor","eventCategory":"editor","status":"completed","objectCount":"1","apiKey":"[REDACTED]"},"redactionMetadata":{"policyVersion":"lux.redaction.v1","applied":true,"redactedCount":1,"redactedFields":["metadata.<sensitive-key>"],"redactionClasses":["credential"]},"payload":{"kind":"editor-action","eventType":"selection.changed","summary":"Unity selection changed.","status":"completed","target":"Scene/Main Camera","attributes":{"hookName":"Selection.selectionChanged","eventSource":"unity-editor","eventCategory":"editor","objectCount":1,"apiKey":"[REDACTED]"}}}"#,
++            "\n",
++        ),
++    )
++    .expect("write Unity Editor-originated JSONL event");
++
++    let persisted_jsonl = fs::read_to_string(&log_path).expect("read Unity Editor JSONL event");
++    assert!(persisted_jsonl.contains("\"source\":\"unity-editor\""));
++    assert!(persisted_jsonl.contains("\"category\":\"editor\""));
++    assert!(persisted_jsonl.contains("\"payload\":{\"kind\":\"editor-action\""));
++    assert!(persisted_jsonl.contains("\"apiKey\":\"[REDACTED]\""));
++    assert!(!persisted_jsonl.contains("secret-token"));
++
++    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
++        .args([
++            "ai-log",
++            "recent",
++            "--project-path",
++            project_root.to_str().expect("project path UTF-8"),
++            "--limit",
++            "5",
++            "--json",
++            "--category",
++            "editor",
++            "--source",
++            "unity-editor",
++            "--event-type",
++            "selection.changed",
++        ])
++        .output()
++        .expect("run lux ai-log recent for Unity Editor-originated event");
++
++    assert_command_success(&output, "lux ai-log recent Unity Editor-originated event");
++    let parsed: Value =
++        serde_json::from_slice(&output.stdout).expect("Unity Editor-originated CLI JSON");
++    assert_eq!(parsed["projectPath"], project_root.display().to_string());
++    assert_eq!(parsed["count"], 1);
++
++    let entries = parsed["entries"].as_array().expect("entries array");
++    assert_eq!(entries.len(), 1);
++    assert_eq!(entries[0]["timestamp"], "2026-05-04T00:00:01Z");
++    assert_eq!(entries[0]["value"]["id"], "editor-selection-1");
++    assert_eq!(entries[0]["value"]["source"], "unity-editor");
++    assert_eq!(entries[0]["value"]["actor"], "user");
++    assert_eq!(entries[0]["value"]["category"], "editor");
++    assert_eq!(entries[0]["value"]["action"], "selection.changed");
++    assert_eq!(entries[0]["value"]["eventType"], "selection.changed");
++    assert_eq!(entries[0]["value"]["summary"], "Unity selection changed.");
++    assert_eq!(
++        entries[0]["value"]["metadata"]["hookName"],
++        "Selection.selectionChanged"
++    );
++    assert_eq!(
++        entries[0]["value"]["metadata"]["eventSource"],
++        "unity-editor"
++    );
++    assert_eq!(
++        entries[0]["value"]["payload"]["kind"],
++        "editor-action"
++    );
++    assert_eq!(
++        entries[0]["value"]["payload"]["target"],
++        "Scene/Main Camera"
++    );
++    assert_eq!(
++        entries[0]["value"]["payload"]["attributes"]["objectCount"],
++        1
++    );
++
++    let serialized = serde_json::to_string(&parsed).unwrap();
++    assert!(serialized.contains("[REDACTED]"));
++    assert!(!serialized.contains("secret-token"));
++}
++
+ fn create_ai_log_fixture_project(prefix: &str) -> std::path::PathBuf {
+     let project_root = create_temp_dir(prefix).join("Project");
+     let lux_directory = project_root.join(".lux");

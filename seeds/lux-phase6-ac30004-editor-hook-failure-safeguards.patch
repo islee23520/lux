@@ -1,0 +1,607 @@
+diff --git a/LuxEditor/LuxAiActionLogBroadcaster.cs b/LuxEditor/LuxAiActionLogBroadcaster.cs
+--- a/LuxEditor/LuxAiActionLogBroadcaster.cs
++++ b/LuxEditor/LuxAiActionLogBroadcaster.cs
+@@ -10,6 +10,39 @@
+ 
+ namespace UnityEditor
+ {
++    public sealed class LuxAiActionLogInstrumentationDiagnostics
++    {
++        public LuxAiActionLogInstrumentationDiagnostics(
++            int hookFailureCount,
++            int logFailureCount,
++            int broadcastFailureCount,
++            int flushFailureCount,
++            int timeProviderFailureCount,
++            string lastFailureStage,
++            string lastFailureHook,
++            string lastFailureMessage)
++        {
++            HookFailureCount = hookFailureCount;
++            LogFailureCount = logFailureCount;
++            BroadcastFailureCount = broadcastFailureCount;
++            FlushFailureCount = flushFailureCount;
++            TimeProviderFailureCount = timeProviderFailureCount;
++            LastFailureStage = lastFailureStage ?? string.Empty;
++            LastFailureHook = lastFailureHook ?? string.Empty;
++            LastFailureMessage = lastFailureMessage ?? string.Empty;
++        }
++
++        public int HookFailureCount { get; }
++        public int LogFailureCount { get; }
++        public int BroadcastFailureCount { get; }
++        public int FlushFailureCount { get; }
++        public int TimeProviderFailureCount { get; }
++        public string LastFailureStage { get; }
++        public string LastFailureHook { get; }
++        public string LastFailureMessage { get; }
++        public int TotalFailureCount => HookFailureCount + LogFailureCount + BroadcastFailureCount + FlushFailureCount + TimeProviderFailureCount;
++    }
++
+     [InitializeOnLoad]
+     public static class LuxAiActionLogBroadcaster
+     {
+@@ -21,6 +54,7 @@
+         const int MaxQueuedBroadcasts = 256;
+         const int MaxQueuedEditorEvents = 512;
+         const int MaxMetadataValueLength = 512;
++        const int MaxDiagnosticMessageLength = 256;
+         const string EditorActor = "user";
+         const string EditorSource = "unity-editor";
+         const string EditorCategory = "editor";
+@@ -40,6 +74,14 @@
+         static double nextSelectionRecordAt = -1.0;
+         static double nextConsoleSummaryAt = -1.0;
+         static bool selectionDirty;
++        static int hookFailureCount;
++        static int logFailureCount;
++        static int broadcastFailureCount;
++        static int flushFailureCount;
++        static int timeProviderFailureCount;
++        static string lastFailureStage = string.Empty;
++        static string lastFailureHook = string.Empty;
++        static string lastFailureMessage = string.Empty;
+ 
+         static LuxAiActionLogBroadcaster()
+         {
+@@ -190,7 +232,15 @@
+         public static void Flush()
+         {
+             DrainEditorEvents(int.MaxValue);
+-            log.Flush();
++            try
++            {
++                log.Flush();
++            }
++            catch (Exception exception)
++            {
++                RecordInstrumentationFailure("flush", "LuxAiActionLog.Flush", exception);
++            }
++
+             PumpBroadcasts();
+         }
+ 
+@@ -205,6 +255,7 @@
+             selectionDirty = false;
+             nextSelectionRecordAt = -1.0;
+             nextConsoleSummaryAt = -1.0;
++            ResetInstrumentationDiagnostics();
+             lock (Sync)
+             {
+                 PendingBroadcasts.Clear();
+@@ -244,8 +295,34 @@
+             EnqueueEditorHookEvent(hookName, eventType, target, message, status, metadata, severity, success);
+         }
+ 
++        public static void RunEditorHookForTests(string hookName, Action action)
++        {
++            GuardEditorHook(hookName, action);
++        }
++
++        public static LuxAiActionLogInstrumentationDiagnostics InstrumentationDiagnostics()
++        {
++            lock (Sync)
++            {
++                return new LuxAiActionLogInstrumentationDiagnostics(
++                    hookFailureCount,
++                    logFailureCount,
++                    broadcastFailureCount,
++                    flushFailureCount,
++                    timeProviderFailureCount,
++                    lastFailureStage,
++                    lastFailureHook,
++                    lastFailureMessage);
++            }
++        }
++
+         static void Pump()
+         {
++            GuardEditorHook("EditorApplication.update", PumpEditorInstrumentation);
++        }
++
++        static void PumpEditorInstrumentation()
++        {
+             double now = Now();
+             if (selectionDirty && now >= nextSelectionRecordAt)
+             {
+@@ -264,8 +341,13 @@
+ 
+         static void OnSelectionChanged()
+         {
+-            selectionDirty = true;
+-            nextSelectionRecordAt = Now() + SelectionDebounceSeconds;
++            GuardEditorHook(
++                "Selection.selectionChanged",
++                () =>
++                {
++                    selectionDirty = true;
++                    nextSelectionRecordAt = Now() + SelectionDebounceSeconds;
++                });
+         }
+ 
+         static void RecordSelectionChanged()
+@@ -285,87 +367,116 @@
+ 
+         static void OnPlayModeStateChanged(PlayModeStateChange state)
+         {
+-            EnqueueEditorHookEvent(
++            GuardEditorHook(
+                 "EditorApplication.playModeStateChanged",
+-                "playmode.state_changed",
+-                state.ToString(),
+-                "Unity playmode state changed.",
+-                "completed",
+-                new Dictionary<string, string> { ["state"] = state.ToString() });
++                () => EnqueueEditorHookEvent(
++                    "EditorApplication.playModeStateChanged",
++                    "playmode.state_changed",
++                    state.ToString(),
++                    "Unity playmode state changed.",
++                    "completed",
++                    new Dictionary<string, string> { ["state"] = state.ToString() }));
+         }
+ 
+         static void OnHierarchyChanged()
+         {
+-            EnqueueEditorHookEvent("EditorApplication.hierarchyChanged", "hierarchy.changed", "Hierarchy", "Unity hierarchy changed.", "completed");
++            GuardEditorHook(
++                "EditorApplication.hierarchyChanged",
++                () => EnqueueEditorHookEvent("EditorApplication.hierarchyChanged", "hierarchy.changed", "Hierarchy", "Unity hierarchy changed.", "completed"));
+         }
+ 
+         static void OnProjectChanged()
+         {
+-            EnqueueEditorHookEvent("EditorApplication.projectChanged", "project.changed", "Project", "Unity project assets changed.", "completed");
++            GuardEditorHook(
++                "EditorApplication.projectChanged",
++                () => EnqueueEditorHookEvent("EditorApplication.projectChanged", "project.changed", "Project", "Unity project assets changed.", "completed"));
+         }
+ 
+         static void OnUndoRedoPerformed()
+         {
+-            EnqueueEditorHookEvent("Undo.undoRedoPerformed", "undo_redo.performed", "Undo", "Unity undo or redo performed.", "completed");
++            GuardEditorHook(
++                "Undo.undoRedoPerformed",
++                () => EnqueueEditorHookEvent("Undo.undoRedoPerformed", "undo_redo.performed", "Undo", "Unity undo or redo performed.", "completed"));
+         }
+ 
+         static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+         {
+-            EnqueueEditorHookEvent(
++            GuardEditorHook(
+                 "EditorSceneManager.sceneOpened",
+-                "scene.opened",
+-                scene.path,
+-                "Unity scene opened.",
+-                "completed",
+-                new Dictionary<string, string> { ["mode"] = mode.ToString() });
++                () => EnqueueEditorHookEvent(
++                    "EditorSceneManager.sceneOpened",
++                    "scene.opened",
++                    scene.path,
++                    "Unity scene opened.",
++                    "completed",
++                    new Dictionary<string, string> { ["mode"] = mode.ToString() }));
+         }
+ 
+         static void OnSceneSaved(Scene scene)
+         {
+-            EnqueueEditorHookEvent("EditorSceneManager.sceneSaved", "scene.saved", scene.path, "Unity scene saved.", "completed");
++            GuardEditorHook(
++                "EditorSceneManager.sceneSaved",
++                () => EnqueueEditorHookEvent("EditorSceneManager.sceneSaved", "scene.saved", scene.path, "Unity scene saved.", "completed"));
+         }
+ 
+         static void OnSceneClosing(Scene scene, bool removingScene)
+         {
+-            EnqueueEditorHookEvent(
++            GuardEditorHook(
+                 "EditorSceneManager.sceneClosing",
+-                "scene.closing",
+-                scene.path,
+-                "Unity scene closing.",
+-                "completed",
+-                new Dictionary<string, string> { ["removingScene"] = removingScene ? "true" : "false" });
++                () => EnqueueEditorHookEvent(
++                    "EditorSceneManager.sceneClosing",
++                    "scene.closing",
++                    scene.path,
++                    "Unity scene closing.",
++                    "completed",
++                    new Dictionary<string, string> { ["removingScene"] = removingScene ? "true" : "false" }));
+         }
+ 
+         static void OnBeforeAssemblyReload()
+         {
+-            EnqueueEditorHookEvent(
++            GuardEditorHook(
+                 "AssemblyReloadEvents.beforeAssemblyReload",
+-                "assembly_reload.before",
+-                "UnityEditor",
+-                "Unity assembly reload starting.",
+-                "completed");
+-            Flush();
++                () =>
++                {
++                    EnqueueEditorHookEvent(
++                        "AssemblyReloadEvents.beforeAssemblyReload",
++                        "assembly_reload.before",
++                        "UnityEditor",
++                        "Unity assembly reload starting.",
++                        "completed");
++                    Flush();
++                });
+         }
+ 
+         static void OnEditorQuitting()
+         {
+-            EnqueueEditorHookEvent(
++            GuardEditorHook(
+                 "EditorApplication.quitting",
+-                "editor.quitting",
+-                "UnityEditor",
+-                "Unity Editor quitting.",
+-                "completed");
+-            Flush();
++                () =>
++                {
++                    EnqueueEditorHookEvent(
++                        "EditorApplication.quitting",
++                        "editor.quitting",
++                        "UnityEditor",
++                        "Unity Editor quitting.",
++                        "completed");
++                    Flush();
++                });
+         }
+ 
+         static void OnLogMessageReceived(string condition, string stackTrace, LogType type)
+         {
+-            lock (Sync)
+-            {
+-                PendingConsoleCounts.TryGetValue(type, out int count);
+-                PendingConsoleCounts[type] = count + 1;
+-                nextConsoleSummaryAt = Now() + ConsoleSummaryDebounceSeconds;
+-            }
++            GuardEditorHook(
++                "Application.logMessageReceived",
++                () =>
++                {
++                    lock (Sync)
++                    {
++                        PendingConsoleCounts.TryGetValue(type, out int count);
++                        PendingConsoleCounts[type] = count + 1;
++                        nextConsoleSummaryAt = Now() + ConsoleSummaryDebounceSeconds;
++                    }
++                });
+         }
+ 
+         static void RecordConsoleSummary()
+@@ -415,18 +526,34 @@
+             bool success,
+             IReadOnlyDictionary<string, string> metadata)
+         {
+-            var entry = log.Record(
+-                attribution.Source,
+-                attribution.Actor,
+-                category,
+-                action,
+-                target,
+-                message,
+-                severity,
+-                success,
+-                WithCorrelation(metadata, attribution.CorrelationId));
+-            EnqueueBroadcast(entry);
+-            return entry;
++            try
++            {
++                var entry = log.Record(
++                    attribution.Source,
++                    attribution.Actor,
++                    category,
++                    action,
++                    target,
++                    message,
++                    severity,
++                    success,
++                    WithCorrelation(metadata, attribution.CorrelationId));
++                try
++                {
++                    EnqueueBroadcast(entry);
++                }
++                catch (Exception exception)
++                {
++                    RecordInstrumentationFailure("broadcast", "ai_action_log.enqueue", exception);
++                }
++
++                return entry;
++            }
++            catch (Exception exception)
++            {
++                RecordInstrumentationFailure("log", string.IsNullOrWhiteSpace(action) ? category : action, exception);
++                return null;
++            }
+         }
+ 
+         static LuxAiActionLogEntry RecordEditorHookEvent(
+@@ -444,15 +571,23 @@
+ 
+         static LuxAiActionLogEntry RecordEditorHookEvent(LuxPendingEditorEvent pending)
+         {
+-            return RecordWithAttribution(
+-                new LuxAiActionAttribution(EditorActor, EditorSource, string.Empty),
+-                EditorCategory,
+-                pending.EventType,
+-                pending.Target,
+-                pending.Message,
+-                pending.Severity,
+-                pending.Success,
+-                BuildEditorEventMetadata(pending.HookName, pending.EventType, pending.Status, pending.Metadata));
++            try
++            {
++                return RecordWithAttribution(
++                    new LuxAiActionAttribution(EditorActor, EditorSource, string.Empty),
++                    EditorCategory,
++                    pending.EventType,
++                    pending.Target,
++                    pending.Message,
++                    pending.Severity,
++                    pending.Success,
++                    BuildEditorEventMetadata(pending.HookName, pending.EventType, pending.Status, pending.Metadata));
++            }
++            catch (Exception exception)
++            {
++                RecordInstrumentationFailure("log", pending.HookName, exception);
++                return null;
++            }
+         }
+ 
+         static void EnqueueEditorHookEvent(
+@@ -480,8 +615,9 @@
+         static int DrainEditorEvents(int maxEvents)
+         {
+             int recorded = 0;
++            int attempted = 0;
+             int limit = maxEvents <= 0 ? EditorEventBatchSize : maxEvents;
+-            while (recorded < limit)
++            while (attempted < limit)
+             {
+                 LuxPendingEditorEvent pending;
+                 lock (Sync)
+@@ -494,8 +630,12 @@
+                     pending = PendingEditorEvents.Dequeue();
+                 }
+ 
+-                RecordEditorHookEvent(pending);
+-                recorded++;
++                attempted++;
++                var entry = RecordEditorHookEvent(pending);
++                if (entry != null)
++                {
++                    recorded++;
++                }
+             }
+ 
+             return recorded;
+@@ -643,7 +783,8 @@
+         static int PumpBroadcasts()
+         {
+             int sent = 0;
+-            while (sent < BroadcastBatchSize)
++            int attempted = 0;
++            while (attempted < BroadcastBatchSize)
+             {
+                 LuxAiActionLogEntry entry;
+                 lock (Sync)
+@@ -656,8 +797,16 @@
+                     entry = PendingBroadcasts.Dequeue();
+                 }
+ 
+-                broadcastSink?.Invoke("ai_action_log", entry);
+-                sent++;
++                attempted++;
++                try
++                {
++                    broadcastSink?.Invoke("ai_action_log", entry);
++                    sent++;
++                }
++                catch (Exception exception)
++                {
++                    RecordInstrumentationFailure("broadcast", "ai_action_log", exception);
++                }
+             }
+ 
+             return sent;
+@@ -690,9 +839,81 @@
+ 
+         static double Now()
+         {
+-            return timeProvider == null ? EditorApplication.timeSinceStartup : timeProvider();
++            try
++            {
++                return timeProvider == null ? EditorApplication.timeSinceStartup : timeProvider();
++            }
++            catch (Exception exception)
++            {
++                RecordInstrumentationFailure("time", "timeProvider", exception);
++                return EditorApplication.timeSinceStartup;
++            }
++        }
++
++        static void GuardEditorHook(string hookName, Action action)
++        {
++            try
++            {
++                action?.Invoke();
++            }
++            catch (Exception exception)
++            {
++                RecordInstrumentationFailure("hook", hookName, exception);
++            }
++        }
++
++        static void RecordInstrumentationFailure(string stage, string hookName, Exception exception)
++        {
++            lock (Sync)
++            {
++                switch (stage)
++                {
++                    case "log":
++                        logFailureCount++;
++                        break;
++                    case "broadcast":
++                        broadcastFailureCount++;
++                        break;
++                    case "flush":
++                        flushFailureCount++;
++                        break;
++                    case "time":
++                        timeProviderFailureCount++;
++                        break;
++                    default:
++                        hookFailureCount++;
++                        stage = "hook";
++                        break;
++                }
++
++                lastFailureStage = stage;
++                lastFailureHook = string.IsNullOrWhiteSpace(hookName) ? "unknown" : hookName;
++                lastFailureMessage = TruncateDiagnostic(exception == null ? string.Empty : exception.Message);
++            }
+         }
+ 
++        static void ResetInstrumentationDiagnostics()
++        {
++            hookFailureCount = 0;
++            logFailureCount = 0;
++            broadcastFailureCount = 0;
++            flushFailureCount = 0;
++            timeProviderFailureCount = 0;
++            lastFailureStage = string.Empty;
++            lastFailureHook = string.Empty;
++            lastFailureMessage = string.Empty;
++        }
++
++        static string TruncateDiagnostic(string value)
++        {
++            if (string.IsNullOrEmpty(value) || value.Length <= MaxDiagnosticMessageLength)
++            {
++                return value ?? string.Empty;
++            }
++
++            return value.Substring(0, MaxDiagnosticMessageLength) + "[TRUNCATED]";
++        }
++
+         readonly struct LuxAiActionAttribution
+         {
+             public LuxAiActionAttribution(string actor, string source, string correlationId)
+
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -353,9 +353,85 @@
+             Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PendingEditorEventCountForTests(), Is.EqualTo(0));
+             Assert.That(jsonl, Does.Contain("\"action\":\"playmode.state_changed\""));
+             Assert.That(jsonl, Does.Contain("\"hookName\":\"EditorApplication.playModeStateChanged\""));
++        }
++
++
++        [Test]
++        public void Broadcaster_EditorHookGuardCapturesCallbackFailureWithoutThrowing()
++        {
++            ConfigureBroadcasterForTest(0.0);
++
++            Assert.DoesNotThrow(() =>
++                UnityEditor.LuxAiActionLogBroadcaster.RunEditorHookForTests(
++                    "failing.editorHook",
++                    () => throw new InvalidOperationException("simulated editor hook failure")));
++
++            var diagnostics = UnityEditor.LuxAiActionLogBroadcaster.InstrumentationDiagnostics();
++            Assert.That(diagnostics.HookFailureCount, Is.EqualTo(1));
++            Assert.That(diagnostics.TotalFailureCount, Is.EqualTo(1));
++            Assert.That(diagnostics.LastFailureStage, Is.EqualTo("hook"));
++            Assert.That(diagnostics.LastFailureHook, Is.EqualTo("failing.editorHook"));
++            Assert.That(diagnostics.LastFailureMessage, Does.Contain("simulated editor hook failure"));
++        }
++
++        [Test]
++        public void Broadcaster_DropsEditorHookEventWhenLoggingUnavailableWithoutThrowing()
++        {
++            string path = GetTempLogPath();
++            var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(log, null, () => 0.0);
++            log.Dispose();
++
++            UnityEditor.LuxAiActionLogBroadcaster.QueueEditorHookEventForTests(
++                "EditorApplication.hierarchyChanged",
++                "hierarchy.changed",
++                "Hierarchy",
++                "Unity hierarchy changed.",
++                "completed");
++
++            int recorded = -1;
++            Assert.DoesNotThrow(() => recorded = UnityEditor.LuxAiActionLogBroadcaster.PumpEditorEventsForTests());
++            Assert.DoesNotThrow(() => UnityEditor.LuxAiActionLogBroadcaster.Flush());
++
++            var diagnostics = UnityEditor.LuxAiActionLogBroadcaster.InstrumentationDiagnostics();
++            Assert.That(recorded, Is.EqualTo(0));
++            Assert.That(UnityEditor.LuxAiActionLogBroadcaster.PendingEditorEventCountForTests(), Is.EqualTo(0));
++            Assert.That(diagnostics.LogFailureCount, Is.EqualTo(1));
++            Assert.That(diagnostics.FlushFailureCount, Is.EqualTo(1));
++            Assert.That(diagnostics.LastFailureStage, Is.EqualTo("flush"));
++            Assert.That(File.Exists(path), Is.False);
+         }
+ 
+         [Test]
++        public void Broadcaster_BroadcastFailureDoesNotBlockEditorLoggingOrThrow()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(
++                log,
++                (eventType, payload) => throw new InvalidOperationException("simulated broadcast failure"),
++                () => 0.0);
++
++            var entry = UnityEditor.LuxAiActionLogBroadcaster.RecordEditorInteractionEvent(
++                "selection.changed",
++                "Main Camera",
++                "Unity selection changed.");
++            log.Flush();
++
++            int sent = -1;
++            Assert.DoesNotThrow(() => sent = UnityEditor.LuxAiActionLogBroadcaster.PumpForTests());
++
++            string jsonl = File.ReadAllText(path);
++            var diagnostics = UnityEditor.LuxAiActionLogBroadcaster.InstrumentationDiagnostics();
++            Assert.That(entry, Is.Not.Null);
++            Assert.That(sent, Is.EqualTo(0));
++            Assert.That(jsonl, Does.Contain("\"action\":\"selection.changed\""));
++            Assert.That(diagnostics.BroadcastFailureCount, Is.EqualTo(1));
++            Assert.That(diagnostics.LastFailureStage, Is.EqualTo("broadcast"));
++            Assert.That(diagnostics.LastFailureHook, Is.EqualTo("ai_action_log"));
++        }
++
++        [Test]
+         public void ExplicitSceneCloseRecordMethod_CapturesUnsafeHookReplacement()
+         {
+             ConfigureBroadcasterForTest(0.0);

@@ -1,0 +1,296 @@
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -352,6 +352,101 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(decoded.payload.attributes.tags, Is.EqualTo(new[] { "runtime", "combat" }));
+         }
+ 
++        [Test]
++        public void Record_PreservesOptionalMetadataAcrossSupportedEventPayloadTypes()
++        {
++            string path = GetTempLogPath();
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++
++            var editorEntry = log.Record(
++                "unity-editor",
++                "user",
++                "editor",
++                "selection.changed",
++                "Scene/Main Camera",
++                "Unity selection changed.",
++                metadata: new Dictionary<string, string>
++                {
++                    ["correlationId"] = "corr-editor-304",
++                    ["producer"] = "unity-editor",
++                    ["purpose"] = "editor-action-roundtrip"
++                },
++                payloadAttributes: new Dictionary<string, object>
++                {
++                    ["objectCount"] = 1,
++                    ["targetPath"] = "Scene/Main Camera"
++                });
++            var aiEntry = log.Record(
++                "ai-tool-dispatcher",
++                "codex",
++                "ai-tool",
++                "tool.apply_patch",
++                "apply_patch",
++                "AI tool step applied a source edit.",
++                metadata: new Dictionary<string, string>
++                {
++                    ["correlationId"] = "corr-ai-304",
++                    ["producer"] = "codex",
++                    ["purpose"] = "ai-work-step-roundtrip"
++                },
++                payloadAttributes: new Dictionary<string, object>
++                {
++                    ["executionId"] = "exec-304",
++                    ["stepName"] = "apply_patch",
++                    ["tool"] = "codex"
++                });
++            var runtimeEntry = log.Record(
++                "unity-runtime",
++                "gameplay",
++                "runtime",
++                "enemy_death",
++                "Enemies/Enemy-7",
++                "Gameplay runtime enemy death logged.",
++                metadata: new Dictionary<string, string>
++                {
++                    ["correlationId"] = "corr-runtime-304",
++                    ["producer"] = "gameplay",
++                    ["purpose"] = "runtime-gameplay-roundtrip"
++                },
++                payloadAttributes: new Dictionary<string, object>
++                {
++                    ["entityId"] = "enemy-7",
++                    ["scoreValue"] = 150
++                });
++            log.Flush();
++
++            string[] lines = File.ReadAllLines(path);
++
++            Assert.That(lines, Has.Length.EqualTo(3));
++            AssertMetadataRoundTrip(lines[0], editorEntry, "editor-action", "selection.changed", "corr-editor-304", "unity-editor", "editor-action-roundtrip");
++            AssertMetadataRoundTrip(lines[1], aiEntry, "ai-work-step", "tool.apply_patch", "corr-ai-304", "codex", "ai-work-step-roundtrip");
++            AssertMetadataRoundTrip(lines[2], runtimeEntry, "runtime-gameplay-event", "enemy_death", "corr-runtime-304", "gameplay", "runtime-gameplay-roundtrip");
++        }
++
++        static void AssertMetadataRoundTrip(
++            string line,
++            UnityEditor.LuxAiActionLogEntry entry,
++            string expectedPayloadKind,
++            string expectedEventType,
++            string expectedCorrelationId,
++            string expectedProducer,
++            string expectedPurpose)
++        {
++            var decoded = JsonUtility.FromJson<MetadataRoundTripLogRecordForTests>(line);
++
++            Assert.That(entry.metadata["correlationId"], Is.EqualTo(expectedCorrelationId));
++            Assert.That(entry.metadata["producer"], Is.EqualTo(expectedProducer));
++            Assert.That(entry.metadata["purpose"], Is.EqualTo(expectedPurpose));
++            Assert.That(entry.payload.kind, Is.EqualTo(expectedPayloadKind));
++            Assert.That(entry.payload.eventType, Is.EqualTo(expectedEventType));
++            Assert.That(line, Does.Contain("\"metadata\":{\"correlationId\":\"" + expectedCorrelationId + "\""));
++            Assert.That(decoded.metadata.correlationId, Is.EqualTo(expectedCorrelationId));
++            Assert.That(decoded.metadata.producer, Is.EqualTo(expectedProducer));
++            Assert.That(decoded.metadata.purpose, Is.EqualTo(expectedPurpose));
++            Assert.That(decoded.payload.kind, Is.EqualTo(expectedPayloadKind));
++            Assert.That(decoded.payload.eventType, Is.EqualTo(expectedEventType));
++        }
++
+         [Test]
+         public void Record_StoresStructuredPayloadConventionWithRedactedAttributes()
+         {
+@@ -720,6 +805,45 @@ namespace Linalab.LuxEditor.Tests
+             public float z;
+         }
+ 
++        [Serializable]
++        sealed class MetadataRoundTripLogRecordForTests
++        {
++            public int schemaVersion;
++            public string protocol;
++            public string id;
++            public string timestampUtc;
++            public string source;
++            public string actor;
++            public string category;
++            public string type;
++            public string action;
++            public string target;
++            public string summary;
++            public string message;
++            public string severity;
++            public bool success;
++            public MetadataForTests metadata;
++            public MetadataRoundTripPayloadForTests payload;
++        }
++
++        [Serializable]
++        sealed class MetadataForTests
++        {
++            public string correlationId;
++            public string producer;
++            public string purpose;
++        }
++
++        [Serializable]
++        sealed class MetadataRoundTripPayloadForTests
++        {
++            public string kind;
++            public string eventType;
++            public string summary;
++            public string status;
++            public string target;
++        }
++
+         string GetTempLogPath()
+         {
+             return Path.Combine(_tempDirectory, ".lux", "ai-action-log.jsonl");
+diff --git a/RustGateway~/src/ai_log.rs b/RustGateway~/src/ai_log.rs
+--- a/RustGateway~/src/ai_log.rs
++++ b/RustGateway~/src/ai_log.rs
+@@ -505,6 +505,53 @@ mod tests {
+         assert_eq!(payload["attributes"]["tags"][1], "combat");
+     }
+ 
++    #[test]
++    fn ai_log_jsonl_parsing_preserves_optional_metadata_for_supported_event_types() {
++        let entries = parse_entries(Cursor::new(
++            "{\"timestampUtc\":\"2026-05-04T00:00:00Z\",\"actor\":\"user\",\"category\":\"editor\",\"source\":\"unity-editor\",\"type\":\"selection.changed\",\"metadata\":{\"correlationId\":\"corr-editor-304\",\"producer\":\"unity-editor\",\"purpose\":\"editor-action-roundtrip\"},\"payload\":{\"kind\":\"editor-action\",\"eventType\":\"selection.changed\",\"summary\":\"Unity selection changed.\",\"status\":\"completed\",\"attributes\":{\"objectCount\":1}}}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:01Z\",\"actor\":\"codex\",\"category\":\"ai-tool\",\"source\":\"ai-tool-dispatcher\",\"type\":\"tool.apply_patch\",\"metadata\":{\"correlationId\":\"corr-ai-304\",\"producer\":\"codex\",\"purpose\":\"ai-work-step-roundtrip\"},\"payload\":{\"kind\":\"ai-work-step\",\"eventType\":\"tool.apply_patch\",\"summary\":\"AI tool step applied a source edit.\",\"status\":\"completed\",\"attributes\":{\"executionId\":\"exec-304\",\"stepName\":\"apply_patch\",\"tool\":\"codex\"}}}\n\
++             {\"timestampUtc\":\"2026-05-04T00:00:02Z\",\"actor\":\"gameplay\",\"category\":\"runtime\",\"source\":\"unity-runtime\",\"type\":\"enemy_death\",\"metadata\":{\"correlationId\":\"corr-runtime-304\",\"producer\":\"gameplay\",\"purpose\":\"runtime-gameplay-roundtrip\"},\"payload\":{\"kind\":\"runtime-gameplay-event\",\"eventType\":\"enemy_death\",\"summary\":\"Gameplay runtime enemy death logged.\",\"status\":\"completed\",\"attributes\":{\"entityId\":\"enemy-7\",\"scoreValue\":150}}}\n",
++        ));
++        let cases = [
++            (
++                "editor-action",
++                "selection.changed",
++                "corr-editor-304",
++                "editor-action-roundtrip",
++            ),
++            (
++                "ai-work-step",
++                "tool.apply_patch",
++                "corr-ai-304",
++                "ai-work-step-roundtrip",
++            ),
++            (
++                "runtime-gameplay-event",
++                "enemy_death",
++                "corr-runtime-304",
++                "runtime-gameplay-roundtrip",
++            ),
++        ];
++
++        assert_eq!(entries.len(), 3);
++        for (entry, (expected_kind, expected_event_type, expected_correlation_id, expected_purpose)) in
++            entries.iter().zip(cases.iter())
++        {
++            assert_eq!(entry.value["metadata"]["correlationId"], *expected_correlation_id);
++            assert_eq!(entry.value["metadata"]["purpose"], *expected_purpose);
++            assert_eq!(entry.value["payload"]["kind"], *expected_kind);
++            assert_eq!(entry.value["payload"]["eventType"], *expected_event_type);
++
++            let serialized = serde_json::to_string(&entry.value).unwrap();
++            let roundtrip: Value = serde_json::from_str(&serialized).unwrap();
++
++            assert_eq!(roundtrip["metadata"]["correlationId"], *expected_correlation_id);
++            assert_eq!(roundtrip["metadata"]["purpose"], *expected_purpose);
++            assert_eq!(roundtrip["payload"]["kind"], *expected_kind);
++            assert_eq!(roundtrip["payload"]["eventType"], *expected_event_type);
++        }
++    }
++
+     #[test]
+     fn ai_log_redacts_bearer_and_token_values_in_summaries() {
+         assert_eq!(
+diff --git a/RustGateway~/src/protocol.rs b/RustGateway~/src/protocol.rs
+--- a/RustGateway~/src/protocol.rs
++++ b/RustGateway~/src/protocol.rs
+@@ -389,6 +389,84 @@ mod tests {
+         assert_eq!(roundtrip.attributes["tags"][0], json!("runtime"));
+     }
+ 
++    #[test]
++    fn event_envelopes_preserve_optional_metadata_for_supported_payload_types() {
++        let cases = vec![
++            (
++                EventPayloadKind::EditorAction,
++                editor_action_payload_example(),
++                "corr-editor-304",
++                "editor-action-roundtrip",
++            ),
++            (
++                EventPayloadKind::AiWorkStep,
++                ai_work_step_payload_example(),
++                "corr-ai-304",
++                "ai-work-step-roundtrip",
++            ),
++            (
++                EventPayloadKind::RuntimeGameplayEvent,
++                runtime_gameplay_payload_example(),
++                "corr-runtime-304",
++                "runtime-gameplay-roundtrip",
++            ),
++        ];
++
++        for (expected_kind, payload, correlation_id, purpose) in cases {
++            let event = EventEnvelope {
++                schema_version: PROTOCOL_VERSION,
++                event_id: format!("{correlation_id}-event"),
++                category: EventCategory::AiActionLog,
++                source: "phase6-tests".to_string(),
++                session_id: "session-304".to_string(),
++                captured_at_utc: "2026-05-04T00:00:00.0000000Z".to_string(),
++                metadata: Some(json!({
++                    "correlationId": correlation_id,
++                    "producer": "phase6-tests",
++                    "purpose": purpose,
++                    "optional": true
++                })),
++                payload: serde_json::to_value(payload).unwrap(),
++            };
++
++            let value = serde_json::to_value(&event).unwrap();
++
++            assert_eq!(value["metadata"]["correlationId"], correlation_id);
++            assert_eq!(value["metadata"]["purpose"], purpose);
++            assert_eq!(value["metadata"]["optional"], json!(true));
++
++            let roundtrip = EventEnvelope::from_json_value(value).unwrap();
++            let roundtrip_metadata = roundtrip
++                .metadata
++                .as_ref()
++                .expect("metadata survives event envelope roundtrip");
++            let roundtrip_payload =
++                EventPayloadConvention::from_json_value(roundtrip.payload).unwrap();
++
++            assert_eq!(roundtrip_metadata["correlationId"], correlation_id);
++            assert_eq!(roundtrip_metadata["purpose"], purpose);
++            assert_eq!(roundtrip_metadata["optional"], json!(true));
++            assert_eq!(roundtrip_payload.kind, expected_kind);
++            match expected_kind {
++                EventPayloadKind::EditorAction => {
++                    assert_eq!(roundtrip_payload.event_type, "selection.changed");
++                    assert_eq!(roundtrip_payload.attributes["objectCount"], json!(1));
++                }
++                EventPayloadKind::AiWorkStep => {
++                    assert_eq!(roundtrip_payload.event_type, "tool.apply_patch");
++                    assert_eq!(roundtrip_payload.attributes["stepName"], json!("apply_patch"));
++                }
++                EventPayloadKind::RuntimeGameplayEvent => {
++                    assert_eq!(roundtrip_payload.event_type, "enemy_death");
++                    assert_eq!(roundtrip_payload.attributes["entityId"], json!("enemy-7"));
++                }
++                EventPayloadKind::ToolCommand | EventPayloadKind::GatewaySignal => {
++                    panic!("AC304 only covers currently supported event log payload types");
++                }
++            }
++        }
++    }
++
+     #[test]
+     fn payload_convention_roundtrips_through_serde() {
+         let payload = ai_work_step_payload_example();

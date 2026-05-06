@@ -1,0 +1,352 @@
+diff --git a/LuxEditor/LuxAiActionLogBroadcaster.cs b/LuxEditor/LuxAiActionLogBroadcaster.cs
+--- a/LuxEditor/LuxAiActionLogBroadcaster.cs
++++ b/LuxEditor/LuxAiActionLogBroadcaster.cs
+@@ -1,5 +1,6 @@
+ using System;
+ using System.Collections.Generic;
++using System.IO;
+ using System.Security.Cryptography;
+ using System.Text;
+ using Linalab.UnityAiBridge.Editor;
+@@ -17,6 +18,9 @@ namespace UnityEditor
+         const double ConsoleSummaryDebounceSeconds = 0.5;
+         const int BroadcastBatchSize = 16;
+         const int MaxQueuedBroadcasts = 256;
+         const int MaxMetadataValueLength = 512;
++        const string EditorActor = "user";
++        const string EditorSource = "unity-editor";
++        const string EditorCategory = "editor";
+ 
+         static readonly object Sync = new object();
+         static readonly Queue<LuxAiActionLogEntry> PendingBroadcasts = new Queue<LuxAiActionLogEntry>();
+@@ -68,18 +72,15 @@ namespace UnityEditor
+             IReadOnlyDictionary<string, string> metadata = null)
+         {
+             var attribution = ResolveAttribution();
+-            var entry = log.Record(
+-                attribution.Source,
+-                attribution.Actor,
++            return RecordWithAttribution(
++                attribution,
+                 category,
+                 action,
+                 target,
+                 message,
+                 severity,
+                 success,
+-                WithCorrelation(metadata, attribution.CorrelationId));
+-            EnqueueBroadcast(entry);
+-            return entry;
++                metadata);
+         }
+ 
+         public static LuxAiActionLogEntry RecordDynamicCodeExecution(string code, bool success, string resultSummary, int diagnosticCount)
+@@ -148,6 +149,34 @@ namespace UnityEditor
+             }
+         }
+ 
++        public static LuxAiActionLogEntry RecordEditorLifecycleEvent(
++            string action,
++            string target,
++            string message,
++            IReadOnlyDictionary<string, string> metadata = null)
++        {
++            return RecordEditorHookEvent(
++                "manual.editor_lifecycle",
++                action,
++                target,
++                string.IsNullOrWhiteSpace(message) ? "Unity Editor lifecycle event recorded." : message,
++                metadata);
++        }
++
++        public static LuxAiActionLogEntry RecordEditorInteractionEvent(
++            string action,
++            string target,
++            string message,
++            IReadOnlyDictionary<string, string> metadata = null)
++        {
++            return RecordEditorHookEvent(
++                "manual.editor_interaction",
++                action,
++                target,
++                string.IsNullOrWhiteSpace(message) ? "Unity Editor interaction event recorded." : message,
++                metadata);
++        }
++
+         public static LuxAiActionLogEntry RecordSceneClosedUnsafeExplicit(string scenePath)
+         {
+             return Record(
+@@ -171,6 +200,9 @@ namespace UnityEditor
+             activeAttribution = default;
+             propagatedAttribution = default;
+             propagatedUntil = 0.0;
++            selectionDirty = false;
++            nextSelectionRecordAt = -1.0;
++            nextConsoleSummaryAt = -1.0;
+             lock (Sync)
+             {
+                 PendingBroadcasts.Clear();
+@@ -208,12 +240,12 @@ namespace UnityEditor
+ 
+         static void RecordSelectionChanged()
+         {
+-            Record(
+-                "selection",
+-                "changed",
++            RecordEditorHookEvent(
++                "Selection.selectionChanged",
++                "selection.changed",
+                 Selection.activeObject == null ? string.Empty : Selection.activeObject.name,
+                 "Unity selection changed.",
+-                metadata: new Dictionary<string, string>
++                new Dictionary<string, string>
+                 {
+                     ["objectCount"] = Selection.objects == null ? "0" : Selection.objects.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     ["assetGuidCount"] = Selection.assetGUIDs == null ? "0" : Selection.assetGUIDs.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+@@ -222,37 +254,51 @@ namespace UnityEditor
+ 
+         static void OnPlayModeStateChanged(PlayModeStateChange state)
+         {
+-            Record("playmode", "state_changed", state.ToString(), "Unity playmode state changed.");
++            RecordEditorHookEvent(
++                "EditorApplication.playModeStateChanged",
++                "playmode.state_changed",
++                state.ToString(),
++                "Unity playmode state changed.",
++                new Dictionary<string, string> { ["state"] = state.ToString() });
+         }
+ 
+         static void OnHierarchyChanged()
+         {
+-            Record("hierarchy", "changed", "Hierarchy", "Unity hierarchy changed.");
++            RecordEditorHookEvent("EditorApplication.hierarchyChanged", "hierarchy.changed", "Hierarchy", "Unity hierarchy changed.");
+         }
+ 
+         static void OnProjectChanged()
+         {
+-            Record("project", "changed", "Project", "Unity project assets changed.");
++            RecordEditorHookEvent("EditorApplication.projectChanged", "project.changed", "Project", "Unity project assets changed.");
+         }
+ 
+         static void OnUndoRedoPerformed()
+         {
+-            Record("undo-redo", "performed", "Undo", "Unity undo or redo performed.");
++            RecordEditorHookEvent("Undo.undoRedoPerformed", "undo_redo.performed", "Undo", "Unity undo or redo performed.");
+         }
+ 
+         static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+         {
+-            Record("scene", "opened", scene.path, "Unity scene opened.", metadata: new Dictionary<string, string> { ["mode"] = mode.ToString() });
++            RecordEditorHookEvent(
++                "EditorSceneManager.sceneOpened",
++                "scene.opened",
++                scene.path,
++                "Unity scene opened.",
++                new Dictionary<string, string> { ["mode"] = mode.ToString() });
+         }
+ 
+         static void OnSceneSaved(Scene scene)
+         {
+-            Record("scene", "saved", scene.path, "Unity scene saved.");
++            RecordEditorHookEvent("EditorSceneManager.sceneSaved", "scene.saved", scene.path, "Unity scene saved.");
+         }
+ 
+         static void OnSceneClosing(Scene scene, bool removingScene)
+         {
+-            Record("scene", "closing", scene.path, "Unity scene closing.", metadata: new Dictionary<string, string> { ["removingScene"] = removingScene ? "true" : "false" });
++            RecordEditorHookEvent(
++                "EditorSceneManager.sceneClosing",
++                "scene.closing",
++                scene.path,
++                "Unity scene closing.",
++                new Dictionary<string, string> { ["removingScene"] = removingScene ? "true" : "false" });
+         }
+ 
+         static void OnLogMessageReceived(string condition, string stackTrace, LogType type)
+@@ -289,7 +335,81 @@ namespace UnityEditor
+                 total += pair.Value;
+             }
+ 
+-            Record("console", "summary", "Console", "Unity console messages summarized.", total > 0 && counts.ContainsKey(LogType.Error) ? "error" : "info", !counts.ContainsKey(LogType.Error), metadata);
++            metadata["totalCount"] = total.ToString(System.Globalization.CultureInfo.InvariantCulture);
++
++            RecordEditorHookEvent(
++                "Application.logMessageReceived",
++                "console.summary",
++                "Console",
++                "Unity console messages summarized.",
++                metadata,
++                total > 0 && counts.ContainsKey(LogType.Error) ? "error" : "info",
++                !counts.ContainsKey(LogType.Error));
++        }
++
++        static LuxAiActionLogEntry RecordWithAttribution(
++            LuxAiActionAttribution attribution,
++            string category,
++            string action,
++            string target,
++            string message,
++            string severity,
++            bool success,
++            IReadOnlyDictionary<string, string> metadata)
++        {
++            var entry = log.Record(
++                attribution.Source,
++                attribution.Actor,
++                category,
++                action,
++                target,
++                message,
++                severity,
++                success,
++                WithCorrelation(metadata, attribution.CorrelationId));
++            EnqueueBroadcast(entry);
++            return entry;
++        }
++
++        static LuxAiActionLogEntry RecordEditorHookEvent(
++            string hookName,
++            string eventType,
++            string target,
++            string message,
++            IReadOnlyDictionary<string, string> metadata = null,
++            string severity = "info",
++            bool success = true)
++        {
++            string normalizedEventType = NormalizeEditorEventType(eventType);
++            return RecordWithAttribution(
++                new LuxAiActionAttribution(EditorActor, EditorSource, string.Empty),
++                EditorCategory,
++                normalizedEventType,
++                string.IsNullOrWhiteSpace(target) ? "UnityEditor" : target,
++                string.IsNullOrWhiteSpace(message) ? "Unity Editor event recorded." : message,
++                severity,
++                success,
++                BuildEditorEventMetadata(hookName, normalizedEventType, metadata));
++        }
++
++        static IReadOnlyDictionary<string, string> BuildEditorEventMetadata(
++            string hookName,
++            string eventType,
++            IReadOnlyDictionary<string, string> metadata)
++        {
++            string projectRoot = Linalab.Lux.Editor.LuxBridgeSettings.GetProjectRoot();
++            var result = new Dictionary<string, string>(StringComparer.Ordinal)
++            {
++                ["hookName"] = string.IsNullOrWhiteSpace(hookName) ? "unknown" : hookName.Trim(),
++                ["eventType"] = eventType,
++                ["eventSource"] = EditorSource,
++                ["eventCategory"] = EditorCategory,
++                ["status"] = "completed",
++                ["projectName"] = ProjectName(projectRoot)
++            };
++
++            if (metadata != null)
++            {
++                foreach (var pair in metadata)
++                {
++                    result[pair.Key ?? string.Empty] = Truncate(pair.Value);
++                }
++            }
++
++            return result;
+         }
+ 
+         static LuxAiActionAttribution ResolveAttribution()
+@@ -315,6 +435,18 @@ namespace UnityEditor
+                 correlationId ?? string.Empty);
+         }
+ 
++        static string NormalizeEditorEventType(string eventType)
++        {
++            string normalized = (eventType ?? string.Empty).Trim().Replace(' ', '_').ToLowerInvariant();
++            return string.IsNullOrWhiteSpace(normalized) ? "editor.event" : normalized;
++        }
++
++        static string ProjectName(string projectPath)
++        {
++            string trimmed = (projectPath ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
++            return string.IsNullOrWhiteSpace(trimmed) ? string.Empty : Path.GetFileName(trimmed);
++        }
++
+         static IReadOnlyDictionary<string, string> WithCorrelation(IReadOnlyDictionary<string, string> metadata, string correlationId)
+         {
+             var result = new Dictionary<string, string>(StringComparer.Ordinal);
+diff --git a/LuxEditorTests/Editor/LuxAiActionLogTests.cs b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+--- a/LuxEditorTests/Editor/LuxAiActionLogTests.cs
++++ b/LuxEditorTests/Editor/LuxAiActionLogTests.cs
+@@ -209,6 +209,76 @@ namespace Linalab.LuxEditor.Tests
+             Assert.That(jsonl, Does.Not.Contain("Debug.Log"));
+         }
+ 
++        [Test]
++        public void Broadcaster_EditorInteractionEventPersistsThroughProjectScopedLogService()
++        {
++            string path = Path.Combine(_tempDirectory, "UserSettings", "LuxAiActionLog.jsonl");
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(log, null, () => 0.0);
++
++            var entry = UnityEditor.LuxAiActionLogBroadcaster.RecordEditorInteractionEvent(
++                " Selection.Changed ",
++                "Main Camera",
++                "Unity selection changed.",
++                new Dictionary<string, string>
++                {
++                    ["objectCount"] = "1",
++                    ["assetGuidCount"] = "0"
++                });
++            log.Flush();
++
++            string jsonl = File.ReadAllText(path);
++
++            Assert.That(File.Exists(path), Is.True);
++            Assert.That(entry.source, Is.EqualTo("unity-editor"));
++            Assert.That(entry.actor, Is.EqualTo("user"));
++            Assert.That(entry.category, Is.EqualTo("editor"));
++            Assert.That(entry.action, Is.EqualTo("selection.changed"));
++            Assert.That(entry.target, Is.EqualTo("Main Camera"));
++            Assert.That(entry.metadata["hookName"], Is.EqualTo("manual.editor_interaction"));
++            Assert.That(entry.metadata["eventType"], Is.EqualTo("selection.changed"));
++            Assert.That(entry.metadata["eventSource"], Is.EqualTo("unity-editor"));
++            Assert.That(entry.metadata["eventCategory"], Is.EqualTo("editor"));
++            Assert.That(entry.metadata["status"], Is.EqualTo("completed"));
++            Assert.That(entry.metadata["objectCount"], Is.EqualTo("1"));
++            Assert.That(jsonl, Does.Contain("\"source\":\"unity-editor\""));
++            Assert.That(jsonl, Does.Contain("\"actor\":\"user\""));
++            Assert.That(jsonl, Does.Contain("\"category\":\"editor\""));
++            Assert.That(jsonl, Does.Contain("\"action\":\"selection.changed\""));
++            Assert.That(jsonl, Does.Contain("\"hookName\":\"manual.editor_interaction\""));
++        }
++
++        [Test]
++        public void Broadcaster_EditorLifecycleEventUsesEditorServiceWithoutAmbientAttributionLeak()
++        {
++            string path = Path.Combine(_tempDirectory, "UserSettings", "LuxAiActionLog.jsonl");
++            using var log = new UnityEditor.LuxAiActionLog(logPath: path);
++            UnityEditor.LuxAiActionLogBroadcaster.ConfigureForTests(log, null, () => 0.0);
++
++            using (UnityEditor.LuxAiActionLogBroadcaster.PushAttribution("agent", "ai-tool", "corr-1"))
++            {
++                UnityEditor.LuxAiActionLogBroadcaster.RecordEditorLifecycleEvent(
++                    "playmode.state_changed",
++                    "EnteredPlayMode",
++                    "Unity playmode state changed.",
++                    new Dictionary<string, string> { ["state"] = "EnteredPlayMode" });
++            }
++
++            var runtimeStyleEntry = UnityEditor.LuxAiActionLogBroadcaster.Record(
++                "runtime",
++                "enemy_death",
++                "Enemies/Enemy-7",
++                "Gameplay runtime event logged.");
++
++            Assert.That(runtimeStyleEntry.source, Is.EqualTo("ai-tool"));
++            Assert.That(runtimeStyleEntry.actor, Is.EqualTo("agent"));
++            Assert.That(runtimeStyleEntry.category, Is.EqualTo("runtime"));
++            Assert.That(runtimeStyleEntry.action, Is.EqualTo("enemy_death"));
++            Assert.That(runtimeStyleEntry.metadata["correlationId"], Is.EqualTo("corr-1"));
++        }
++
+         [Test]
+         public void ExplicitSceneCloseRecordMethod_CapturesUnsafeHookReplacement()
+         {
