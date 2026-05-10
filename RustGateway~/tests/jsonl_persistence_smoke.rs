@@ -1,46 +1,14 @@
+mod common;
+use common::*;
+
 use lux::ai_log::{
     append_work_step, compact_log_file, ensure_log_path, parse_jsonl_values, read_log_entries,
     AiLogFilter, AiWorkStep,
 };
-use std::fs::{self, File};
+use std::fs;
+use std::fs::File;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn temp_dir_unique(prefix: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tid = std::thread::current().id();
-    let dir = std::env::temp_dir().join(format!("lux-jsonl-smoke-{prefix}-{tid:?}-{id}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn make_step(name: &str) -> AiWorkStep {
-    AiWorkStep {
-        step_name: name.to_string(),
-        status: "completed".to_string(),
-        tool: Some("test-runner".to_string()),
-        action: Some(name.to_string()),
-        summary: Some(format!("Test step {name}")),
-        redaction_metadata: None,
-        timestamp_utc: "2026-05-10T07:00:00Z".to_string(),
-    }
-}
-
-/// Cleanup helper — removes file or directory tree silently.
-fn cleanup(path: &Path) {
-    let _ = if path.is_file() {
-        fs::remove_file(path)
-    } else {
-        fs::remove_dir_all(path)
-    };
-}
 
 // ===========================================================================
 // AC2-a: Default path resolution returns .lux/ai-action-log.jsonl

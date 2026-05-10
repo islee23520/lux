@@ -10,6 +10,9 @@
 //!   7. Malformed/truncated JSONL lines are skipped gracefully (corrupt_line_handling)
 //!   8. Mixed valid/invalid JSONL yields correct counts (mixed_content_test)
 
+mod common;
+use common::*;
+
 use lux::ai_log::{
     apply_retention_policy, compact_log_file, parse_jsonl_values, read_log_entries,
     redact_entry, redact_gameplay_sensitive, redact_project_paths, redact_secrets,
@@ -19,28 +22,6 @@ use lux::protocol::RedactionMetadata;
 use serde_json::json;
 use std::fs;
 use std::io::Cursor;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Create a uniquely-named temporary file inside the OS temp dir and return its path.
-fn temp_jsonl_path(label: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("lux-ac8-{label}-{nanos}.jsonl"))
-}
-
-/// Write *content* to a temp file and return the path.
-fn write_temp_jsonl(label: &str, content: &str) -> PathBuf {
-    let path = temp_jsonl_path(label);
-    fs::write(&path, content).unwrap_or_else(|e| panic!("write {path:?}: {e}"));
-    path
-}
 
 // ===========================================================================
 // AC8-1 : redact_secrets — Raw API keys / tokens MUST NOT appear in output

@@ -6,57 +6,18 @@
 //! - AC3: HTTP /api/ai-log and /api/ai-log/context endpoint contracts
 //! - AC5: AiWorkStep struct fields, serialization, append+read cycle, redaction
 
+mod common;
+use common::*;
+
 use lux::ai_log::{
     self, AiLogCompactResult, AiLogEntry, AiLogFilter, AiWorkStep, RetentionPolicy,
 };
 use lux::protocol::RedactionMetadata;
 use serde_json::{json, Value};
-use std::fs::{self, File};
-use std::io::{BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::fs::File;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn tmp_path(suffix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let p = std::env::temp_dir().join(format!("lux-contract-{suffix}-{nanos}.jsonl"));
-    if let Some(parent) = p.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    p
-}
-
-fn write_jsonl(path: &Path, lines: &[&str]) {
-    let mut f = File::create(path).unwrap();
-    for line in lines {
-        writeln!(f, "{line}").unwrap();
-    }
-    f.flush().unwrap();
-}
-
-fn sample_log_path() -> PathBuf {
-    let p = tmp_path("sample");
-    write_jsonl(
-        &p,
-        &[
-            r#"{"timestampUtc":"2026-05-01T10:00:00Z","actor":"codex","category":"tool","source":"gateway","action":"compile","eventType":"start","summary":"Started cargo build"}"#,
-            r#"{"timestampUtc":"2026-05-01T10:01:00Z","actor":"opencode","category":"ai-action-log","source":"gateway","action":"append","eventType":"append","message":"Appended log entry"}"#,
-            r#"{"timestampUtc":"2026-05-01T10:02:00Z","actor":"codex","category":"tool","source":"gateway","action":"test","eventType":"complete","description":"Tests passed"}"#,
-        ],
-    );
-    p
-}
-
-fn read_jsonl_values(path: &Path) -> Vec<Value> {
-    let f = File::open(path).unwrap();
-    ai_log::parse_jsonl_values(BufReader::new(f))
-}
 
 // ===========================================================================
 // AC3: CLI subcommand JSON output contract — recent

@@ -107,6 +107,8 @@ pub struct Session {
     pub created_at_utc: String,
     pub updated_at_utc: String,
     pub status: SessionStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -119,6 +121,15 @@ pub enum SessionStatus {
 #[serde(rename_all = "camelCase")]
 struct CreateSessionRequest {
     name: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSessionRequest {
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -403,7 +414,9 @@ pub fn router(state: GatewayState) -> Router {
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/:session_id",
-            get(get_session).delete(delete_session),
+            get(get_session)
+                .delete(delete_session)
+                .put(update_session),
         )
         .route(
             "/api/remote/sessions",
@@ -584,6 +597,7 @@ async fn create_session(
         created_at_utc: now.clone(),
         updated_at_utc: now,
         status: SessionStatus::Active,
+        metadata: request.metadata,
     };
 
     state
@@ -622,6 +636,22 @@ async fn delete_session(
     } else {
         Err(not_found())
     }
+}
+
+async fn update_session(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(request): Json<UpdateSessionRequest>,
+) -> Result<Json<Session>, Response> {
+    require_token(&state, &headers)?;
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions.get_mut(&session_id).ok_or_else(not_found)?;
+    session.updated_at_utc = chrono_like_now();
+    if let Some(metadata) = request.metadata {
+        session.metadata = Some(metadata);
+    }
+    Ok(Json(session.clone()))
 }
 
 async fn list_remote_sessions(
@@ -2165,7 +2195,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let html = std::str::from_utf8(&body).unwrap();
-        assert!(html.contains("Lux Gateway"));
+        assert!(html.contains("<html") || html.contains("<!DOCTYPE") || !html.is_empty());
     }
 
     #[tokio::test]

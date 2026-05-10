@@ -2071,6 +2071,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "http",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

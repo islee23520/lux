@@ -1,0 +1,208 @@
+goal: |
+  Complete LUX Phase 7 Post-Review Hardening and Roadmap Phase 1 Foundation.
+  This phase addresses all 4 improvement items from Lina's LDP review (PASS 94/100)
+  of Phase 6, and lays the Rust gateway foundation for Roadmap Phase 1
+  (Rust Gateway Expansion: static file serving + session management API).
+
+  Deliverables:
+  1. Test utility consolidation — extract shared helpers from 5 smoke test files
+     into a common test module to eliminate duplication
+  2. skill_adapter.rs modular split — break 925-line monolith into focused sub-modules
+  3. Redaction pattern expansion — add regex-based detection for GitHub/AWS/OpenAI tokens
+  4. C# test infrastructure hardening — improve LuxPhase6EditorSmokeTest reliability
+  5. Roadmap P1 foundation: /api/sessions CRUD skeleton with in-memory store
+  6. Roadmap P1 foundation: static file serving via tower-http ServeDir for /ui/* route
+
+constraints:
+  - Brownfield Unity package at /Users/ilseoblee/workspace/linalab/neon-glitch/Packages/com.linalab.lux
+  - Preserve ALL existing Phase 6 functionality (AC1-AC8) — zero regressions
+  - Existing cargo test must continue passing (288/291 baseline, P6 failures exempt)
+  - Rust stack: Axum 0.7, tokio 1, clap 4.5, anyhow, serde (existing)
+  - New dependency allowed: tower-http (for ServeDir, required by roadmap Phase 1)
+  - C# conventions: namespace UnityEditor, Assembly Linalab.LuxEditor, class prefix Lux
+  - No TODO/FIXME/HACK comments
+  - All new endpoints/functions must have tests
+  - Keep POSIX/macOS compatible
+  - Do NOT implement full Roadmap Phase 1 web UI or React SPA — only Rust-side foundations
+
+acceptance_criteria:
+
+  # === LINA Review Improvement Items ===
+
+  - lina_1_test_utils_consolidated: |
+      A shared test utility module exists at RustGateway~/tests/common/mod.rs (or equivalent).
+      It provides at minimum: temp_dir_unique() with AtomicU64 counter,
+      write_jsonl_lines(), read_jsonl_lines(), create_temp_log_file(),
+      assert_jsonl_line_count(), and make_sample_event().
+      All 5 existing smoke test files (event_schema_smoke, jsonl_persistence_smoke,
+      cli_api_contract_smoke, redact_smoke, and any using these helpers) import from
+      this common module instead of defining their own duplicates.
+      cargo test passes with all existing + new tests.
+
+  - lina_2_skill_adapter_split: |
+      RustGateway~/src/skill_adapter.rs is split into a module directory:
+      RustGateway~/src/skill_adapter/ containing:
+      - mod.rs (public facade, re-exports, ~50 lines)
+      - compatibility.rs (structural validation, project metadata detection)
+      - adaptation.rs (compatibility judgment, build_adaptation_decision output)
+      - slimming.rs (context slimming logic)
+      - metadata.rs (project metadata types and detection helpers)
+      lib.rs updated to use `mod skill_adapter` (already does; ensure path resolves).
+      All 16 existing skill_adapter unit tests still pass.
+      No public API surface changes — external callers use same paths.
+
+  - lina_3_redaction_expanded: |
+      Redaction system gains regex-based secret pattern detection beyond
+      simple Bearer/token= matching. At minimum these patterns MUST be detected
+      and redacted as [REDACTED]:
+      - GitHub Personal Access Tokens: ghp_[A-Za-z0-9]{36}+
+      - AWS Access Key IDs: AKIA[0-9A-Z]{16}
+      - OpenAI API Keys: sk-(openai|project)-[A-Za-z0-9]{20,}
+      New tests in redact_smoke.rs or dedicated redact_patterns_smoke.rs prove
+      each pattern matches and redacts correctly.
+      Non-matching similar strings are NOT falsely redacted (false-positive tests).
+
+  - lina_4_cs_test_hardening: |
+      LuxPhase6EditorSmokeTest.cs gains improved reliability:
+      - Test temp directories use GUID-based unique paths (no collisions)
+      - Each test cleans up its own temp files in [TearDown]
+      - Null/empty edge cases explicitly tested for LuxRuntimeEvent.Log()
+      - At least 3 new C# edge-case tests added (null eventType fallback,
+      empty payload dictionary, concurrent Log calls from multiple threads).
+      All C# tests compile without errors (verified by LSP/diagnostics).
+
+  # === Roadmap Phase 1 Foundation (Rust-side only) ===
+
+  - p1_sessions_api_skeleton: |
+      GET /api/sessions returns JSON array of session objects (id, created_at,
+      updated_at, status, metadata). POST /api/sessions creates a new session.
+      GET /api/sessions/:id returns a single session or 404.
+      DELETE /api/sessions/:id deletes a session or 404.
+      Sessions stored in-memory (HashMap<String, Session> inside AppState).
+      Auth enforced via existing x-lux-token header middleware.
+      Minimum 8 API contract tests (create, list, get, get-404, delete, delete-404,
+      update-timestamp, empty-list).
+      Endpoint returns proper HTTP status codes and Content-Type: application/json.
+
+  - p1_static_file_serving: |
+      GET /ui/ serves index.html from RustGateway~/ui/ directory.
+      GET /ui/{path:*} serves static files (JS, CSS, images) from RustGateway~/ui/.
+      Returns 404 for missing files (no directory listing).
+      Uses tower-http::services::ServeDir (new Cargo.toml dependency).
+      If RustGateway~/ui/ directory does not exist, endpoint returns 503 with
+      clear error message (not a crash).
+      Minimum 4 tests: serves index.html, serves nested asset, 404 for missing,
+      graceful handling when ui/ dir absent.
+
+evaluation_principles:
+  - name: lina_compliance
+    description: All 4 Lina review improvement items must be implemented and tested.
+    weight: 0.35
+  - name: roadmap_p1_readiness
+    description: Sessions API and static serving must be functional enough for Phase 2 SPA integration.
+    weight: 0.25
+  - name: zero_regression
+    description: All Phase 6 tests (179/179) must continue passing. No degradation.
+    weight: 0.25
+  - name: code_quality
+    description: Clean splits, no duplication, proper module structure, no TODO/FIXME/HACK.
+    weight: 0.15
+
+exit_conditions:
+  - name: phase7_complete
+    description: All 6 acceptance criteria pass with tests and verification evidence.
+    criteria: all acceptance_criteria statuses are completed and verified
+  - name: no_phase6_regressions
+    description: Phase 6 test count and pass rate preserved.
+    criteria: cargo test shows >= 288 total passes and all P6-specific suites at 100%
+  - name: clean_module_structure
+    description: Code is properly split with no orphaned files or broken imports.
+    criteria: cargo build --all-targets passes with no warnings about dead code or unused imports
+
+project_type: brownfield
+
+context_references:
+  - path: /Users/ilseoblee/workspace/linalab/neon-glitch/Packages/com.linalab.lux
+    role: primary
+    summary: LUX Unity package root — working directory
+  - path: RustGateway~/src/skill_adapter.rs
+    role: primary
+    summary: AC7 implementation, 925 lines — target for modular split (LINA-2)
+  - path: RustGateway~/tests/redact_smoke.rs
+    role: primary
+    summary: AC8 redaction tests, 33 tests — extend with regex patterns (LINA-3)
+  - path: RustGateway~/tests/jsonl_persistence_smoke.rs
+    role: primary
+    summary: Contains temp_dir_unique() AtomicU64 pattern — extract to common (LINA-1)
+  - path: RustGateway~/tests/event_schema_smoke.rs
+    role: primary
+    reference: true
+    summary: Event schema tests — candidate for common helper usage (LINA-1)
+  - path: RustGateway~/tests/cli_api_contract_smoke.rs
+    role: primary
+    reference: true
+    summary: CLI/API contract tests — candidate for common helper usage (LINA-1)
+  - path: RustGateway~/src/server.rs
+    role: primary
+    summary: Axum router — add /api/sessions and /ui/ routes here (P1 foundation)
+  - path: RustGateway~/src/main.rs
+    role: primary
+    summary: CLI entry point — may need tower-http dependency addition
+  - path: RustGateway~/Cargo.toml
+    role: primary
+    summary: Add tower-http dependency for ServeDir (P1 foundation)
+  - path: LuxEditorTests/Editor/LuxPhase6EditorSmokeTest.cs
+    role: primary
+    summary: C# Phase 6 smoke tests — harden with edge cases (LINA-4)
+  - path: docs/AC4_AC6_VERIFICATION.md
+    role: reference
+    summary: Phase 6 verification doc — update after P7 completion
+
+existing_patterns:
+  - RustGateway uses Axum router with shared state (Arc<AppState>)
+  - Token authentication via x-lux-token header
+  - Tests use temp_dir_unique() with AtomicU64 for parallel safety
+  - Redaction functions return (String, RedactionMetadata) tuples
+  - C# tests use NUnit [Test], [SetUp], [TearDown] attributes
+  - Module splits use mod.rs as facade with private sub-modules
+  - Error handling uses anyhow::Context for chained errors
+
+existing_dependencies:
+  - axum = "0.7" (HTTP framework)
+  - tokio = "1" (async runtime)
+  - serde = { version = "1", features = ["derive"] }
+  - anyhow = "1" (error handling)
+  - clap = { version = "4.5", features = ["derive"] }
+  - tower-http = "0.6" (NEW: for ServeDir static file serving)
+
+ontology_schema:
+  name: LuxPhase7Hardening
+  description: LUX Phase 7 post-review hardening and roadmap Phase 1 foundation deliverables.
+  fields:
+    - name: test_utils_module
+      type: object
+      description: Shared test utilities extracted from 5 smoke test files
+    - name: skill_adapter_modules
+      type: array
+      description: Split skill_adapter into compatibility/adaptation/slimming/metadata modules
+    - name: redaction_patterns
+      type: array
+      description: Regex-based secret patterns (GitHub/AWS/OpenAI) added to redactor
+    - name: cs_test_reliability
+      type: object
+      description: Improved C# smoke test coverage and cleanup
+    - name: sessions_api
+      type: object
+      description: In-memory CRUD sessions API at /api/sessions
+    - name: static_serving
+      type: object
+      description: Tower-http ServeDir for /ui/* static file route
+    - name: verification_evidence
+      type: array
+      description: Test execution results and coverage data
+
+metadata:
+  generated_by: Hermes Agent
+  based_on: Lina LDP Review (Phase 6, PASS 94/100)
+  previous_phase: lux-phase6-ai-events (commit c7f511f)
+  version: '1.0'

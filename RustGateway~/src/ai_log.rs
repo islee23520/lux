@@ -281,16 +281,24 @@ pub fn apply_retention_policy(log_path: &Path, policy: &RetentionPolicy) -> Resu
 }
 
 pub fn redact_secrets(text: &str) -> String {
-    text.split_whitespace()
+    let after_bearer = text.split_whitespace()
         .map(|part| {
             if part.eq_ignore_ascii_case("bearer") || part.to_ascii_lowercase().contains("token=") {
-                "[REDACTED]"
+                "[REDACTED]".to_string()
             } else {
-                part
+                part.to_string()
             }
         })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+
+    let github_pat = regex::Regex::new(r"ghp_[A-Za-z0-9]{36,}").unwrap();
+    let aws_key = regex::Regex::new(r"AKIA[0-9A-Z]{16}").unwrap();
+    let openai_key = regex::Regex::new(r"sk-(?:openai|project)-[A-Za-z0-9]{20,}").unwrap();
+
+    let mut result = github_pat.replace_all(&after_bearer, "[REDACTED]").to_string();
+    result = aws_key.replace_all(&result, "[REDACTED]").to_string();
+    openai_key.replace_all(&result, "[REDACTED]").to_string()
 }
 
 pub fn redact_project_paths(text: &str, project_root: &str) -> String {

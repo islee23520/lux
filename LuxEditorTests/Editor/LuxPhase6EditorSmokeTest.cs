@@ -609,6 +609,206 @@ namespace Linalab.LuxEditor.Tests
         }
 
         // ====================================================================
+        // LINA-4 Edge Cases
+        // ====================================================================
+
+        #region LINA-4a — Null/empty eventType fallback
+
+        [Test]
+        [Description("LINA-4a: Empty string eventType falls back to 'runtime_event'")]
+        public void LINA4_EmptyEventType_FallsBackToDefault()
+        {
+            UnityEditor.LuxRuntimeEvent.Log("");
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+
+            string json = File.ReadAllText(GetTempLogPath());
+            Assert.That(json, Does.Contain("\"eventType\":\"runtime_event\""),
+                "empty eventType must fall back to 'runtime_event'");
+        }
+
+        [Test]
+        [Description("LINA-4a: Null eventType and empty payload produces valid entry with default eventType")]
+        public void LINA4_NullEventTypeAndEmptyPayload_ProducesValidEntry()
+        {
+            UnityEditor.LuxRuntimeEvent.Log(null, new Dictionary<string, object>());
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+
+            string json = File.ReadAllText(GetTempLogPath());
+            Assert.That(json, Does.Contain("\"eventType\":\"runtime_event\""));
+            Assert.That(json, Does.Contain("\"category\":\"runtime\""));
+        }
+
+        #endregion
+
+        #region LINA-4b — Empty payload dictionary
+
+        [Test]
+        [Description("LINA-4b: Empty payload dictionary produces valid JSONL entry without crash")]
+        public void LINA4_EmptyPayloadDictionary_ProducesValidEntry()
+        {
+            var emptyPayload = new Dictionary<string, object>();
+            UnityEditor.LuxRuntimeEvent.Log("empty_payload_test", emptyPayload);
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+
+            string json = File.ReadAllText(GetTempLogPath());
+            Assert.That(json, Does.Contain("\"eventType\":\"empty_payload_test\""));
+            Assert.That(json, Does.Contain("\"category\":\"runtime\""));
+            Assert.That(json, Does.Contain("\"source\":\"gameplay\""));
+
+            // Verify the line is parseable JSON
+            string[] lines = File.ReadAllLines(GetTempLogPath());
+            Assert.That(lines, Has.Length.GreaterThanOrEqualTo(1));
+            Assert.That(lines[0], Does.StartWith("{"));
+            Assert.That(lines[0], Does.EndWith("}"));
+        }
+
+        [Test]
+        [Description("LINA-4b: Multiple consecutive empty-payload events all persist correctly")]
+        public void LINA4_MultipleEmptyPayloads_AllPersistCorrectly()
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                UnityEditor.LuxRuntimeEvent.Log(
+                    $"empty_seq_{i}",
+                    new Dictionary<string, object>());
+            }
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+
+            string[] lines = File.ReadAllLines(GetTempLogPath());
+            Assert.That(lines, Has.Length.EqualTo(5),
+                "5 empty-payload events must produce 5 JSONL lines");
+            for (int i = 0; i < 5; i++)
+            {
+                Assert.That(lines[i], Does.Contain($"\"eventType\":\"empty_seq_{i}\""),
+                    $"line {i} must contain its eventType");
+            }
+        }
+
+        #endregion
+
+        #region LINA-4c — Concurrent thread-safe Log calls
+
+        [Test]
+        [Description("LINA-4c: Concurrent Log calls from multiple threads do not corrupt output")]
+        public void LINA4_ConcurrentLogCalls_ThreadSafe()
+        {
+            const int threadCount = 8;
+            const int callsPerThread = 25;
+            var threads = new System.Threading.Thread[threadCount];
+            var errors = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+            for (int t = 0; t < threadCount; t++)
+            {
+                int threadId = t;
+                threads[t] = new System.Threading.Thread(() =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < callsPerThread; i++)
+                        {
+                            UnityEditor.LuxRuntimeEvent.Log(
+                                $"concurrent_t{threadId}_n{i}",
+                                new Dictionary<string, object>
+                                {
+                                    ["thread"] = threadId,
+                                    ["iteration"] = i
+                                });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                });
+            }
+
+            // Start all threads
+            foreach (var thread in threads)
+            {
+                thread.Start();
+            }
+
+            // Wait for all threads to complete (with timeout)
+            foreach (var thread in threads)
+            {
+                Assert.That(thread.Join(10000), Is.True,
+                    "thread did not complete within timeout");
+            }
+
+            // No exceptions should have been thrown
+            Assert.That(errors.IsEmpty, Is.True,
+                () => $"concurrent Log calls threw exceptions: {string.Join(", ", errors)}");
+
+            // Flush and verify output integrity
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+            string[] lines = File.ReadAllLines(GetTempLogPath());
+
+            int expectedTotal = threadCount * callsPerThread;
+            Assert.That(lines.Length, Is.EqualTo(expectedTotal),
+                $"expected {expectedTotal} JSONL lines from concurrent calls, got {lines.Length}");
+
+            // Every line must be valid JSON
+            foreach (var line in lines)
+            {
+                Assert.That(line, Does.StartWith("{"), "each line must start with '{{'");
+                Assert.That(line, Does.EndWith("}"), "each line must end with '}}'");
+                Assert.That(line, Does.Contain("\"eventType\""), "each line must have eventType");
+            }
+        }
+
+        [Test]
+        [Description("LINA-4c: Concurrent mixed API paths (static + broadcaster) are safe")]
+        public void LINA4_ConcurrentMixedPaths_DoNotCorrupt()
+        {
+            const int iterations = 20;
+            var errors = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+            var staticApiThread = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < iterations; i++)
+                    {
+                        UnityEditor.LuxRuntimeEvent.Log(
+                            $"static_mix_{i}",
+                            new Dictionary<string, object> { ["src"] = "static" });
+                    }
+                }
+                catch (Exception ex) { errors.Add(ex); }
+            });
+
+            var broadcasterThread = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < iterations; i++)
+                    {
+                        UnityEditor.LuxAiActionLogBroadcaster.Record(
+                            "mixed_broadcaster", $"action_{i}", "target", "msg");
+                    }
+                }
+                catch (Exception ex) { errors.Add(ex); }
+            });
+
+            staticApiThread.Start();
+            broadcasterThread.Start();
+
+            Assert.That(staticApiThread.Join(10000), Is.True);
+            Assert.That(broadcasterThread.Join(10000), Is.True);
+
+            Assert.That(errors.IsEmpty, Is.True,
+                () => $"exceptions during concurrent mixed-path: {string.Join(", ", errors)}");
+
+            UnityEditor.LuxAiActionLogBroadcaster.Flush();
+            string[] lines = File.ReadAllLines(GetTempLogPath());
+
+            Assert.That(lines.Length, Is.EqualTo(iterations * 2),
+                $"expected {iterations * 2} total lines from both paths");
+        }
+
+        #endregion
+
+        // ====================================================================
         // Helpers
         // ====================================================================
 
