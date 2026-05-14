@@ -55,6 +55,12 @@
 - Transaction journal: multi-file ops → .lux/runs/<run_id>/transactions/*.json
 - Blocker idempotency: derive stable key from check category/name/spec_ref; reuse existing open blocker
 
+## [Task 1] Completed
+- `RunState::load()` and `RunState::save()` now validate persisted `status` through `RunStatus::from_str()`; invalid legacy strings such as `Active` are rejected before disk write.
+- Legacy continuation migration now deterministically maps `Complete`/`Active`/`Stopped`/`Error`/`Idle` into canonical `RunStatus`, preserves continuation counters, and only renames the legacy file after post-write reload validation succeeds.
+- Canonical stop reason spellings and continuation numeric defaults live in `lux_run_state.rs` as typed Rust contract values for downstream tasks.
+- `cargo test lux_run_state` and `cargo test lux_continuation_state` pass; targeted evidence was written under `.sisyphus/evidence/task-1-*.txt`.
+
 ## [Task 3] Completed roadmap pushed milestone schema
 - Added `RoadmapPhaseStatus::Pushed` with explicit pushed evidence fields on `RoadmapPhase`.
 - Pushed phases now require non-empty `pushed_at`, `push_git_sha`, and `push_evidence_path`; errors name the missing field.
