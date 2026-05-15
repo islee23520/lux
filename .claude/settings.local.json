@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(meta|csproj|sln|user|userprefs\\)$')",
+      "Bash(git rm *)",
+      "Bash(git reset *)",
+      "Bash(git add *)"
+    ]
+  }
+}

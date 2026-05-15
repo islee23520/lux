@@ -1,0 +1,17 @@
+{
+  "name": "regression-suite",
+  "version": "1.0.0",
+  "description": "Use to design or run regression checks for changed behavior. Prefer targeted tests first, then typecheck/lint/build/smoke. Include command, expected signal, observed result, and remaining untested risk.",
+  "displayName": "Regression Suite",
+  "type": "core",
+  "keywords": [
+    "lux",
+    "regression",
+    "suite",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

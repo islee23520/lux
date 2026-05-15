@@ -1,18 +1,23 @@
+#[path = "../src/lux_ambiguity.rs"]
+mod lux_ambiguity;
+#[path = "../src/lux_roadmap.rs"]
+mod lux_roadmap;
+#[path = "../src/lux_spec.rs"]
+mod lux_spec;
 #[allow(dead_code)]
 #[path = "../src/project.rs"]
 mod project;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
-#[path = "../src/lux_ambiguity.rs"]
-mod lux_ambiguity;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
-use project::{detect_unity_project, DetectedPackage, UnityProjectDetection};
 use lux_ambiguity::TargetedQuestion;
-use lux_spec::{answer_direct, apply_detection_to_spec, lux_init_interactive, lux_load, GlossarySpec, LuxInitInteractiveOptions, PackagesSpec, SpecProject, SpecQuestionIo, TestingSpec, UnitySpec};
+use lux_spec::{
+    answer_direct, apply_detection_to_spec, lux_init_interactive, lux_load, GlossarySpec,
+    LuxInitInteractiveOptions, PackagesSpec, SpecProject, SpecQuestionIo, TestingSpec, UnitySpec,
+};
+use project::{detect_unity_project, DetectedPackage, UnityProjectDetection};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -23,7 +28,8 @@ struct TestTempDir {
 impl TestTempDir {
     fn new() -> Self {
         let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("lux-detection-test-{}-{count}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("lux-detection-test-{}-{count}", std::process::id()));
         std::fs::create_dir(&path).expect("temp directory should be created");
         Self { path }
     }
@@ -99,6 +105,8 @@ fn spec_question(phase: &str) -> TargetedQuestion {
         domain: "spec".to_string(),
         phase: phase.to_string(),
         question: "test question".to_string(),
+        options: Vec::new(),
+        default_value: None,
         priority: 0.5,
     }
 }
@@ -146,11 +154,35 @@ fn lux_init_interactive_non_interactive() {
 
     assert_eq!(lux_path, temp.path().join(".lux"));
     assert_eq!(io.call_count, 0);
-    assert_eq!(spec.project_name, temp.path().file_name().expect("temp dir should have a name").to_string_lossy());
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.detected_version.as_deref()), Some("6000.0.0f1"));
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.render_pipeline.as_deref()), Some("urp"));
-    assert_eq!(spec.testing.as_ref().and_then(|testing| testing.framework.as_deref()), Some("Unity Test Framework"));
-    assert!(spec.packages.as_ref().is_some_and(|packages| packages.required.is_empty()));
+    assert_eq!(
+        spec.project_name,
+        temp.path()
+            .file_name()
+            .expect("temp dir should have a name")
+            .to_string_lossy()
+    );
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.detected_version.as_deref()),
+        Some("6000.0.0f1")
+    );
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.render_pipeline.as_deref()),
+        Some("urp")
+    );
+    assert_eq!(
+        spec.testing
+            .as_ref()
+            .and_then(|testing| testing.framework.as_deref()),
+        Some("Unity Test Framework")
+    );
+    assert!(spec
+        .packages
+        .as_ref()
+        .is_some_and(|packages| packages.required.is_empty()));
 }
 
 #[test]
@@ -177,13 +209,30 @@ fn lux_init_interactive_with_answers() {
     let spec = lux_load(temp.path()).expect("spec should load");
 
     assert_eq!(io.call_count, 4);
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.required_version.as_deref()), Some("6000.0.0f1"));
-    assert_eq!(spec.targets.as_ref().map(|targets| targets.platforms.clone()), Some(vec!["android".to_string(), "ios".to_string()]));
-    assert_eq!(spec.testing.as_ref().and_then(|testing| testing.strategy.as_deref()), Some("EditMode smoke tests"));
     assert_eq!(
-        spec.packages
+        spec.unity
             .as_ref()
-            .map(|packages| packages.required.iter().map(|package| package.name.as_str()).collect::<Vec<_>>()),
+            .and_then(|unity| unity.required_version.as_deref()),
+        Some("6000.0.0f1")
+    );
+    assert_eq!(
+        spec.targets
+            .as_ref()
+            .map(|targets| targets.platforms.clone()),
+        Some(vec!["android".to_string(), "ios".to_string()])
+    );
+    assert_eq!(
+        spec.testing
+            .as_ref()
+            .and_then(|testing| testing.strategy.as_deref()),
+        Some("EditMode smoke tests")
+    );
+    assert_eq!(
+        spec.packages.as_ref().map(|packages| packages
+            .required
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<_>>()),
         Some(vec!["com.unity.addressables", "com.unity.inputsystem"])
     );
 }
@@ -192,8 +241,12 @@ fn lux_init_interactive_with_answers() {
 fn answer_direct_sets_unity_required_version() {
     let mut spec = SpecProject::default();
 
-    answer_direct(&mut spec, &spec_question("unity.required_version"), "6000.0.0f1")
-        .expect("answer should apply");
+    answer_direct(
+        &mut spec,
+        &spec_question("unity.required_version"),
+        "6000.0.0f1",
+    )
+    .expect("answer should apply");
 
     assert_eq!(
         spec.unity
@@ -215,7 +268,9 @@ fn answer_direct_parses_target_platforms() {
     .expect("answer should apply");
 
     assert_eq!(
-        spec.targets.as_ref().map(|targets| targets.platforms.clone()),
+        spec.targets
+            .as_ref()
+            .map(|targets| targets.platforms.clone()),
         Some(vec![
             "android".to_string(),
             "ios".to_string(),
@@ -248,9 +303,16 @@ fn answer_direct_parses_required_packages() {
     )
     .expect("answer should apply");
 
-    let required = &spec.packages.as_ref().expect("packages should exist").required;
+    let required = &spec
+        .packages
+        .as_ref()
+        .expect("packages should exist")
+        .required;
     assert_eq!(
-        required.iter().map(|package| package.name.as_str()).collect::<Vec<_>>(),
+        required
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<_>>(),
         vec![
             "com.unity.inputsystem",
             "com.unity.textmeshpro",
@@ -287,6 +349,8 @@ fn answer_direct_skips_unsupported_domain() {
         domain: "design".to_string(),
         phase: "unity.required_version".to_string(),
         question: "test question".to_string(),
+        options: Vec::new(),
+        default_value: None,
         priority: 0.5,
     };
 
@@ -299,7 +363,9 @@ fn answer_direct_skips_unsupported_domain() {
 fn detect_unity_project_non_unity_returns_none() {
     let temp = TestTempDir::new();
 
-    assert!(detect_unity_project(temp.path()).expect("detection should succeed").is_none());
+    assert!(detect_unity_project(temp.path())
+        .expect("detection should succeed")
+        .is_none());
 }
 
 #[test]
@@ -455,28 +521,52 @@ fn apply_detection_fills_empty_spec() {
     apply_detection_to_spec(&mut spec, &detection);
 
     assert_eq!(spec.project_name, "SampleGame");
-    assert_eq!(spec.unity, Some(UnitySpec {
-        required_version: None,
-        detected_version: Some("6000.0.0f1".to_string()),
-        render_pipeline: Some("urp".to_string()),
-        scripting_backend: Some("il2cpp".to_string()),
-        ..UnitySpec::default()
-    }));
-    assert_eq!(spec.targets.as_ref().map(|targets| targets.platforms.clone()), Some(vec!["Windows".to_string(), "macOS".to_string()]));
-    assert_eq!(spec.packages, Some(PackagesSpec {
-        required: vec![],
-        recommended: vec![],
-        forbidden: vec![],
-        detected: vec![
-            lux_spec::PackageEntry { name: "com.unity.test-framework".to_string(), reason: None, version: Some("1.3.7".to_string()), required_by_domain: Vec::new() },
-            lux_spec::PackageEntry { name: "com.unity.textmeshpro".to_string(), reason: None, version: Some("3.0.6".to_string()), required_by_domain: Vec::new() },
-        ],
-    }));
-    assert_eq!(spec.testing, Some(TestingSpec {
-        framework: Some("Unity Test Framework".to_string()),
-        strategy: None,
-        coverage: false,
-    }));
+    assert_eq!(
+        spec.unity,
+        Some(UnitySpec {
+            required_version: None,
+            detected_version: Some("6000.0.0f1".to_string()),
+            render_pipeline: Some("urp".to_string()),
+            scripting_backend: Some("il2cpp".to_string()),
+            ..UnitySpec::default()
+        })
+    );
+    assert_eq!(
+        spec.targets
+            .as_ref()
+            .map(|targets| targets.platforms.clone()),
+        Some(vec!["Windows".to_string(), "macOS".to_string()])
+    );
+    assert_eq!(
+        spec.packages,
+        Some(PackagesSpec {
+            required: vec![],
+            recommended: vec![],
+            forbidden: vec![],
+            detected: vec![
+                lux_spec::PackageEntry {
+                    name: "com.unity.test-framework".to_string(),
+                    reason: None,
+                    version: Some("1.3.7".to_string()),
+                    required_by_domain: Vec::new()
+                },
+                lux_spec::PackageEntry {
+                    name: "com.unity.textmeshpro".to_string(),
+                    reason: None,
+                    version: Some("3.0.6".to_string()),
+                    required_by_domain: Vec::new()
+                },
+            ],
+        })
+    );
+    assert_eq!(
+        spec.testing,
+        Some(TestingSpec {
+            framework: Some("Unity Test Framework".to_string()),
+            strategy: None,
+            coverage: false,
+        })
+    );
     assert_eq!(spec.glossary, Some(GlossarySpec::default()));
 }
 
@@ -542,19 +632,82 @@ fn apply_detection_preserves_user_fields() {
     apply_detection_to_spec(&mut spec, &detection);
 
     assert_eq!(spec.project_name, "UserName");
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.required_version.as_deref()), Some("2022.3.0f1"));
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.detected_version.as_deref()), Some("6000.0.0f1"));
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.render_pipeline.as_deref()), Some("built-in"));
-    assert_eq!(spec.unity.as_ref().and_then(|unity| unity.scripting_backend.as_deref()), Some("mono"));
-    assert_eq!(spec.targets.as_ref().map(|targets| targets.platforms.clone()), Some(vec!["Android".to_string()]));
-    assert_eq!(spec.targets.as_ref().and_then(|targets| targets.test_platform.as_deref()), Some("PlayMode"));
-    assert_eq!(spec.packages.as_ref().map(|packages| packages.required.clone().len()), Some(1));
-    assert_eq!(spec.packages.as_ref().map(|packages| packages.forbidden.clone().len()), Some(1));
-    assert_eq!(spec.packages.as_ref().map(|packages| packages.detected.clone().len()), Some(2));
-    assert_eq!(spec.testing.as_ref().and_then(|testing| testing.framework.as_deref()), Some("Unity Test Framework"));
-    assert_eq!(spec.testing.as_ref().and_then(|testing| testing.strategy.as_deref()), Some("existing"));
-    assert_eq!(spec.testing.as_ref().map(|testing| testing.coverage), Some(true));
-    assert_eq!(spec.glossary.as_ref().map(|glossary| glossary.path.as_str()), Some("custom/glossary.md"));
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.required_version.as_deref()),
+        Some("2022.3.0f1")
+    );
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.detected_version.as_deref()),
+        Some("6000.0.0f1")
+    );
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.render_pipeline.as_deref()),
+        Some("built-in")
+    );
+    assert_eq!(
+        spec.unity
+            .as_ref()
+            .and_then(|unity| unity.scripting_backend.as_deref()),
+        Some("mono")
+    );
+    assert_eq!(
+        spec.targets
+            .as_ref()
+            .map(|targets| targets.platforms.clone()),
+        Some(vec!["Android".to_string()])
+    );
+    assert_eq!(
+        spec.targets
+            .as_ref()
+            .and_then(|targets| targets.test_platform.as_deref()),
+        Some("PlayMode")
+    );
+    assert_eq!(
+        spec.packages
+            .as_ref()
+            .map(|packages| packages.required.clone().len()),
+        Some(1)
+    );
+    assert_eq!(
+        spec.packages
+            .as_ref()
+            .map(|packages| packages.forbidden.clone().len()),
+        Some(1)
+    );
+    assert_eq!(
+        spec.packages
+            .as_ref()
+            .map(|packages| packages.detected.clone().len()),
+        Some(2)
+    );
+    assert_eq!(
+        spec.testing
+            .as_ref()
+            .and_then(|testing| testing.framework.as_deref()),
+        Some("Unity Test Framework")
+    );
+    assert_eq!(
+        spec.testing
+            .as_ref()
+            .and_then(|testing| testing.strategy.as_deref()),
+        Some("existing")
+    );
+    assert_eq!(
+        spec.testing.as_ref().map(|testing| testing.coverage),
+        Some(true)
+    );
+    assert_eq!(
+        spec.glossary
+            .as_ref()
+            .map(|glossary| glossary.path.as_str()),
+        Some("custom/glossary.md")
+    );
 }
 
 #[test]

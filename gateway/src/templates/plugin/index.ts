@@ -54,7 +54,7 @@ export interface OrchestratorConfig {
 
 export interface OrchestratorDeps {
   stateClient: {
-    readContinuationState: typeof readContinuationState
+    readContinuationState: (opts: { gatewayUrl: string; projectPath: string }) => Promise<ContinuationState>
     writeContinuationState: (opts: ContinuationStateWriteOptions, state: ContinuationState) => Promise<ContinuationWriteResult>
   }
   ticketLoader: {
@@ -239,7 +239,7 @@ export class ContinuationOrchestrator {
     const interval = Math.max(this.config.minContinuationIntervalMs, backoff)
     if (now - this.lastDispatchTime < interval) return this.result(false, null, null, "rate_limited")
 
-    let contState = this.deps.stateClient.readContinuationState(this.config.projectPath)
+    let contState = await this.deps.stateClient.readContinuationState({ gatewayUrl: this.config.gatewayUrl, projectPath: this.config.projectPath })
     if (contState.status === "Stopped") return this.result(false, contState.stop_reason as StopReason, contState.current_ticket_id, "stopped")
 
     const ticketSummary = this.deps.ticketLoader.loadTickets(this.config.projectPath)

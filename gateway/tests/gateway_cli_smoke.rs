@@ -442,7 +442,7 @@ fn skill_install_project_adapt_writes_metadata_and_info_json_reads_it() {
         "lux.skill.adaptation.v1"
     );
 
-    let installed_dir = project.join(".lux/skills/smoke-adapt-skill");
+    let installed_dir = project.join(".agents/skills/smoke-adapt-skill");
     assert!(installed_dir.join("manifest.json").is_file());
     assert!(installed_dir.join("SKILL.md").is_file());
     assert!(installed_dir.join("references/usage.md").is_file());
@@ -789,6 +789,10 @@ fn rust_lux_unity_context_reads_shared_context_file() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_get_logs_returns_console_entries() {
     let temp_dir = create_temp_dir("lux-unity-get-logs");
     let project_root = temp_dir.join("Project");
@@ -878,6 +882,10 @@ fn rust_lux_unity_get_logs_returns_console_entries() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_clear_console_returns_before_and_after_counts() {
     let temp_dir = create_temp_dir("lux-unity-clear-console");
     let project_root = temp_dir.join("Project");
@@ -948,6 +956,10 @@ fn rust_lux_unity_clear_console_returns_before_and_after_counts() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_focus_window_returns_focused_true() {
     let temp_dir = create_temp_dir("lux-unity-focus-window");
     let project_root = temp_dir.join("Project");
@@ -1103,6 +1115,10 @@ fn rust_lux_unity_get_hierarchy_returns_hierarchy_metadata() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_screenshot_returns_file_metadata_and_annotations() {
     let temp_dir = create_temp_dir("lux-unity-screenshot");
     let project_root = temp_dir.join("Project");
@@ -1190,6 +1206,10 @@ fn rust_lux_unity_screenshot_returns_file_metadata_and_annotations() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_control_play_mode_sends_action_and_waits_for_match() {
     let temp_dir = create_temp_dir("lux-unity-control-play-mode");
     let project_root = temp_dir.join("Project");
@@ -1271,6 +1291,10 @@ fn rust_lux_unity_control_play_mode_sends_action_and_waits_for_match() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_simulate_keyboard_sends_press_key() {
     let temp_dir = create_temp_dir("lux-unity-simulate-keyboard");
     let project_root = temp_dir.join("Project");
@@ -1361,6 +1385,10 @@ fn rust_lux_unity_simulate_keyboard_sends_press_key() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_simulate_mouse_ui_sends_eventsystem_coordinates() {
     let temp_dir = create_temp_dir("lux-unity-simulate-mouse-ui");
     let project_root = temp_dir.join("Project");
@@ -1450,6 +1478,10 @@ fn rust_lux_unity_simulate_mouse_ui_sends_eventsystem_coordinates() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_simulate_mouse_input_sends_smooth_delta() {
     let temp_dir = create_temp_dir("lux-unity-simulate-mouse-input");
     let project_root = temp_dir.join("Project");
@@ -1542,6 +1574,10 @@ fn rust_lux_unity_simulate_mouse_input_sends_smooth_delta() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_record_input_sends_start_action_and_prints_artifact() {
     let temp_dir = create_temp_dir("lux-unity-record-input");
     let project_root = temp_dir.join("Project");
@@ -1623,6 +1659,10 @@ fn rust_lux_unity_record_input_sends_start_action_and_prints_artifact() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_replay_input_sends_file_and_prints_status() {
     let temp_dir = create_temp_dir("lux-unity-replay-input");
     let project_root = temp_dir.join("Project");
@@ -1710,6 +1750,10 @@ fn rust_lux_unity_replay_input_sends_file_and_prints_status() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_execute_dynamic_code_loads_file_and_prints_result() {
     let temp_dir = create_temp_dir("lux-unity-execute-dynamic-code");
     let project_root = temp_dir.join("Project");
@@ -1801,6 +1845,10 @@ fn rust_lux_unity_execute_dynamic_code_loads_file_and_prints_result() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_execute_dynamic_code_sends_inline_code_and_prints_result() {
     let temp_dir = create_temp_dir("lux-unity-execute-dynamic-code-inline");
     let project_root = temp_dir.join("Project");
@@ -1884,6 +1932,10 @@ fn rust_lux_unity_execute_dynamic_code_sends_inline_code_and_prints_result() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_launch_waits_for_bridge_readiness() {
     let temp_dir = create_temp_dir("lux-unity-launch-wait");
     let project_root = temp_dir.join("Project");
@@ -1979,6 +2031,10 @@ fn rust_lux_unity_launch_waits_for_bridge_readiness() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "integration"),
+    ignore = "requires uloop passthrough and an external uloop binary"
+)]
 fn rust_lux_unity_launch_no_wait_returns_immediately() {
     let temp_dir = create_temp_dir("lux-unity-launch-no-wait");
     let project_root = temp_dir.join("Project");
@@ -2444,6 +2500,11 @@ fn create_test_unity_project(prefix: &str, include_lux_package: bool) -> std::pa
     fs::create_dir_all(project.join("Assets")).expect("create Assets dir");
     fs::create_dir_all(project.join("ProjectSettings")).expect("create ProjectSettings dir");
     fs::create_dir_all(project.join("Packages")).expect("create Packages dir");
+    fs::write(
+        project.join("ProjectSettings/ProjectVersion.txt"),
+        "m_EditorVersion: 2022.3.20f1\nm_EditorVersionWithRevision: 2022.3.20f1\n",
+    )
+    .expect("write ProjectVersion.txt");
     let dependencies = if include_lux_package {
         r#""com.linalab.lux": "file:Packages/com.linalab.lux""#
     } else {
@@ -2553,7 +2614,15 @@ fn websocket_status(port: u16, path: &str, headers: &[(&str, &str)]) -> u16 {
     ];
     websocket_headers.extend_from_slice(headers);
 
-    request_status(port, path, &websocket_headers).expect("read WebSocket response status")
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(status) = request_status(port, path, &websocket_headers) {
+            return status;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    panic!("read WebSocket response status")
 }
 
 fn request_status(port: u16, path: &str, headers: &[(&str, &str)]) -> Option<u16> {
@@ -2562,7 +2631,7 @@ fn request_status(port: u16, path: &str, headers: &[(&str, &str)]) -> Option<u16
 
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
+        .set_read_timeout(Some(Duration::from_millis(100)))
         .expect("set read timeout");
 
     let mut request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n");
@@ -2576,9 +2645,34 @@ fn request_status(port: u16, path: &str, headers: &[(&str, &str)]) -> Option<u16
 
     stream.write_all(request.as_bytes()).ok()?;
 
-    let mut response = [0_u8; 512];
-    let size = stream.read(&mut response).ok()?;
-    let response = std::str::from_utf8(&response[..size]).ok()?;
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 512];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(size) => {
+                response.extend_from_slice(&chunk[..size]);
+                if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+
+    let response = std::str::from_utf8(&response).ok()?;
     response
         .lines()
         .next()?
@@ -2610,6 +2704,7 @@ fn create_test_unity_project_with_urp(prefix: &str) -> std::path::PathBuf {
     let manifest = serde_json::json!({
         "dependencies": {
             "com.unity.render-pipelines.universal": "14.0.8",
+            "com.unity.modules.ui": "1.0.0",
             "com.linalab.lux": "file:Packages/com.linalab.lux",
             "com.unity.textmeshpro": "3.0.6"
         }
@@ -2636,7 +2731,7 @@ fn create_test_skill_source_with_compatibility(name: &str) -> std::path::PathBuf
         "keywords": ["compat"],
         "type": "test",
         "source": source.display().to_string(),
-        "requiredPackages": ["com.unity.render-pipelines.universal"],
+        "requiredPackages": ["com.unity.modules.ui"],
         "compatibleRenderPipelines": ["urp"],
         "contextSlimRules": {
             "maxReferences": 5,
@@ -2810,10 +2905,10 @@ fn skill_install_adapt_context_slimming_filters_references() {
     let slim = &json["adaptation_metadata"]["context_slimming"];
 
     // 4 references total: usage.md, getting-started.md, hdrp-only-post-processing.md, advanced-shaders.md
-    assert_eq!(slim["total_references"], 4);
+    assert_eq!(slim["totalReferences"], 4);
 
     // hdrp-only-post-processing.md and advanced-shaders.md should be excluded
-    let excluded = slim["excluded_references"]
+    let excluded = slim["excludedReferences"]
         .as_array()
         .expect("excluded refs");
     let excluded_names: Vec<&str> = excluded.iter().filter_map(|v| v.as_str()).collect();
@@ -2827,7 +2922,7 @@ fn skill_install_adapt_context_slimming_filters_references() {
     );
 
     // usage.md and getting-started.md should remain included
-    let included = slim["included_references"]
+    let included = slim["includedReferences"]
         .as_array()
         .expect("included refs");
     let included_names: Vec<&str> = included.iter().filter_map(|v| v.as_str()).collect();
@@ -2841,7 +2936,7 @@ fn skill_install_adapt_context_slimming_filters_references() {
     );
 
     // slimmed_references = 2 (only usage + getting-started after filtering)
-    assert_eq!(slim["slimmed_references"], 2);
+    assert_eq!(slim["slimmedReferences"], 2);
 }
 
 #[test]

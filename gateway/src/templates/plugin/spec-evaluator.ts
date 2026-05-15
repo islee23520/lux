@@ -22,7 +22,7 @@ export function loadSpec(projectPath: string): LuxSpecProject | null {
   try {
     const content = fs.readFileSync(specPath, "utf-8")
     return JSON.parse(content) as LuxSpecProject
-  } catch {
+  } catch { /* intentional: missing or corrupt spec falls back to continuation-driven ambiguity */
     return null
   }
 }
@@ -38,7 +38,7 @@ export function readUnityPackages(projectPath: string): PackageEntry[] {
       reason: null,
       version,
     }))
-  } catch {
+  } catch { /* intentional: missing manifest means no detected packages */
     return []
   }
 }
@@ -50,7 +50,7 @@ export function readUnityVersion(projectPath: string): string | null {
     const content = fs.readFileSync(versionPath, "utf-8")
     const match = content.match(/m_EditorVersion:\s*(.+)/)
     return match ? match[1]!.trim() : null
-  } catch {
+  } catch { /* intentional: missing version file means version is unknown */
     return null
   }
 }
@@ -65,6 +65,7 @@ export function evaluateSpec(projectPath: string, config?: LuxPluginConfig): Lux
   const spec = loadSpec(projectPath)
 
   if (!spec) {
+    // Missing spec is treated as intentionally ambiguous so ticket state still drives continuation.
     return {
       should_continue: true,
       next_action: "No spec.json found. Run 'lux spec init' or 'lux bridge install' first.",
@@ -135,9 +136,11 @@ export function evaluateSpec(projectPath: string, config?: LuxPluginConfig): Lux
     passedChecks++
   }
 
+  // Ambiguity polarity: 0.0 = fully clear, 1.0 = maximally ambiguous
   const ambiguityScore = totalChecks > 0 ? 1 - passedChecks / totalChecks : 1.0
   const nextAction = issues.length > 0 ? issues[0]! : ""
-  const targetAmbiguity = config?.targetAmbiguity ?? 0.7
+  // Canonical ambiguity threshold matches lux_loop.rs DEFAULT_AMBIGUITY_THRESHOLD.
+  const targetAmbiguity = config?.targetAmbiguity ?? 0.02
   const shouldContinueByThreshold = ambiguityScore > targetAmbiguity
 
   return {

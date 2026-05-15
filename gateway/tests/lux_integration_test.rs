@@ -103,11 +103,13 @@ fn spec_round_trip_with_new_fields() {
             .min_sdk["android"],
         "23"
     );
-    assert!(parsed
-        .testing
-        .as_ref()
-        .expect("testing should be present")
-        .coverage);
+    assert!(
+        parsed
+            .testing
+            .as_ref()
+            .expect("testing should be present")
+            .coverage
+    );
 }
 
 #[test]
@@ -197,7 +199,7 @@ fn spec_evaluation_with_target_ambiguity() {
     spec.glossary = Some(GlossarySpec::default());
 
     let evaluation = calculate_ambiguity(&spec);
-    let target_ambiguity = 1.0 - evaluation.overall_score;
+    let target_ambiguity = evaluation.overall_score;
 
     let strict_target_ambiguity = 0.02;
     let lenient_target_ambiguity = 0.90;

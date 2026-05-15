@@ -1,0 +1,1033 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "manifest_version": 1,
+  "source": "hatayama/unity-cli-loop",
+  "source_version": "2.1.2",
+  "generated_at": "2026-05-14T00:00:00Z",
+  "notes": "Lux-maintained mirror of uloop CLI surface for self-conversion sync",
+  "commands": [
+    {
+      "name": "list",
+      "type": "fixed",
+      "description": "List detected Unity projects and their current loopable state.",
+      "args": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional project path to scope the listing to a single Unity project.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "sync",
+      "type": "fixed",
+      "description": "Synchronize uloop metadata and local project state.",
+      "args": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional project path to sync a specific Unity project.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "completion",
+      "type": "fixed",
+      "description": "Generate or install shell completion scripts for uloop.",
+      "args": [
+        {
+          "name": "install",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Install the completion script into the current shell profile instead of printing it.",
+          "choices": []
+        },
+        {
+          "name": "shell",
+          "type": "enum",
+          "required": true,
+          "default": "zsh",
+          "help": "Target shell for the completion script output or installation.",
+          "choices": ["bash", "zsh", "powershell"]
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "type": "fixed",
+      "description": "Update uloop and refresh its local installation metadata.",
+      "args": []
+    },
+    {
+      "name": "fix",
+      "type": "fixed",
+      "description": "Apply repair actions to a Unity project that is out of sync or partially broken.",
+      "args": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional Unity project path to repair in place.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "skills",
+      "type": "fixed",
+      "description": "Manage uloop skill packages for supported AI clients and global installs.",
+      "args": [],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": "List installed or available skill targets for a client scope.",
+          "args": [
+            {
+              "name": "target",
+              "type": "enum",
+              "required": true,
+              "default": "global",
+              "help": "Skill target to inspect.",
+              "choices": ["claude", "codex", "cursor", "gemini", "agents", "windsurf", "antigravity", "flat", "global"]
+            }
+          ]
+        },
+        {
+          "name": "install",
+          "description": "Install uloop skills for a chosen client or global target.",
+          "args": [
+            {
+              "name": "target",
+              "type": "enum",
+              "required": true,
+              "default": "global",
+              "help": "Destination target for skill installation.",
+              "choices": ["claude", "codex", "cursor", "gemini", "agents", "windsurf", "antigravity", "flat", "global"]
+            }
+          ]
+        },
+        {
+          "name": "uninstall",
+          "description": "Remove installed uloop skills from a chosen client or global target.",
+          "args": [
+            {
+              "name": "target",
+              "type": "enum",
+              "required": true,
+              "default": "global",
+              "help": "Destination target from which skills will be removed.",
+              "choices": ["claude", "codex", "cursor", "gemini", "agents", "windsurf", "antigravity", "flat", "global"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "launch",
+      "type": "fixed",
+      "description": "Launch or attach uloop to a Unity project and prepare the editor session.",
+      "args": [
+        {
+          "name": "project-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Positional project path to launch; omitted values use the current working directory.",
+          "choices": []
+        },
+        {
+          "name": "restart",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Restart the Unity process before launching the project loop.",
+          "choices": []
+        },
+        {
+          "name": "delete-recovery",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Delete recovery state before starting the new launch session.",
+          "choices": []
+        },
+        {
+          "name": "quit",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Quit the current Unity instance before launching a new one.",
+          "choices": []
+        },
+        {
+          "name": "platform",
+          "type": "enum",
+          "required": false,
+          "default": "",
+          "help": "Override the target platform used for launch preparation.",
+          "choices": []
+        },
+        {
+          "name": "max-depth",
+          "type": "int",
+          "required": false,
+          "default": 3,
+          "help": "Maximum directory depth to scan when resolving Unity project roots.",
+          "choices": []
+        },
+        {
+          "name": "add-unity-hub",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Register the project with Unity Hub when launching.",
+          "choices": []
+        },
+        {
+          "name": "favorite",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Mark the project as a favorite in the launcher metadata.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "focus-window",
+      "type": "fixed",
+      "description": "Bring the Unity project window to the foreground.",
+      "args": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional project path whose editor window should be focused.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "compile",
+      "type": "dynamic",
+      "description": "Trigger a Unity script recompilation for the selected project.",
+      "args": [
+        {
+          "name": "force-recompile",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Force a recompile even when the project appears up to date.",
+          "choices": []
+        },
+        {
+          "name": "wait-for-domain-reload",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Wait until Unity finishes the domain reload before returning.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path to compile.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "get-logs",
+      "type": "dynamic",
+      "description": "Read Unity console logs with filtering and optional stack trace search.",
+      "args": [
+        {
+          "name": "log-type",
+          "type": "enum",
+          "required": false,
+          "default": "All",
+          "help": "Console severity to return from Unity logs.",
+          "choices": ["Error", "Warning", "Log", "All"]
+        },
+        {
+          "name": "max-count",
+          "type": "int",
+          "required": false,
+          "default": 100,
+          "help": "Maximum number of log entries to return.",
+          "choices": []
+        },
+        {
+          "name": "search-text",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Text to match against the log message body.",
+          "choices": []
+        },
+        {
+          "name": "include-stack-trace",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Include stack traces in the returned log records.",
+          "choices": []
+        },
+        {
+          "name": "use-regex",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Interpret search text as a regular expression.",
+          "choices": []
+        },
+        {
+          "name": "search-in-stack-trace",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Search the stack trace text in addition to the log message.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose logs should be queried.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "run-tests",
+      "type": "dynamic",
+      "description": "Execute Unity tests in edit mode or play mode with optional filtering.",
+      "args": [
+        {
+          "name": "test-mode",
+          "type": "enum",
+          "required": false,
+          "default": "EditMode",
+          "help": "Test runner mode to execute.",
+          "choices": ["EditMode", "PlayMode"]
+        },
+        {
+          "name": "filter-type",
+          "type": "enum",
+          "required": false,
+          "default": "all",
+          "help": "How the filter value should be interpreted.",
+          "choices": ["all", "exact", "regex", "assembly"]
+        },
+        {
+          "name": "filter-value",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Filter string, regex, or assembly name depending on filter type.",
+          "choices": []
+        },
+        {
+          "name": "save-before-run",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Save modified assets before starting the test run.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path to test.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "clear-console",
+      "type": "dynamic",
+      "description": "Clear the Unity console output for the selected project.",
+      "args": [
+        {
+          "name": "add-confirmation-message",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Emit a confirmation message after the console is cleared.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose console should be cleared.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "focus-window",
+      "type": "dynamic",
+      "description": "Bring the active Unity editor window for a project into focus.",
+      "args": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose editor window should be focused.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "get-hierarchy",
+      "type": "dynamic",
+      "description": "Inspect the active Unity scene hierarchy and optionally include component details.",
+      "args": [
+        {
+          "name": "root-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional hierarchy root path to start traversal from.",
+          "choices": []
+        },
+        {
+          "name": "max-depth",
+          "type": "int",
+          "required": false,
+          "default": -1,
+          "help": "Maximum traversal depth; use -1 for unlimited depth.",
+          "choices": []
+        },
+        {
+          "name": "include-components",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "help": "Include component names for each hierarchy node.",
+          "choices": []
+        },
+        {
+          "name": "include-inactive",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "help": "Include inactive GameObjects in the hierarchy dump.",
+          "choices": []
+        },
+        {
+          "name": "include-paths",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Include full hierarchy paths for returned nodes.",
+          "choices": []
+        },
+        {
+          "name": "use-components-lut",
+          "type": "enum",
+          "required": false,
+          "default": "auto",
+          "help": "Control whether the component lookup table is used during hierarchy inspection.",
+          "choices": ["auto", "true", "false"]
+        },
+        {
+          "name": "use-selection",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Start hierarchy inspection from the current selection.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose hierarchy should be queried.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "find-game-objects",
+      "type": "dynamic",
+      "description": "Search for GameObjects by name, path, components, tag, or layer.",
+      "args": [
+        {
+          "name": "name-pattern",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Name pattern to search for within the scene.",
+          "choices": []
+        },
+        {
+          "name": "search-mode",
+          "type": "enum",
+          "required": false,
+          "default": "Exact",
+          "help": "Matching strategy used for the object search.",
+          "choices": ["Exact", "Path", "Regex", "Contains", "Selected"]
+        },
+        {
+          "name": "required-components",
+          "type": "array",
+          "required": false,
+          "default": [],
+          "help": "Component names that each result must contain.",
+          "choices": []
+        },
+        {
+          "name": "tag",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Tag that matching GameObjects must have.",
+          "choices": []
+        },
+        {
+          "name": "layer",
+          "type": "int",
+          "required": false,
+          "default": -1,
+          "help": "Layer index that matching GameObjects must belong to.",
+          "choices": []
+        },
+        {
+          "name": "max-results",
+          "type": "int",
+          "required": false,
+          "default": 20,
+          "help": "Maximum number of matches to return.",
+          "choices": []
+        },
+        {
+          "name": "include-inactive",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Include inactive GameObjects in the search results.",
+          "choices": []
+        },
+        {
+          "name": "include-inherited-properties",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Include inherited component properties in result metadata.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path to search.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "type": "dynamic",
+      "description": "Capture a Unity window or rendering output as a screenshot.",
+      "args": [
+        {
+          "name": "window-name",
+          "type": "string",
+          "required": false,
+          "default": "Game",
+          "help": "Window name to capture.",
+          "choices": []
+        },
+        {
+          "name": "resolution-scale",
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "help": "Scale multiplier applied to the capture resolution.",
+          "choices": []
+        },
+        {
+          "name": "match-mode",
+          "type": "enum",
+          "required": false,
+          "default": "exact",
+          "help": "How the window name should be matched.",
+          "choices": ["exact", "prefix", "contains"]
+        },
+        {
+          "name": "output-directory",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Directory where the screenshot file should be written.",
+          "choices": []
+        },
+        {
+          "name": "capture-mode",
+          "type": "enum",
+          "required": false,
+          "default": "window",
+          "help": "Choose between window capture and render-target capture.",
+          "choices": ["window", "rendering"]
+        },
+        {
+          "name": "annotate-elements",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Overlay detected UI elements on the screenshot.",
+          "choices": []
+        },
+        {
+          "name": "elements-only",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Capture only detected elements instead of the full window.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose editor window should be captured.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "execute-dynamic-code",
+      "type": "dynamic",
+      "description": "Compile and execute dynamic code inside the Unity editor process.",
+      "args": [
+        {
+          "name": "code",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Source code to compile and execute inside Unity.",
+          "choices": []
+        },
+        {
+          "name": "parameters",
+          "type": "object",
+          "required": false,
+          "default": {},
+          "help": "Structured parameters available to the dynamic code runtime.",
+          "choices": []
+        },
+        {
+          "name": "compile-only",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Compile the code without executing it.",
+          "choices": []
+        },
+        {
+          "name": "yield-to-foreground-requests",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Allow foreground requests to interrupt the dynamic execution loop.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose editor should run the dynamic code.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "get-project-info",
+      "type": "dynamic",
+      "description": "Return high-level information about the active Unity project.",
+      "args": []
+    },
+    {
+      "name": "get-version",
+      "type": "dynamic",
+      "description": "Return the installed uloop version and build metadata.",
+      "args": []
+    },
+    {
+      "name": "control-play-mode",
+      "type": "dynamic",
+      "description": "Control Unity play mode state from the loop runtime.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Play",
+          "help": "Play mode command to send to Unity.",
+          "choices": ["Play", "Stop", "Pause"]
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose play mode should be controlled.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "simulate-mouse-ui",
+      "type": "dynamic",
+      "description": "Simulate mouse interaction against Unity UI elements or screen coordinates.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Click",
+          "help": "UI mouse action to simulate.",
+          "choices": ["Click", "Drag", "DragStart", "DragMove", "DragEnd", "LongPress"]
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Target x coordinate for the mouse action.",
+          "choices": []
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Target y coordinate for the mouse action.",
+          "choices": []
+        },
+        {
+          "name": "from-x",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Starting x coordinate for drag actions.",
+          "choices": []
+        },
+        {
+          "name": "from-y",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Starting y coordinate for drag actions.",
+          "choices": []
+        },
+        {
+          "name": "drag-speed",
+          "type": "number",
+          "required": false,
+          "default": 2000,
+          "help": "Drag speed used when simulating drag gestures.",
+          "choices": []
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "required": false,
+          "default": 0.5,
+          "help": "Duration of the simulated pointer action in seconds.",
+          "choices": []
+        },
+        {
+          "name": "button",
+          "type": "enum",
+          "required": false,
+          "default": "Left",
+          "help": "Mouse button to use for the interaction.",
+          "choices": ["Left", "Right", "Middle"]
+        },
+        {
+          "name": "bypass-raycast",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Bypass raycast targeting when interacting with UI.",
+          "choices": []
+        },
+        {
+          "name": "target-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional hierarchy path of the target UI element.",
+          "choices": []
+        },
+        {
+          "name": "drop-target-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional hierarchy path of the drop target for drag operations.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose UI should receive the simulated mouse action.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "simulate-mouse-input",
+      "type": "dynamic",
+      "description": "Simulate low-level mouse input at screen coordinates.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Click",
+          "help": "Mouse input primitive to simulate.",
+          "choices": ["Click", "LongPress", "MoveDelta", "SmoothDelta", "Scroll"]
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Absolute x coordinate for the mouse input.",
+          "choices": []
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Absolute y coordinate for the mouse input.",
+          "choices": []
+        },
+        {
+          "name": "button",
+          "type": "enum",
+          "required": false,
+          "default": "Left",
+          "help": "Mouse button used by the input action.",
+          "choices": ["Left", "Right", "Middle"]
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Input duration in seconds.",
+          "choices": []
+        },
+        {
+          "name": "delta-x",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Delta to apply on the x axis for relative movement actions.",
+          "choices": []
+        },
+        {
+          "name": "delta-y",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Delta to apply on the y axis for relative movement actions.",
+          "choices": []
+        },
+        {
+          "name": "scroll-x",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Horizontal scroll amount for scroll actions.",
+          "choices": []
+        },
+        {
+          "name": "scroll-y",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Vertical scroll amount for scroll actions.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose low-level mouse input should be simulated.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "simulate-keyboard",
+      "type": "dynamic",
+      "description": "Simulate keyboard input in the Unity editor.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Press",
+          "help": "Keyboard action to simulate.",
+          "choices": ["Press", "KeyDown", "KeyUp"]
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Keyboard key or key name to send.",
+          "choices": []
+        },
+        {
+          "name": "duration",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "help": "Optional key hold duration in seconds.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose keyboard input should be simulated.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "record-input",
+      "type": "dynamic",
+      "description": "Record Unity input events for later replay.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Start",
+          "help": "Recording control command.",
+          "choices": ["Start", "Stop"]
+        },
+        {
+          "name": "output-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "File path where the recorded input should be saved.",
+          "choices": []
+        },
+        {
+          "name": "keys",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "Optional key filter or capture key list used during recording.",
+          "choices": []
+        },
+        {
+          "name": "delay-seconds",
+          "type": "number",
+          "required": false,
+          "default": 3,
+          "help": "Delay before recording starts, in seconds.",
+          "choices": []
+        },
+        {
+          "name": "show-overlay",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "help": "Show an overlay while recording is active.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose input should be recorded.",
+          "choices": []
+        }
+      ]
+    },
+    {
+      "name": "replay-input",
+      "type": "dynamic",
+      "description": "Replay previously recorded Unity input sequences.",
+      "args": [
+        {
+          "name": "action",
+          "type": "enum",
+          "required": false,
+          "default": "Start",
+          "help": "Replay control command.",
+          "choices": ["Start", "Stop", "Status"]
+        },
+        {
+          "name": "input-path",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "help": "File path of the recorded input to replay.",
+          "choices": []
+        },
+        {
+          "name": "show-overlay",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "help": "Show a playback overlay while the replay is active.",
+          "choices": []
+        },
+        {
+          "name": "loop",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "help": "Loop the replay until stopped.",
+          "choices": []
+        },
+        {
+          "name": "project_path",
+          "type": "string",
+          "required": true,
+          "default": "",
+          "help": "Unity project path whose input sequence should be replayed.",
+          "choices": []
+        }
+      ]
+    }
+  ]
+}

@@ -111,7 +111,8 @@ export function updateGlossarySpec(specPath: string, glossaryPath: string): void
     glossary.last_updated = new Date().toISOString()
 
     fs.writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`, "utf-8")
-  } catch {
+  } catch (error) {
+    console.warn("[lux-glossary-manager] Failed to update spec glossary:", error)
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "name": "test-helpers",
+  "version": "1.0.0",
+  "description": "Use when adding or refactoring helper utilities for tests. Keep helpers small, deterministic, local to the test domain, and named by behavior. Avoid hiding assertions or creating broad fixtures that mask failures.",
+  "displayName": "Test Helpers",
+  "type": "core",
+  "keywords": [
+    "helpers",
+    "lux",
+    "test",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

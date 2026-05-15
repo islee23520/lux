@@ -1,0 +1,16 @@
+{
+  "name": "changelog",
+  "version": "1.0.0",
+  "description": "Use to write release notes from verified changes. Group by Added, Changed, Fixed, Removed, Security, and Internal. Mention user-visible impact first. Exclude unverified claims and noisy implementation detail.",
+  "displayName": "Changelog",
+  "type": "core",
+  "keywords": [
+    "changelog",
+    "lux",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

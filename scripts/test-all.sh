@@ -38,12 +38,12 @@ section "Rust Gateway"
 if [ "$QUICK" = true ]; then
   warn "cargo test (--quick mode, skipped)"
 else
-  if (cd "$ROOT_DIR/RustGateway~" && cargo test 2>&1); then
+  if (cd "$ROOT_DIR/gateway" && cargo test 2>&1); then
     ok "cargo test"
   else
     # Retry the known-flaky server test once
     echo "  Retrying flaky server test..."
-    if (cd "$ROOT_DIR/RustGateway~" && cargo test cli_server_starts_and_enforces_header_auth_and_origin_policy 2>&1); then
+    if (cd "$ROOT_DIR/gateway" && cargo test cli_server_starts_and_enforces_header_auth_and_origin_policy 2>&1); then
       ok "cargo test (flaky retry passed)"
     else
       err "cargo test"
@@ -51,7 +51,7 @@ else
   fi
 fi
 
-if (cd "$ROOT_DIR/RustGateway~" && cargo build 2>&1); then
+if (cd "$ROOT_DIR/gateway" && cargo build 2>&1); then
   ok "cargo build"
 else
   err "cargo build"
@@ -60,7 +60,7 @@ fi
 # ── CLI Smoke ───────────────────────────────────
 section "CLI Smoke Tests"
 
-LUX_BIN="$ROOT_DIR/RustGateway~/target/debug/lux"
+LUX_BIN="$ROOT_DIR/gateway/target/debug/lux"
 
 if [ -x "$LUX_BIN" ]; then
   "$LUX_BIN" --help > /dev/null 2>&1 && ok "lux --help" || err "lux --help"
@@ -80,7 +80,7 @@ fi
 # ── TypeScript ──────────────────────────────────
 section "TypeScript / UI"
 
-if (cd "$ROOT_DIR/RustGateway~/ui-src" && npx tsc --noEmit 2>&1); then
+if (cd "$ROOT_DIR/gateway/ui-src" && npx tsc --noEmit 2>&1); then
   ok "tsc --noEmit (strict mode)"
 else
   err "tsc --noEmit"
@@ -89,13 +89,13 @@ fi
 # ── Protocol Schema ─────────────────────────────
 section "Protocol & Module Checks"
 
-if (cd "$ROOT_DIR/RustGateway~" && cargo test protocol 2>&1); then
+if (cd "$ROOT_DIR/gateway" && cargo test protocol 2>&1); then
   ok "cargo test protocol (EventCategory serde)"
 else
   err "cargo test protocol"
 fi
 
-if (cd "$ROOT_DIR/RustGateway~" && cargo test ai_log 2>&1); then
+if (cd "$ROOT_DIR/gateway" && cargo test ai_log 2>&1); then
   ok "cargo test ai_log (JSONL primitives)"
 else
   err "cargo test ai_log"
@@ -110,13 +110,13 @@ else
   warn ".lux/ROUTING.md not found (expected in project root)"
 fi
 
-if [ -f "$ROOT_DIR/RustGateway~/src/ai_log.rs" ]; then
+if [ -f "$ROOT_DIR/gateway/src/ai_log.rs" ]; then
   ok "ai_log.rs module exists"
 else
   err "ai_log.rs module missing"
 fi
 
-if [ -f "$ROOT_DIR/RustGateway~/src/protocol.rs" ]; then
+if [ -f "$ROOT_DIR/gateway/src/protocol.rs" ]; then
   ok "protocol.rs module exists"
 else
   err "protocol.rs module missing"
@@ -127,6 +127,15 @@ section "C# / Unity Editor"
 
 warn "C# tests require Unity Editor — run via Window > General > Test Runner"
 warn "Verify: LuxAiActionLogTests, LuxAiActionLogBroadcaster tests, all *Tests/Editor/"
+
+# ── Policy Scan ────────────────────────────────
+section "Policy Scan (Core Invariants)"
+
+if (cd "$ROOT_DIR" && node scripts/policy-scan.mjs --advisory-only 2>&1); then
+  ok "policy-scan (core invariants)"
+else
+  err "policy-scan (core invariants)"
+fi
 
 # ── Summary ─────────────────────────────────────
 echo ""

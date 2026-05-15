@@ -731,6 +731,11 @@ impl GatewayState {
         let (events, _) = broadcast::channel(config.history_capacity.max(1));
         let now = Instant::now();
         let build_project_root = config.project_root.clone();
+        if let Some(project_root) = config.project_root.as_ref() {
+            if let Err(error) = crate::lux_run_recover::recover_pending_transactions(project_root) {
+                eprintln!("Warning: failed to recover Lux transactions: {error:#}");
+            }
+        }
         let persisted_tools = config
             .project_root
             .as_ref()

@@ -10,6 +10,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::lux_ambiguity::{self, TargetedQuestion};
+use crate::lux_roadmap;
 use crate::project::{self, UnityProjectDetection};
 
 pub const SUPPORTED_SPEC_MAJOR_VERSION: &str = "1";
@@ -226,10 +227,12 @@ fn can_answer_direct_question(spec: &SpecProject, question: &TargetedQuestion) -
     }
 
     match question.phase.as_str() {
-        "unity.required_version" => spec
-            .unity
-            .as_ref()
-            .is_none_or(|unity| unity.required_version.as_ref().is_none_or(|value| value.trim().is_empty())),
+        "unity.required_version" => spec.unity.as_ref().is_none_or(|unity| {
+            unity
+                .required_version
+                .as_ref()
+                .is_none_or(|value| value.trim().is_empty())
+        }),
         "targets.platforms" => spec
             .targets
             .as_ref()
@@ -238,10 +241,12 @@ fn can_answer_direct_question(spec: &SpecProject, question: &TargetedQuestion) -
             .packages
             .as_ref()
             .is_none_or(|packages| packages.required.is_empty()),
-        "testing.strategy" => spec
-            .testing
-            .as_ref()
-            .is_none_or(|testing| testing.strategy.as_ref().is_none_or(|value| value.trim().is_empty())),
+        "testing.strategy" => spec.testing.as_ref().is_none_or(|testing| {
+            testing
+                .strategy
+                .as_ref()
+                .is_none_or(|value| value.trim().is_empty())
+        }),
         _ => false,
     }
 }
@@ -446,7 +451,10 @@ pub fn answer_direct(
 
 impl SpecProject {
     pub fn validate(&self) -> Result<(), String> {
-        if !self.schema_version.starts_with(SUPPORTED_SPEC_SCHEMA_MAJOR_VERSION) {
+        if !self
+            .schema_version
+            .starts_with(SUPPORTED_SPEC_SCHEMA_MAJOR_VERSION)
+        {
             validate_supported_version(&self.version)?;
             return Ok(());
         }
@@ -1006,7 +1014,9 @@ pub enum DomainKind {
 }
 
 impl Default for DomainKind {
-    fn default() -> Self { Self::Custom }
+    fn default() -> Self {
+        Self::Custom
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1019,7 +1029,9 @@ pub enum DomainStatus {
 }
 
 impl Default for DomainStatus {
-    fn default() -> Self { Self::Undefined }
+    fn default() -> Self {
+        Self::Undefined
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1031,7 +1043,9 @@ pub enum RequirementPriority {
 }
 
 impl Default for RequirementPriority {
-    fn default() -> Self { Self::Should }
+    fn default() -> Self {
+        Self::Should
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1044,7 +1058,9 @@ pub enum RequirementStatus {
 }
 
 impl Default for RequirementStatus {
-    fn default() -> Self { Self::Proposed }
+    fn default() -> Self {
+        Self::Proposed
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1079,7 +1095,7 @@ pub struct DialecticState {
     pub questions: Vec<SpecQuestion>,
     #[serde(default)]
     pub decisions: Vec<SpecDecision>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_assumptions")]
     pub assumptions: Vec<SpecAssumption>,
 }
 
@@ -1102,6 +1118,73 @@ pub struct SpecDecision {
     pub rationale: Option<String>,
     pub source_question: Option<String>,
     pub created_at: Option<String>,
+}
+
+fn deserialize_assumptions<'de, D>(deserializer: D) -> Result<Vec<SpecAssumption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    struct AssumptionsVisitor;
+
+    impl<'de> Visitor<'de> for AssumptionsVisitor {
+        type Value = Vec<SpecAssumption>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an array of assumption strings or objects")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Vec<SpecAssumption>, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut assumptions = Vec::new();
+            while let Some(item) = seq.next_element::<serde_json::Value>()? {
+                match item {
+                    serde_json::Value::String(text) => {
+                        assumptions.push(SpecAssumption {
+                            id: format!("assumption-{}", assumptions.len()),
+                            text,
+                            confidence: None,
+                            created_at: None,
+                        });
+                    }
+                    serde_json::Value::Object(map) => {
+                        let id = map
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&format!("assumption-{}", assumptions.len()))
+                            .to_string();
+                        let text = map
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let confidence = map.get("confidence").and_then(|v| v.as_f64());
+                        let created_at = map
+                            .get("created_at")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        assumptions.push(SpecAssumption {
+                            id,
+                            text,
+                            confidence,
+                            created_at,
+                        });
+                    }
+                    _other => {
+                        return Err(de::Error::invalid_type(
+                            de::Unexpected::Other("non-string non-object"),
+                            &self,
+                        ))
+                    }
+                }
+            }
+            Ok(assumptions)
+        }
+    }
+
+    deserializer.deserialize_seq(AssumptionsVisitor)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1204,6 +1287,8 @@ pub fn lux_init(project_path: &Path) -> Result<PathBuf> {
             .with_context(|| format!("failed to write {}", spec_path.display()))?;
     }
 
+    lux_roadmap::init_or_load(project_path)?;
+
     for (domain, template) in domain_templates() {
         let path = domains_path.join(format!("{domain}.md"));
         if !path.exists() {
@@ -1261,7 +1346,8 @@ pub fn lux_reinit(project_path: &Path) -> Result<PathBuf> {
         for entry in fs::read_dir(&staging_path)
             .with_context(|| format!("failed to read {}", staging_path.display()))?
         {
-            let entry = entry.with_context(|| format!("failed to read {}", staging_path.display()))?;
+            let entry =
+                entry.with_context(|| format!("failed to read {}", staging_path.display()))?;
             let destination = backup_path.join(entry.file_name());
             fs::rename(entry.path(), &destination).with_context(|| {
                 format!("failed to move backup entry to {}", destination.display())
@@ -1290,10 +1376,23 @@ pub fn lux_load(project_path: &Path) -> Result<SpecProject> {
     let mut value: Value = serde_json::from_str(&content)
         .with_context(|| format!("failed to parse JSON {}", spec_path.display()))?;
 
-    normalize_spec_value(&mut value);
+    let repaired = normalize_spec_value(&mut value);
+
+    if repaired {
+        eprintln!("⚠️  [lux] Repaired malformed spec.json: writing normalized data back to disk");
+        let repaired_json = serde_json::to_string_pretty(&value)
+            .context("failed to serialize repaired spec.json")?;
+        fs::write(&spec_path, repaired_json)
+            .with_context(|| format!("failed to write repaired {}", spec_path.display()))?;
+    }
 
     let spec: SpecProject = serde_json::from_value(value)
-        .with_context(|| format!("failed to parse {}", spec_path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to parse {} after automatic repair; run 'lux init --force' to reinitialize, or back up the corrupt file and reinitialize",
+                spec_path.display()
+            )
+        })?;
 
     spec.validate()
         .map_err(|error| anyhow::anyhow!("Validation error: {error}"))?;
@@ -1301,16 +1400,19 @@ pub fn lux_load(project_path: &Path) -> Result<SpecProject> {
     Ok(spec)
 }
 
-fn normalize_spec_value(value: &mut Value) {
+fn normalize_spec_value(value: &mut Value) -> bool {
     let Some(object) = value.as_object_mut() else {
-        return;
+        return false;
     };
+
+    let mut repaired = false;
 
     if object.get("schema_version").is_none() {
         object.insert(
             "schema_version".to_string(),
             Value::String("2.0".to_string()),
         );
+        repaired = true;
     }
 
     let project_name = object
@@ -1324,6 +1426,7 @@ fn normalize_spec_value(value: &mut Value) {
         if meta.get("game_title").is_none() {
             if let Some(meta_object) = meta.as_object_mut() {
                 meta_object.insert("game_title".to_string(), Value::String(name));
+                repaired = true;
             }
         }
     }
@@ -1351,14 +1454,216 @@ fn normalize_spec_value(value: &mut Value) {
                 if let Some(domain_object) = domain.as_object_mut() {
                     if !domain_object.contains_key("kind") {
                         domain_object.insert("kind".to_string(), Value::String(kind.to_string()));
+                        repaired = true;
                     }
                     if !domain_object.contains_key("status") {
                         let status = if defined { "Defined" } else { "Undefined" };
-                        domain_object.insert("status".to_string(), Value::String(status.to_string()));
+                        domain_object
+                            .insert("status".to_string(), Value::String(status.to_string()));
+                        repaired = true;
                     }
+
+                    repaired |= repair_struct_array_field(
+                        domain_object,
+                        "requirements",
+                        &format!("domains.{key}.requirements"),
+                        normalize_requirement_entry,
+                    );
                 }
             }
         }
+
+        if let Some(custom) = domains.get_mut("custom").and_then(Value::as_object_mut) {
+            for (name, domain) in custom {
+                if let Some(domain_object) = domain.as_object_mut() {
+                    repaired |= repair_struct_array_field(
+                        domain_object,
+                        "requirements",
+                        &format!("domains.custom.{name}.requirements"),
+                        normalize_requirement_entry,
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(dialectic) = object.get_mut("dialectic").and_then(Value::as_object_mut) {
+        repaired |= repair_struct_array_field(
+            dialectic,
+            "assumptions",
+            "dialectic.assumptions",
+            normalize_assumption_entry,
+        );
+    }
+
+    repaired
+}
+
+fn repair_struct_array_field<F>(
+    object: &mut serde_json::Map<String, Value>,
+    field_key: &str,
+    field_path: &str,
+    mut normalize_entry: F,
+) -> bool
+where
+    F: FnMut(&mut Value) -> Vec<String>,
+{
+    let Some(field_value) = object.get_mut(field_key) else {
+        return false;
+    };
+
+    let mut reasons = Vec::new();
+    let mut entries = match std::mem::take(field_value) {
+        Value::Array(entries) => entries,
+        other => {
+            reasons.push(format!(
+                "coerced {} value into array",
+                json_value_kind(&other)
+            ));
+            vec![other]
+        }
+    };
+
+    let mut repaired = !reasons.is_empty();
+    let mut normalized_entries = Vec::with_capacity(entries.len());
+
+    for mut entry in entries.drain(..) {
+        let entry_reasons = normalize_entry(&mut entry);
+        if !entry_reasons.is_empty() {
+            repaired = true;
+            reasons.extend(entry_reasons);
+        }
+        normalized_entries.push(entry);
+    }
+
+    *field_value = Value::Array(normalized_entries);
+
+    if repaired {
+        eprintln!(
+            "⚠️  [lux] Repaired malformed {field_path} in spec.json: {}",
+            reasons.join("; ")
+        );
+    }
+
+    repaired
+}
+
+fn normalize_assumption_entry(entry: &mut Value) -> Vec<String> {
+    match entry {
+        Value::String(text) => {
+            let text = std::mem::take(text);
+            *entry = assumption_entry_value(text);
+            vec!["converted string entry to object".to_string()]
+        }
+        Value::Object(object) => normalize_assumption_object(object),
+        ref other => {
+            let kind = json_value_kind(other);
+            let text = json_value_to_text(other);
+            *entry = assumption_entry_value(text);
+            vec![format!("converted {kind} entry to object")]
+        }
+    }
+}
+
+fn normalize_requirement_entry(entry: &mut Value) -> Vec<String> {
+    match entry {
+        Value::String(text) => {
+            let text = std::mem::take(text);
+            *entry = requirement_entry_value(text);
+            vec!["converted string entry to object".to_string()]
+        }
+        Value::Object(object) => normalize_requirement_object(object),
+        ref other => {
+            let kind = json_value_kind(other);
+            let text = json_value_to_text(other);
+            *entry = requirement_entry_value(text);
+            vec![format!("converted {kind} entry to object")]
+        }
+    }
+}
+
+fn normalize_assumption_object(object: &mut serde_json::Map<String, Value>) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    if !matches!(object.get("id"), Some(Value::String(id)) if !id.trim().is_empty()) {
+        object.insert("id".to_string(), Value::String(Uuid::new_v4().to_string()));
+        reasons.push("filled missing id".to_string());
+    }
+
+    if !matches!(object.get("text"), Some(Value::String(_))) {
+        object.insert("text".to_string(), Value::String(String::new()));
+        reasons.push("filled missing text".to_string());
+    }
+
+    if !matches!(
+        object.get("confidence"),
+        Some(Value::Number(_)) | Some(Value::Null)
+    ) {
+        object.insert("confidence".to_string(), Value::Null);
+        reasons.push("normalized confidence to null".to_string());
+    }
+
+    if !matches!(
+        object.get("created_at"),
+        Some(Value::String(_)) | Some(Value::Null)
+    ) {
+        object.insert("created_at".to_string(), Value::Null);
+        reasons.push("normalized created_at to null".to_string());
+    }
+
+    reasons
+}
+
+fn normalize_requirement_object(object: &mut serde_json::Map<String, Value>) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    if !matches!(object.get("id"), Some(Value::String(id)) if !id.trim().is_empty()) {
+        object.insert("id".to_string(), Value::String(Uuid::new_v4().to_string()));
+        reasons.push("filled missing id".to_string());
+    }
+
+    if !matches!(object.get("text"), Some(Value::String(_))) {
+        object.insert("text".to_string(), Value::String(String::new()));
+        reasons.push("filled missing text".to_string());
+    }
+
+    reasons
+}
+
+fn assumption_entry_value(text: String) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("id".to_string(), Value::String(Uuid::new_v4().to_string()));
+    object.insert("text".to_string(), Value::String(text));
+    object.insert("confidence".to_string(), Value::Null);
+    object.insert("created_at".to_string(), Value::Null);
+    Value::Object(object)
+}
+
+fn requirement_entry_value(text: String) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("id".to_string(), Value::String(Uuid::new_v4().to_string()));
+    object.insert("text".to_string(), Value::String(text));
+    Value::Object(object)
+}
+
+fn json_value_to_text(value: &Value) -> String {
+    value.as_str().map(str::to_string).unwrap_or_else(|| {
+        if value.is_null() {
+            String::new()
+        } else {
+            value.to_string()
+        }
+    })
+}
+
+fn json_value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 
@@ -1586,7 +1891,10 @@ mod tests {
             .context("missing reinit backup")?;
 
         assert!(backup_path.join("spec.json").is_file());
-        assert_eq!(fs::read_to_string(backup_path.join("logs/marker.txt"))?, "preserved");
+        assert_eq!(
+            fs::read_to_string(backup_path.join("logs/marker.txt"))?,
+            "preserved"
+        );
         Ok(())
     }
 

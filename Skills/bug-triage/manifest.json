@@ -1,0 +1,17 @@
+{
+  "name": "bug-triage",
+  "version": "1.0.0",
+  "description": "Use to classify and route defects. Determine impact, scope, likely owner, regression window, blocking status, and verification path. Prefer quick reproduction and narrow hypotheses before implementation.",
+  "displayName": "Bug Triage",
+  "type": "core",
+  "keywords": [
+    "bug",
+    "lux",
+    "triage",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

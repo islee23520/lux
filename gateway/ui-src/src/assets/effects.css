@@ -1,0 +1,114 @@
+.scanlines {
+  position: relative;
+  isolation: isolate;
+}
+
+.scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.04) 0,
+    rgba(255, 255, 255, 0.04) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.noise {
+  position: relative;
+  isolation: isolate;
+}
+
+.noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.8'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  mix-blend-mode: screen;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 40;
+}
+
+.corner-bracket {
+  position: relative;
+  isolation: isolate;
+}
+
+.corner-bracket::before,
+.corner-bracket::after {
+  content: "";
+  position: absolute;
+  width: var(--corner-bracket-size, 1.5rem);
+  height: var(--corner-bracket-size, 1.5rem);
+  border: var(--border-strong, 1px solid var(--color-line-strong));
+  pointer-events: none;
+}
+
+.corner-bracket::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.corner-bracket::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+.dot-grid-bg {
+  background-image: radial-gradient(var(--dot-grid-color, var(--color-line)) 1px, transparent 1px);
+  background-position: var(--dot-grid-offset, 0 0);
+  background-size: var(--dot-grid-size, 1.5rem) var(--dot-grid-size, 1.5rem);
+}
+
+.sys-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  border: var(--border-thin, 1px solid var(--color-line));
+  border-radius: 0.125rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-surface-raised) 72%, transparent);
+}
+
+.hr-label {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.hr-label::before,
+.hr-label::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.hr-label::before {
+  margin-right: 1rem;
+}
+
+.hr-label::after {
+  margin-left: 1rem;
+}

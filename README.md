@@ -183,7 +183,7 @@ lux unity control-play-mode --action play  # PlayMode 제어
 lux unity launch           # Unity Editor 실행
 lux unity get-logs         # 콘솔 로그 읽기
 lux unity focus-window     # Editor 창 포커스
-lux unity install-uloop    # uloop(Unity CLI passthrough) 설치
+lux unity install-uloop    # uloop(Unity CLI passthrough) 설치 (ralph/start-work는 Lux 명령어가 아님)
 
 # Spec & 계획
 lux spec                   # Spec 상태 보기
@@ -488,6 +488,7 @@ Lux/
 
 ### 범위 외
 
+- ❌ 외부 GitHub 마일스톤/이슈 연동 (본 로드맵 범위 외)
 - ❌ WebRTC / 원격 비디오 스트리밍 (실험적, `experimental_flags.remote_webrtc=true`로 게이트)
 - ❌ 브라우저에서 Unity Editor 원격 제어
 - ❌ iOS companion app / PWA
@@ -560,8 +561,8 @@ lux unity status
 
 ### 집행
 
-- `npm run policy-check` — 소스에서 불변성 위반 스캔
-- `scripts/test-all.sh --policy` — 모든 검사 포함 정책 스캔 실행
+- `node scripts/policy-scan.mjs --advisory-only` — 소스에서 불변성 위반 스캔
+- `bash scripts/test-all.sh --quick` — 모든 검사 포함 정책 스캔 실행 (빠른 모드)
 - 의도적 예외 주석: `// lux-allow-failover`, `// lux-allow-legacy`
 
 ---

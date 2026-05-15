@@ -14,7 +14,16 @@ fn test_ambiguity_empty_spec() {
 
     let report = calculate_ambiguity(&spec);
 
-    assert_score_close(report.overall_score, 0.0);
+    assert!(
+        report.overall_score > 0.5,
+        "empty spec ambiguity was {}",
+        report.overall_score
+    );
+    assert!(
+        report.overall_score > 0.02,
+        "empty spec should not meet convergence target: {}",
+        report.overall_score
+    );
     assert_score_close(report.completion_ratio, 0.0);
     assert_eq!(report.domain_scores.len(), 7);
     assert!(report.targeted_questions.len() >= 21);
@@ -28,15 +37,15 @@ fn test_ambiguity_full_spec() {
     let report = calculate_ambiguity(&spec);
 
     assert!(
-        report.overall_score >= 0.8,
-        "overall score was {}",
+        report.overall_score <= 0.02,
+        "complete spec ambiguity was {}",
         report.overall_score
     );
     assert_score_close(report.completion_ratio, 1.0);
     assert!(report.targeted_questions.is_empty());
     for domain in report.domain_scores.values() {
         assert!(
-            domain.composite_score >= 0.8,
+            domain.composite_score <= 0.02,
             "{} was {}",
             domain.domain_name,
             domain.composite_score
@@ -70,12 +79,12 @@ fn test_ambiguity_partial_spec() {
 
     let report = calculate_ambiguity(&spec);
 
-    assert!(report.overall_score > 0.0);
-    assert!(report.overall_score < 0.8);
+    assert!(report.overall_score > 0.02);
+    assert!(report.overall_score < 1.0);
     assert_score_close(report.completion_ratio, 2.0 / 7.0);
     assert!(
         report.domain_scores["design"].composite_score
-            > report.domain_scores["audio"].composite_score
+            < report.domain_scores["audio"].composite_score
     );
 }
 
@@ -91,11 +100,27 @@ fn test_ambiguity_composite_formula() {
 
     let report = calculate_ambiguity(&spec);
     let design = &report.domain_scores["design"];
-    let expected = (0.40 * design.completion_ratio)
-        + (0.35 * design.ai_eval_score)
-        + (0.25 * design.ast_parsability);
+    let expected = 1.0
+        - ((0.40 * design.completion_ratio)
+            + (0.35 * design.ai_eval_score)
+            + (0.25 * design.ast_parsability));
 
     assert_score_close(design.composite_score, expected);
+}
+
+#[test]
+fn test_ambiguity_polarity_contract_empty_vs_complete_spec() {
+    let empty = calculate_ambiguity(&SpecProject::default());
+    assert!(empty.overall_score > 0.5);
+    assert!(empty.overall_score > 0.02);
+
+    let workspace = TestWorkspace::new("polarity_contract");
+    let complete = calculate_ambiguity(&full_spec(&workspace));
+    assert!(
+        complete.overall_score <= 0.02,
+        "complete spec ambiguity was {}",
+        complete.overall_score
+    );
 }
 
 #[test]
@@ -243,7 +268,10 @@ fn test_ambiguity_new_field_questions_have_spec_domain() {
         .iter()
         .filter(|question| matches!(
             question.phase.as_str(),
-            "unity.required_version" | "targets.platforms" | "packages.required" | "testing.strategy"
+            "unity.required_version"
+                | "targets.platforms"
+                | "packages.required"
+                | "testing.strategy"
         ))
         .all(|question| question.domain == "spec"));
 }
@@ -280,10 +308,13 @@ fn full_spec(workspace: &TestWorkspace) -> SpecProject {
         coverage: true,
     });
     spec.glossary = Some(GlossarySpec {
-        path: workspace.markdown_path(
-            "glossary",
-            "# Glossary\n- Term: Canonical meaning for project planning.\n",
-        ).to_string_lossy().to_string(),
+        path: workspace
+            .markdown_path(
+                "glossary",
+                "# Glossary\n- Term: Canonical meaning for project planning.\n",
+            )
+            .to_string_lossy()
+            .to_string(),
         last_updated: Some("2026-05-11T00:00:00Z".to_string()),
         term_count: 1,
     });

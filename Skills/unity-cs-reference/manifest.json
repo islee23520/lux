@@ -1,17 +1,15 @@
 {
   "name": "unity-cs-reference",
   "version": "1.0.0",
-  "description": "Unity C# reference source lookup for Editor automation and extension development. Uses unitycsreference repo as read-only reference.",
+  "description": "Use as a compact lookup guide for Unity Editor API decisions. Prefer public UnityEditor APIs. Key areas: AssetDatabase import/GUID/path flow; BuildPipeline and BuildReport; CompilationPipeline and domain reload; EditorApplication events; UI Toolkit EditorWindow lifecycle; PackageManager requests; serialization and ScriptableObject persistence. Do not copy Unity implementation code.",
   "displayName": "Unity C# Reference",
   "type": "core",
   "keywords": [
-    "unity",
-    "editor",
-    "uidelements",
-    "assetdatabase",
-    "buildpipeline",
+    "cs",
+    "lux",
     "reference",
-    "internal-api"
+    "unity",
+    "workflow"
   ],
   "author": {
     "name": "Linalab"

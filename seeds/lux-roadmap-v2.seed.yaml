@@ -4,6 +4,9 @@ goal: |
   test execution, CodexImage pipelines, Git workflows, and a web-based local dashboard
   into one Editor-focused package — all running locally, no remote streaming.
 
+  NOTE: This seed file is a template for initializing roadmap state.
+  The canonical runtime truth is maintained in `.lux/roadmap.json`.
+
 constraints:
   - Unity 6000.0+ (Unity 6.x) compatibility required
   - Rust gateway uses Axum 0.7, tokio 1, clap 4.5, anyhow, serde — extend, do not replace
@@ -36,7 +39,6 @@ acceptance_criteria:
       - "Rust lux CLI: compile, test, unity control, skill commands (RustGateway~/)"
       - "Automation guardrails: command blacklist, audit log, approval state"
       - "Skill Manager foundation: lux skill list/info CLI, core lux-unity skill"
-      - "MCP helper for AI tool integration (McpHelper~/)"
     verification: "cargo test 134/134 pass, C# tests compile, CLI functional"
 
   phase_b_ai_event_system:

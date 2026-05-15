@@ -62,10 +62,13 @@ import { getState } from '../session-state'
 describe('ContinuationOrchestrator Prompt Dispatch (T5.3)', () => {
   const mockDeps = {
     stateClient: {
-      readContinuationState: vi.fn(() => ({
-        status: 'Active',
+      readContinuationState: vi.fn(async () => ({
+        status: 'Idle',
+        continuation_count: 0,
+        stagnation_count: 0,
         consecutive_failures: 0,
         current_ticket_id: null,
+        stop_reason: null
       })),
       writeContinuationState: vi.fn().mockResolvedValue({ seq: 1 }),
     },

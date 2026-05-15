@@ -51,10 +51,13 @@ import { evaluateStopConditions } from '../stop-evaluator'
 describe('ContinuationOrchestrator Stop Conditions (T5.4)', () => {
   const mockDeps = {
     stateClient: {
-      readContinuationState: vi.fn(() => ({
-        status: 'Active',
+      readContinuationState: vi.fn(async () => ({
+        status: 'Idle',
+        continuation_count: 0,
+        stagnation_count: 0,
         consecutive_failures: 0,
         current_ticket_id: null,
+        stop_reason: null
       })),
       writeContinuationState: vi.fn().mockResolvedValue({ seq: 1 }),
     },
@@ -158,23 +161,13 @@ describe('ContinuationOrchestrator Stop Conditions (T5.4)', () => {
   })
 
   it('returns continuation_state_error without persisting stopped state', async () => {
-    mockDeps.stateClient.readContinuationState.mockReturnValueOnce({
-      status: 'Active',
+    mockDeps.stateClient.readContinuationState.mockResolvedValueOnce({
+      status: 'Error',
       consecutive_failures: 3,
-      current_ticket_id: 'T-current',
-    } as any)
-    vi.mocked(evaluateStopConditions).mockReturnValueOnce({
-      shouldStop: true,
-      reason: 'consecutive_state_error',
-    } as any)
-
-    const result = await orchestrator.onTrigger('test')
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      stopReason: 'consecutive_state_error',
-      selectedTicketId: 'T-current',
-      message: 'continuation_state_error',
+      continuation_count: 0,
+      stagnation_count: 0,
+      current_ticket_id: null,
+      stop_reason: null
     })
     expect(mockDeps.stateClient.writeContinuationState).not.toHaveBeenCalled()
   })

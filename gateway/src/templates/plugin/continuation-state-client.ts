@@ -42,13 +42,22 @@ function defaultState(): ContinuationState {
   }
 }
 
-export function readContinuationState(projectPath: string): ContinuationState {
-  const filePath = path.join(projectPath, ".lux", STATE_FILE)
+export async function readContinuationState(opts: { gatewayUrl: string; projectPath: string }): Promise<ContinuationState> {
+  const url = new URL(
+    `/api/lux/continuation/state?project_path=${encodeURIComponent(opts.projectPath)}`,
+    opts.gatewayUrl,
+  )
 
   try {
-    const content = fs.readFileSync(filePath, "utf-8")
-    return JSON.parse(content) as ContinuationState
-  } catch { /* intentional: corrupt or missing state falls back to a clean baseline */
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+    })
+    if (!response.ok) {
+      return defaultState()
+    }
+    return await response.json() as ContinuationState
+  } catch {
     return defaultState()
   }
 }
@@ -100,7 +109,7 @@ export async function updateContinuationState(
   opts: ContinuationStateWriteOptions,
   partial: Partial<ContinuationState>,
 ): Promise<ContinuationState> {
-  const current = readContinuationState(opts.projectPath)
+  const current = await readContinuationState({ gatewayUrl: opts.gatewayUrl, projectPath: opts.projectPath })
   const merged: ContinuationState = { ...current, ...partial }
   await writeContinuationState(opts, merged)
   return merged

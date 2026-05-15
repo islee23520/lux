@@ -1,4 +1,21 @@
 import type { LuxEvalResult, LuxPluginConfig } from "./types"
+import type { LuxSessionState } from "./session-state"
+
+export interface OpenCodePromptContext {
+  directory: string
+  client?: {
+    session?: {
+      promptAsync?: (input: {
+        path: { id: string }
+        body: { parts: Array<{ type: "text"; text: string }> }
+        query: { directory: string }
+      }) => Promise<unknown>
+    }
+    tui?: {
+      appendPrompt?: (input: { body: { parts: Array<{ type: "text"; text: string }> } }) => Promise<unknown>
+    }
+  }
+}
 
 interface SessionState {
   continuationCount: number
@@ -6,8 +23,10 @@ interface SessionState {
   lastTimestamp: number
 }
 
-const DEFAULT_MAX_CONTINUATIONS = 10
+const DEFAULT_MAX_CONTINUATIONS = 50
 const DEFAULT_TARGET_AMBIGUITY = 0.02
+export const CONTINUATION_COOLDOWN_MS = 5_000
+export const MAX_CONSECUTIVE_FAILURES = 5
 
 const sessionStates = new Map<string, SessionState>()
 
@@ -125,4 +144,62 @@ export function getSessionSummary(projectPath: string): {
     lastAction: state.lastAction,
     elapsedMs: Date.now() - state.lastTimestamp,
   }
+}
+
+export function canInjectContinuation(state: LuxSessionState, now = Date.now()): boolean {
+  if (state.inFlight) return false
+  if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return false
+  return now - state.lastInjectedAt >= CONTINUATION_COOLDOWN_MS
+}
+
+function buildPromptParts(message: string): Array<{ type: "text"; text: string }> {
+  return [{ type: "text", text: message }]
+}
+
+export async function injectContinuation(args: {
+  ctx: OpenCodePromptContext
+  sessionID: string
+  message: string
+  state: LuxSessionState
+}): Promise<boolean> {
+  const { ctx, sessionID, message, state } = args
+  if (!canInjectContinuation(state)) return false
+
+  const promptAsync = ctx.client?.session?.promptAsync
+  if (!promptAsync) {
+    state.lastInjectedAt = Date.now()
+    state.consecutiveFailures += 1
+    return false
+  }
+
+  state.inFlight = true
+  try {
+    await promptAsync({
+      path: { id: sessionID },
+      body: { parts: buildPromptParts(message) },
+      query: { directory: ctx.directory },
+    })
+    state.inFlight = false
+    state.lastInjectedAt = Date.now()
+    state.awaitingPostInjectionProgressCheck = true
+    state.consecutiveFailures = 0
+    return true
+  } catch {
+    state.inFlight = false
+    state.lastInjectedAt = Date.now()
+    state.consecutiveFailures += 1
+    return false
+  }
+}
+
+export async function injectAppendPrompt(args: {
+  ctx: OpenCodePromptContext
+  message: string
+}): Promise<boolean> {
+  const { ctx, message } = args
+  const appendPrompt = ctx.client?.tui?.appendPrompt
+  if (!appendPrompt) return false
+
+  await appendPrompt({ body: { parts: buildPromptParts(message) } })
+  return true
 }

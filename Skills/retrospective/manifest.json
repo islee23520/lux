@@ -1,0 +1,16 @@
+{
+  "name": "retrospective",
+  "version": "1.0.0",
+  "description": "Use after incidents or milestones. Record what happened, impact, root causes, what worked, what failed, concrete follow-ups, owners, and prevention checks. Keep it blameless and evidence-based.",
+  "displayName": "Retrospective",
+  "type": "core",
+  "keywords": [
+    "lux",
+    "retrospective",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

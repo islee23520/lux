@@ -1,0 +1,17 @@
+{
+  "name": "tech-debt",
+  "version": "1.0.0",
+  "description": "Use to document or reduce debt. Describe symptom, cost, affected files, invariant risk, simplest cleanup, tests needed, and what not to change. Prefer deletion and reuse over new abstractions.",
+  "displayName": "Technical Debt",
+  "type": "core",
+  "keywords": [
+    "debt",
+    "lux",
+    "tech",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

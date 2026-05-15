@@ -14,7 +14,7 @@ constraints:
 - Runtime gameplay events must be usable through both a C# static API and ScriptableObject/serialized event channel wrapper
 - Redaction must run before persistence, before API responses, and before broadcasts
 - Retention policy must be implemented or explicitly configurable, not left as a TODO
-- Do not include Phase 7 Native MCP Gateway, Phase 8 Record/Replay, Phase 9-11 visual regression/cross-platform CI/CD/WebRTC
+- Do not include Phase 8 Record/Replay, Phase 9-11 visual regression/cross-platform CI/CD/WebRTC
   optional addon stabilization
 - Advanced dedicated timeline UI, live dashboard, graph UI, and operational diagnostics dashboard are non-goals for this Seed
 - Keep POSIX/macOS workflow compatible with the user's existing OpenCode/Ouroboros setup

@@ -1,0 +1,17 @@
+{
+  "name": "code-review",
+  "version": "1.0.0",
+  "description": "Use to review LUX diffs for correctness, maintainability, security, and tests. Check Rust Axum/CLI conventions, React strict hooks, no UI mock fallback data, Unity 6000+ bridge compatibility, protocol consistency, and fresh verification evidence.",
+  "displayName": "Code Review",
+  "type": "core",
+  "keywords": [
+    "code",
+    "lux",
+    "review",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

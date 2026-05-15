@@ -30,9 +30,7 @@ goal: |
 
     1. RustGateway Axum middleware (`ldp_middleware.rs`) that intercepts build,
        test, and dynamic-code commands to run pre-operation LDP verification
-    2. MCP tool wrappers in McpHelper exposing `ldp_verify_operation` and
-       `ldp_record_decision` tools for AI agent consumption
-    3. CLI subcommands under `lux ldp *` (check, review, history, approve)
+    2. CLI subcommands under `lux ldp *` (check, review, history, approve)
        with human-readable and --json output modes
     4. C# Editor script (`LuxLdpGate.cs`) providing in-editor decision prompts
        before destructive operations via the AI Bridge
@@ -159,23 +157,6 @@ acceptance_criteria:
       print("AC-LDP-05 PASS")
     status: PENDING
 
-  - id: AC-LDP-06
-    description: >
-      MCP helper exposes `ldp_verify_operation` and `ldp_record_decision`
-      tools. AI agent can call these tools through the MCP protocol and
-      receive structured responses matching CLI --json format.
-    verification: |
-      cd Packages/com.linalab.lux/McpHelper~ && \
-      node -e "
-      const { mcpTools } = require('./dist/ldp-tools');
-      assert(mcpTools.ldp_verify_operation);
-      assert(mcpTools.ldp_record_decision);
-      assert(mcpTools.ldp_verify_operation.parameters.operation.enum.includes('compile'));
-      assert(mcpTools.ldp_verify_operation.parameters.operation.enum.includes('dynamic-code'));
-      console.log('AC-LDP-06 PASS');
-      "
-    status: PENDING
-
   - id: AC-LDP-07
     description: >
       Skills/ldp-decision-protocol/ directory exists containing manifest.json
@@ -267,7 +248,7 @@ ontology:
   description: >
     Integration layer connecting Lina Decision Protocol (LDP) ethical
     verification engine with Lux Unity Toolkit's automation pipeline.
-    Comprises Rust middleware, MCP tool wrappers, CLI subcommands, C# editor
+    Comprises Rust middleware, CLI subcommands, C# editor
     gate, and skill documentation.
   fields:
     - name: operation_type
@@ -338,13 +319,6 @@ evaluation_principles:
       initialization (warm pool).
     weight: 0.9
 
-  - name: mcp_tool_compliance
-    description: >
-      MCP tools follow MCP protocol spec correctly. Tool schemas match
-      declared parameters. Responses are structured and include all required
-      fields.
-    weight: 0.85
-
   - name: audit_trail_integrity
     description: >
       Decision records are immutable once written. Lineage references are
@@ -368,7 +342,7 @@ evaluation_principles:
   - name: test_coverage
     description: >
       Comprehensive tests: middleware (pass/reject/bypass), CLI (all subcommands,
-      --json modes, error cases), MCP tool schemas, lineage tracking,
+      --json modes, error cases), lineage tracking,
       hard-reject behavior. Minimum 8 new tests.
     weight: 0.85
 
@@ -418,13 +392,6 @@ brownfield:
         Axum HTTP server with route definitions. LDP middleware hooks into
         POST /api/compile, POST /api/run-tests, POST /api/dynamic-code routes
         via axum::middleware::from_fn_with_state.
-
-    - path: Packages/com.linalab.lux/McpHelper~/src/index.ts
-      role: primary
-      summary: >
-        Node.js MCP helper entry point. LDP integration adds
-        ldp-tools.ts module exporting ldp_verify_operation and
-        ldp_record_decision tool definitions.
 
     - path: Packages/com.linalab.lux/LuxEditor/
       role: reference
@@ -501,8 +468,7 @@ brownfield:
 # This seed defines 12 acceptance criteria across 4 integration layers:
 #   Layer 1 — CLI Commands (AC-LDP-01 to 04): check, review, history, approve
 #   Layer 2 — RustGateway Middleware (AC-LDP-05, 11): Axum hook, readonly bypass
-#   Layer 3 — MCP Tools (AC-LDP-06): verify + record tool wrappers
-#   Layer 4 — Skill Package & Validation (AC-LDP-07 to 12): docs, tests, lineage
+#   Layer 3 — Skill Package & Validation (AC-LDP-07 to 12): docs, tests, lineage
 #
 # Total evaluation principles: 9 (weighted, protocol fidelity = 1.0 highest)
 # Hard rejects: AC-LDP-10 (B/C category No → forced REJECT)

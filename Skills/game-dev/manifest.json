@@ -1,0 +1,17 @@
+{
+  "name": "game-dev",
+  "version": "1.0.0",
+  "description": "Use for compact game planning in LUX. Validate concept, core loop, mechanics, progression, technical feasibility, QA plan, and ethics. Check the player promise, target audience, prototype scope, Unity risks, telemetry/privacy, accessibility, non-exploitative retention, and measurable playtest criteria.",
+  "displayName": "Game Development",
+  "type": "core",
+  "keywords": [
+    "dev",
+    "game",
+    "lux",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

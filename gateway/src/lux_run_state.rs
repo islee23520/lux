@@ -19,6 +19,7 @@ pub enum RunStatus {
     Idle,
     Planning,
     AwaitingApproval,
+    AwaitingEvidence,
     ExecutingTicket,
     Verifying,
     AwaitingPlayStart,
@@ -104,6 +105,7 @@ impl fmt::Display for RunStatus {
             Self::Idle => "Idle",
             Self::Planning => "Planning",
             Self::AwaitingApproval => "AwaitingApproval",
+            Self::AwaitingEvidence => "AwaitingEvidence",
             Self::ExecutingTicket => "ExecutingTicket",
             Self::Verifying => "Verifying",
             Self::AwaitingPlayStart => "AwaitingPlayStart",
@@ -172,6 +174,8 @@ pub struct RunState {
     pub executor: ExecutorInfo,
     pub last_error: Option<String>,
     #[serde(default)]
+    pub stop_reason: Option<String>,
+    #[serde(default)]
     pub continuation_count: u32,
     #[serde(default)]
     pub stagnation_count: u32,
@@ -195,6 +199,9 @@ pub struct RunState {
 pub struct ApprovalState {
     pub gate: Option<String>,
     pub pending_transition: Option<String>,
+    #[serde(default)]
+    pub awaiting_since: Option<String>,
+    #[serde(default)]
     pub created_at: Option<String>,
 }
 
@@ -225,6 +232,7 @@ impl RunState {
             resume: ResumeData::default(),
             executor: ExecutorInfo::default(),
             last_error: None,
+            stop_reason: None,
             continuation_count: 0,
             stagnation_count: 0,
             consecutive_failures: 0,
@@ -494,6 +502,7 @@ impl std::str::FromStr for RunStatus {
             "Idle" => Ok(Self::Idle),
             "Planning" => Ok(Self::Planning),
             "AwaitingApproval" => Ok(Self::AwaitingApproval),
+            "AwaitingEvidence" => Ok(Self::AwaitingEvidence),
             "ExecutingTicket" => Ok(Self::ExecutingTicket),
             "Verifying" => Ok(Self::Verifying),
             "AwaitingPlayStart" => Ok(Self::AwaitingPlayStart),

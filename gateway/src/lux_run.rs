@@ -16,10 +16,62 @@ use crate::{
     lux_io::atomic_write_json,
     lux_lock::{acquire_lux_lock, LuxLockGuard, DEFAULT_STALE_THRESHOLD_SECS},
     lux_metrics::RunMetrics,
+    lux_roadmap::{RoadmapPhaseStatus, RoadmapReality},
+    lux_run_state::{ApprovalGateType, StopReason},
     lux_run_state::{RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNodeProjection, TaskStatus},
     lux_team_profile::{RoleMapping, TeamProfile, TeamSizePreset},
 };
+
+pub const MILESTONE_PUSH_TRANSITION: &str = "milestone_push";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionStatus {
+    Planned,
+    Committed,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TransactionOperation {
+    WriteFile {
+        path: PathBuf,
+        content: String,
+        #[serde(default)]
+        before_content: Option<String>,
+    },
+    RenameFile {
+        from: PathBuf,
+        to: PathBuf,
+        #[serde(default)]
+        before_from_content: Option<String>,
+        #[serde(default)]
+        before_to_content: Option<String>,
+    },
+    DeleteFile {
+        path: PathBuf,
+        #[serde(default)]
+        before_content: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionJournal {
+    pub id: String,
+    pub created_at: String,
+    pub status: TransactionStatus,
+    pub operations: Vec<TransactionOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MilestonePushApproval {
+    pub project_path: PathBuf,
+    pub milestone_id: Option<String>,
+    pub evidence_path: PathBuf,
+    pub git_sha: String,
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct RunArgs {
@@ -66,6 +118,77 @@ pub struct RunLifecycle {
     pub state: RunState,
     pub active_agents: HashMap<String, AgentSession>,
     lock_guard: Option<LuxLockGuard>,
+}
+
+impl TransactionJournal {
+    pub fn planned(run_id: &str, project_path: &Path, operations: Vec<TransactionOperation>) -> Result<Self> {
+        let mut journal = Self {
+            id: Uuid::new_v4().to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            status: TransactionStatus::Planned,
+            operations,
+        };
+        journal.capture_before_state()?;
+        let path = journal_path(project_path, run_id, &journal.id);
+        atomic_write_json(&path, &journal)?;
+        Ok(journal)
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("failed to read transaction journal {}", path.display()))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse transaction journal {}", path.display()))
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        atomic_write_json(path, self)
+    }
+
+    pub fn apply(&self) -> Result<()> {
+        for operation in &self.operations {
+            apply_transaction_operation(operation)?;
+        }
+        Ok(())
+    }
+
+    pub fn rollback(&self) -> Result<()> {
+        for operation in self.operations.iter().rev() {
+            rollback_transaction_operation(operation)?;
+        }
+        Ok(())
+    }
+
+    pub fn mark_committed(&mut self, path: &Path) -> Result<()> {
+        self.status = TransactionStatus::Committed;
+        self.save(path)
+    }
+
+    pub fn mark_rolled_back(&mut self, path: &Path) -> Result<()> {
+        self.status = TransactionStatus::RolledBack;
+        self.save(path)
+    }
+
+    fn capture_before_state(&mut self) -> Result<()> {
+        for operation in &mut self.operations {
+            match operation {
+                TransactionOperation::WriteFile { path, before_content, .. }
+                | TransactionOperation::DeleteFile { path, before_content } => {
+                    *before_content = read_optional_file(path)?;
+                }
+                TransactionOperation::RenameFile {
+                    from,
+                    to,
+                    before_from_content,
+                    before_to_content,
+                } => {
+                    *before_from_content = read_optional_file(from)?;
+                    *before_to_content = read_optional_file(to)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl RunLifecycle {
@@ -380,8 +503,15 @@ pub fn complete_run(lifecycle: &mut RunLifecycle) -> Result<()> {
         .nodes
         .values()
         .any(|node| node.status == TaskStatus::Blocked);
+    let awaiting_evidence = lifecycle
+        .dag
+        .nodes
+        .values()
+        .any(|node| node.status == TaskStatus::AwaitingEvidence);
     let next = if failed {
         RunStatus::Failed
+    } else if awaiting_evidence {
+        RunStatus::AwaitingEvidence
     } else {
         RunStatus::Completed
     };
@@ -397,6 +527,170 @@ pub fn complete_run(lifecycle: &mut RunLifecycle) -> Result<()> {
         "[lux-run] completed run with status {}",
         lifecycle.state.status
     );
+    Ok(())
+}
+
+pub fn begin_milestone_push_approval(
+    run_state: &mut RunState,
+    evidence_path: &Path,
+    git_sha_preview: Option<String>,
+) -> Result<()> {
+    if !evidence_path.exists() {
+        bail!(
+            "milestone push approval requires existing T3 evidence at {}",
+            evidence_path.display()
+        );
+    }
+    let awaiting_since = Utc::now().to_rfc3339();
+    run_state.transition_to(RunStatus::AwaitingApproval, "begin_milestone_push_approval")?;
+    run_state.approval.gate = Some(ApprovalGateType::ApproveDiff.to_string());
+    run_state.approval.pending_transition = Some(MILESTONE_PUSH_TRANSITION.to_string());
+    run_state.approval.awaiting_since = Some(awaiting_since.clone());
+    run_state.approval.created_at = Some(awaiting_since);
+    run_state.resume.checkpoint = Some(
+        serde_json::json!({
+            "evidencePath": evidence_path.display().to_string(),
+            "gitShaPreview": git_sha_preview,
+        })
+        .to_string(),
+    );
+    Ok(())
+}
+
+pub fn execute_milestone_push(
+    run_state: &mut RunState,
+    roadmap: &mut RoadmapReality,
+    approval: &MilestonePushApproval,
+) -> Result<()> {
+    execute_milestone_push_with_runner(run_state, roadmap, approval, run_git_push)
+}
+
+pub fn execute_milestone_push_with_runner<F>(
+    run_state: &mut RunState,
+    roadmap: &mut RoadmapReality,
+    approval: &MilestonePushApproval,
+    push_runner: F,
+) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    validate_milestone_push_approval(run_state, approval)?;
+    push_runner(&approval.project_path)?;
+
+    let mut next_roadmap = roadmap.clone();
+    mark_roadmap_phase_pushed(&mut next_roadmap, run_state, approval)?;
+
+    let mut next_state = run_state.clone();
+    next_state.transition_to(RunStatus::Completed, StopReason::MilestoneComplete.as_str())?;
+    next_state.current_ticket_id = None;
+    next_state.approval = Default::default();
+    next_state.stop_reason = Some(StopReason::MilestoneComplete.as_str().to_string());
+    next_state.last_error = None;
+    next_state.executor.heartbeat_at = Some(Utc::now().to_rfc3339());
+
+    let run_id = if next_state.run_id.is_empty() {
+        Uuid::new_v4().to_string()
+    } else {
+        next_state.run_id.clone()
+    };
+    let run_state_path = RunState::path(&approval.project_path);
+    let roadmap_path = crate::lux_roadmap::roadmap_file_path(&approval.project_path);
+    let operations = vec![
+        TransactionOperation::WriteFile {
+            path: run_state_path,
+            content: serde_json::to_string_pretty(&next_state)
+                .context("failed to serialize completed run-state")?,
+            before_content: None,
+        },
+        TransactionOperation::WriteFile {
+            path: roadmap_path,
+            content: serde_json::to_string_pretty(&next_roadmap)
+                .context("failed to serialize pushed roadmap")?,
+            before_content: None,
+        },
+    ];
+
+    let mut journal = TransactionJournal::planned(&run_id, &approval.project_path, operations)?;
+    let path = journal_path(&approval.project_path, &run_id, &journal.id);
+    journal.apply()?;
+    journal.mark_committed(&path)?;
+
+    *run_state = next_state;
+    *roadmap = next_roadmap;
+    Ok(())
+}
+
+fn validate_milestone_push_approval(
+    run_state: &RunState,
+    approval: &MilestonePushApproval,
+) -> Result<()> {
+    if run_state.status != RunStatus::AwaitingApproval.to_string() {
+        bail!(
+            "milestone push requires AwaitingApproval status, found {}",
+            run_state.status
+        );
+    }
+    if run_state.approval.gate.as_deref() != Some("ApproveDiff") {
+        bail!("milestone push requires approval.gate=ApproveDiff");
+    }
+    if run_state.approval.pending_transition.as_deref() != Some(MILESTONE_PUSH_TRANSITION) {
+        bail!("milestone push requires approval.pending_transition=milestone_push");
+    }
+    let evidence_path = resolve_project_path(&approval.project_path, &approval.evidence_path);
+    if !evidence_path.exists() {
+        bail!(
+            "milestone push requires T3 evidence before roadmap push: {}",
+            evidence_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn mark_roadmap_phase_pushed(
+    roadmap: &mut RoadmapReality,
+    run_state: &RunState,
+    approval: &MilestonePushApproval,
+) -> Result<()> {
+    let phase = if let Some(milestone_id) = approval
+        .milestone_id
+        .as_ref()
+        .or(run_state.milestone_id.as_ref())
+    {
+        roadmap
+            .phases
+            .iter_mut()
+            .find(|phase| phase.name == *milestone_id || phase.name.starts_with(milestone_id))
+            .with_context(|| format!("roadmap milestone not found: {milestone_id}"))?
+    } else {
+        roadmap
+            .phases
+            .iter_mut()
+            .find(|phase| phase.status != RoadmapPhaseStatus::Pushed)
+            .context("no roadmap phase available for milestone push")?
+    };
+
+    phase.status = RoadmapPhaseStatus::Pushed;
+    phase.pushed_at = Some(Utc::now().to_rfc3339());
+    phase.push_git_sha = Some(approval.git_sha.clone());
+    phase.push_evidence_path = Some(approval.evidence_path.display().to_string());
+    roadmap.updated_at = Utc::now().to_rfc3339();
+    roadmap.validate()?;
+    Ok(())
+}
+
+fn run_git_push(project_path: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project_path)
+        .arg("push")
+        .output()
+        .with_context(|| format!("failed to run git push in {}", project_path.display()))?;
+    if !output.status.success() {
+        bail!(
+            "git push failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
     Ok(())
 }
 
@@ -477,6 +771,105 @@ fn run_dir(lifecycle: &RunLifecycle) -> PathBuf {
         .join(".lux")
         .join("runs")
         .join(&lifecycle.state.run_id)
+}
+
+pub fn journal_path(project_path: &Path, run_id: &str, transaction_id: &str) -> PathBuf {
+    project_path
+        .join(".lux")
+        .join("runs")
+        .join(run_id)
+        .join("transactions")
+        .join(format!("{transaction_id}.json"))
+}
+
+fn apply_transaction_operation(operation: &TransactionOperation) -> Result<()> {
+    match operation {
+        TransactionOperation::WriteFile { path, content, .. } => atomic_write_text(path, content),
+        TransactionOperation::RenameFile { from, to, .. } => {
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            if from.exists() {
+                fs::rename(from, to).with_context(|| {
+                    format!("failed to rename {} to {}", from.display(), to.display())
+                })?;
+            }
+            Ok(())
+        }
+        TransactionOperation::DeleteFile { path, .. } => {
+            if path.exists() {
+                fs::remove_file(path)
+                    .with_context(|| format!("failed to delete {}", path.display()))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn rollback_transaction_operation(operation: &TransactionOperation) -> Result<()> {
+    match operation {
+        TransactionOperation::WriteFile {
+            path,
+            before_content,
+            ..
+        }
+        | TransactionOperation::DeleteFile {
+            path,
+            before_content,
+        } => restore_optional_file(path, before_content.as_deref()),
+        TransactionOperation::RenameFile {
+            from,
+            to,
+            before_from_content,
+            before_to_content,
+        } => {
+            restore_optional_file(from, before_from_content.as_deref())?;
+            restore_optional_file(to, before_to_content.as_deref())
+        }
+    }
+}
+
+fn read_optional_file(path: &Path) -> Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .with_context(|| format!("failed to read {}", path.display()))
+}
+
+fn restore_optional_file(path: &Path, content: Option<&str>) -> Result<()> {
+    match content {
+        Some(content) => atomic_write_text(path, content),
+        None => {
+            if path.exists() {
+                fs::remove_file(path)
+                    .with_context(|| format!("failed to remove {}", path.display()))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn atomic_write_text(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, content)
+        .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("failed to atomically replace {}", path.display()))
+}
+
+fn resolve_project_path(project_path: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_path.join(path)
+    }
 }
 
 fn current_domain(lifecycle: &RunLifecycle) -> Option<String> {

@@ -1,0 +1,17 @@
+{
+  "name": "smoke-check",
+  "version": "1.0.0",
+  "description": "Use for fast confidence after a change. Run the smallest commands that prove the edited path starts, responds, or compiles. Report exact command output summary and stop when the core claim is proven.",
+  "displayName": "Smoke Check",
+  "type": "core",
+  "keywords": [
+    "check",
+    "lux",
+    "smoke",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

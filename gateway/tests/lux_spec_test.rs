@@ -1,9 +1,11 @@
-#[path = "../src/project.rs"]
-mod project;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
 #[path = "../src/lux_ambiguity.rs"]
 mod lux_ambiguity;
+#[path = "../src/lux_roadmap.rs"]
+mod lux_roadmap;
+#[path = "../src/lux_spec.rs"]
+mod lux_spec;
+#[path = "../src/project.rs"]
+mod project;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -53,7 +55,8 @@ fn test_spec_schema_validates() {
 #[test]
 fn test_spec_schema_rejects_bad_version() {
     let mut spec = SpecProject::default();
-    spec.version = "2.0.0".to_string();
+    spec.schema_version = "9.0".to_string();
+    spec.version = "9.0.0".to_string();
 
     let error = spec
         .validate()
@@ -191,7 +194,10 @@ fn test_spec_new_fields_roundtrip() {
 
     let json = serde_json::to_string_pretty(&spec).expect("serialize");
     let parsed: SpecProject = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(parsed.unity.as_ref().unwrap().render_pipeline, Some("urp".to_string()));
+    assert_eq!(
+        parsed.unity.as_ref().unwrap().render_pipeline,
+        Some("urp".to_string())
+    );
     assert_eq!(parsed.targets.as_ref().unwrap().platforms.len(), 2);
 }
 
@@ -202,6 +208,7 @@ fn test_lux_init_creates_directory_structure() {
 
     assert_eq!(lux_path, temp.path().join(".lux"));
     assert!(lux_path.join("spec.json").is_file());
+    assert!(lux_path.join("roadmap.json").is_file());
 
     for directory in [
         "tickets", "logs", "backups", "sessions", "builds", "domains",
@@ -239,12 +246,12 @@ fn test_lux_init_creates_directory_structure() {
 }
 
 #[test]
-fn test_lux_init_idempotent_error() {
+fn test_lux_init_is_idempotent() {
     let temp = TestTempDir::new();
 
     lux_init(temp.path()).expect("first init should succeed");
 
-    assert!(lux_init(temp.path()).is_err());
+    assert_eq!(lux_init(temp.path()).unwrap(), temp.path().join(".lux"));
 }
 
 #[test]

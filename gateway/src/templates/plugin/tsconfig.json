@@ -12,9 +12,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": ".",
-    "types": ["@opencode-ai/plugin"]
+    "rootDir": "."
   },
-  "include": ["*.ts"],
+  "include": ["*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,0 +1,17 @@
+{
+  "name": "test-setup",
+  "version": "1.0.0",
+  "description": "Use to configure test environments. Make setup explicit, deterministic, isolated, and reversible. Avoid global state leaks, hidden network dependency, and shared temp paths.",
+  "displayName": "Test Setup",
+  "type": "core",
+  "keywords": [
+    "lux",
+    "setup",
+    "test",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

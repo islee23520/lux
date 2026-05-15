@@ -24,7 +24,7 @@ use lux::lux_spec::{
 use lux::lux_ticket::{
     FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus, TicketStore,
 };
-use lux::lux_verification::{verify_all, CheckCategory};
+use lux::lux_verification::{verify_all, CheckCategory, VerificationMode};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -621,5 +621,6 @@ fn run_verification_with_blocker(project_path: &Path) -> lux::lux_verification::
         .content_path;
     let _ = fs::remove_file(missing);
 
-    verify_all(project_path).expect("verification should complete and create blockers")
+    verify_all(project_path, VerificationMode::Cached)
+        .expect("verification should complete and create blockers")
 }

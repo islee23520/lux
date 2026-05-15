@@ -6,23 +6,40 @@ pub mod auto_update;
 pub mod capture;
 pub mod config;
 pub mod cross_platform;
+pub mod lux_agents_install;
 pub mod lux_ai_session;
 pub mod lux_ambiguity;
+pub mod lux_api;
+pub mod lux_bridge_lease;
 pub mod lux_build;
+pub mod lux_continuation_state;
+pub mod lux_doctor;
 pub mod lux_event_log;
 pub mod lux_events;
+pub mod lux_io;
+pub mod lux_lock;
 pub mod lux_loop;
+pub mod lux_metrics;
+pub mod lux_roadmap;
+pub mod lux_run;
+pub mod lux_run_recover;
+pub mod lux_run_state;
 pub mod lux_spec;
 pub mod lux_spec_loop;
+pub mod lux_task_dag;
+pub mod lux_team_profile;
 pub mod lux_terminal;
 pub mod lux_ticket;
+pub mod lux_triage;
 pub mod lux_verification;
-mod mcp;
+pub mod lux_worktree;
 pub mod project;
 mod protocol;
 mod server;
 pub mod session;
 pub mod skill_adapter;
+mod uloop_runner;
+pub mod uloop_sync;
 pub mod unity_hub;
 pub mod unity_launch;
 pub mod visual_regression;
@@ -72,6 +89,9 @@ pub struct Cli {
     /// Internal: run as background update worker
     #[arg(long, global = true, hide = true, action = ArgAction::SetTrue)]
     lux_update_worker: bool,
+    /// Internal: run as background uloop sync worker
+    #[arg(long, global = true, hide = true, action = ArgAction::SetTrue)]
+    uloop_sync_worker: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -82,21 +102,26 @@ enum Command {
     Init(LuxInitArgs),
     /// Inspect, edit, and validate Lux game specs
     Spec(LuxSpecArgs),
+    /// Inspect the canonical .lux roadmap reality file
+    Roadmap(LuxRoadmapArgs),
     /// Show Lux kanban board status
     Kanban(LuxProjectArgs),
+    /// Run automated triage pipeline on recent events
+    Triage(lux_triage::TriageArgs),
     /// Trigger a Lux game build
     Build(LuxBuildArgs),
     /// Open the latest Lux build in a browser
     Play(LuxProjectArgs),
     /// Run full Lux game harness verification
     Verify(LuxProjectArgs),
+    /// Start or manage a spec-driven automated dev run
+    Run(lux_run::RunArgs),
     /// Interactive REPL shell
     Tui(TuiArgs),
     Serve(ServeArgs),
     Unity(UnityArgs),
     Skill(SkillArgs),
     AiLog(AiLogArgs),
-    Mcp(McpArgs),
     Compile(CompileArgs),
     Bridge(BridgeArgs),
     RunTests(RunTestsArgs),
@@ -116,6 +141,12 @@ enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Update the lux binary to the latest version
+    SelfUpdate(SelfUpdateArgs),
+    /// Diagnose project health and auto-fix issues
+    Doctor(lux_doctor::DoctorArgs),
+    /// Install Lux workflow skills into .agents/skills/
+    AgentsInstall(lux_agents_install::AgentsInstallArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -145,6 +176,9 @@ struct LuxInitArgs {
     /// Back up existing .lux workspace and initialize from scratch
     #[arg(long, default_value_t = false, action = ArgAction::SetTrue)]
     force: bool,
+    /// Team profile preset or path for team-mode integration
+    #[arg(long = "team-profile")]
+    pub team_profile: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -175,6 +209,21 @@ enum LuxSpecAction {
 struct LuxSpecEditArgs {
     /// Domain name, such as design, architecture, art-style, audio, narrative, levels, or ui-ux
     domain: String,
+}
+
+#[derive(Parser, Debug)]
+struct LuxRoadmapArgs {
+    #[command(subcommand)]
+    action: Option<LuxRoadmapAction>,
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum LuxRoadmapAction {
+    /// Validate and print .lux/roadmap.json status
+    Status,
 }
 
 #[derive(Parser, Debug)]
@@ -292,7 +341,7 @@ struct SkillInstallArgs {
     /// Source URL or path to install from
     #[arg(short, long)]
     source: String,
-    /// Install to project scope (.lux/skills/) instead of global
+    /// Install to project scope (.agents/skills/) instead of global
     #[arg(short, long)]
     project: bool,
     /// Install destination scope
@@ -366,27 +415,6 @@ impl WritableSkillScope {
 struct AiLogArgs {
     #[command(subcommand)]
     action: AiLogAction,
-}
-
-#[derive(Parser, Debug)]
-struct McpArgs {
-    #[command(subcommand)]
-    action: McpAction,
-}
-
-#[derive(Subcommand, Debug)]
-enum McpAction {
-    /// Run the LUX MCP server over newline-delimited JSON-RPC stdio
-    Serve,
-    /// Register Lux as an MCP server in the project's OpenCode configuration
-    Register(McpRegisterArgs),
-}
-
-#[derive(Parser, Debug)]
-struct McpRegisterArgs {
-    /// Unity project root
-    #[arg(long)]
-    project_path: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -562,6 +590,15 @@ enum UnityCommand {
     RecordInput(UnityRecordInputArgs),
     ReplayInput(UnityReplayInputArgs),
     ExecuteDynamicCode(UnityExecuteDynamicCodeArgs),
+    // === MIGRATED from top-level Command (v2.1 deprecation) ===
+    Build(UnityBuildArgs),
+    Play(UnityPlayArgs),
+    Compile(UnityCompileArgs),
+    Bridge(UnityBridgeArgs),
+    RunTests(UnityRunTestsArgs),
+    VisualRegression(UnityVisualRegressionArgs),
+    /// Install or update uloop (unity-cli-loop) for Unity CLI passthrough
+    InstallUloop(UnityInstallUloopArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -776,6 +813,118 @@ struct UnityExecuteDynamicCodeArgs {
     file: Option<PathBuf>,
 }
 
+// --- Migrated from LuxBuildArgs (was top-level Command::Build) ---
+#[derive(Parser, Debug)]
+struct UnityBuildArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Build target to queue
+    #[arg(long, value_enum)]
+    target: LuxBuildTarget,
+}
+
+// --- Migrated from Play/LuxProjectArgs (was top-level Command::Play) ---
+#[derive(Parser, Debug)]
+struct UnityPlayArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+// --- Migrated from CompileArgs (was top-level Command::Compile) ---
+#[derive(Parser, Debug)]
+struct UnityCompileArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+// --- Migrated from BridgeArgs (was top-level Command::Bridge) ---
+#[derive(Parser, Debug)]
+struct UnityBridgeArgs {
+    #[command(subcommand)]
+    action: UnityBridgeAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum UnityBridgeAction {
+    Watch(UnityBridgeWatchArgs),
+    Install(UnityBridgeInstallArgs),
+}
+
+#[derive(Parser, Debug)]
+struct UnityBridgeWatchArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct UnityBridgeInstallArgs {
+    /// Unity project root directory
+    #[arg(long, short = 'p')]
+    project_path: PathBuf,
+}
+
+#[derive(Parser, Debug)]
+struct UnityInstallUloopArgs {
+    /// Unity project root (used to determine npm install scope)
+    #[arg(long, short = 'p')]
+    project_path: PathBuf,
+    /// Force reinstall even if already installed
+    #[arg(long)]
+    force: bool,
+    /// Install locally (into project) instead of globally
+    #[arg(long)]
+    local: bool,
+    /// Specific version to install
+    #[arg(long)]
+    version: Option<String>,
+}
+
+// --- Migrated from RunTestsArgs (was top-level Command::RunTests) ---
+/// Extended to support uloop-compatible filter options
+#[derive(Parser, Debug)]
+struct UnityRunTestsArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Test mode platform
+    #[arg(long, default_value = "EditMode")]
+    test_platform: String,
+    /// Path to write test results
+    #[arg(long)]
+    test_results: Option<PathBuf>,
+    /// Path to write test log output
+    #[arg(long)]
+    log_file: Option<PathBuf>,
+    /// Filter type for test selection (all|exact|regex|assembly)
+    #[arg(long, default_value = "all")]
+    filter_type: String,
+    /// Filter value for test selection
+    #[arg(long)]
+    filter_value: Option<String>,
+    /// Save scene before running tests
+    #[arg(long, default_value_t = false)]
+    save_before_run: bool,
+}
+
+// --- Migrated from ScreenshotArgs (was top-level Command::Screenshot) ---
+/// Visual regression screenshot (baseline comparison), distinct from editor capture
+#[derive(Parser, Debug)]
+struct UnityVisualRegressionArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Capture a named visual regression baseline
+    #[arg(long, conflicts_with = "compare")]
+    baseline: Option<String>,
+    /// Compare this baseline path against the current screenshot
+    #[arg(long, conflicts_with = "baseline")]
+    compare: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum PlayModeAction {
     Play,
@@ -958,6 +1107,14 @@ struct StatusArgs {
 }
 
 #[derive(Parser, Debug)]
+struct SelfUpdateArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    #[arg(long, default_value_t = false, action = ArgAction::SetTrue)]
+    force: bool,
+}
+
+#[derive(Parser, Debug)]
 struct ScreenshotArgs {
     /// Capture a named visual regression baseline
     #[arg(long, conflicts_with = "compare")]
@@ -1012,7 +1169,12 @@ async fn main() -> anyhow::Result<()> {
         auto_update::run_update_worker().await?;
         return Ok(());
     }
+    if cli.uloop_sync_worker {
+        uloop_sync::run_uloop_sync_worker().await?;
+        return Ok(());
+    }
     auto_update::maybe_spawn_update_check(cli.no_update_check);
+    uloop_sync::maybe_spawn_uloop_sync_worker();
 
     if let Some(path) = cli.config.clone() {
         let _ = CONFIG_PATH_OVERRIDE.set(path);
@@ -1034,20 +1196,42 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
     match cli.command {
         Command::Init(args) => run_lux_init_command(args),
         Command::Spec(args) => run_lux_spec_command(args),
+        Command::Roadmap(args) => run_lux_roadmap_command(args),
         Command::Kanban(args) => run_lux_kanban_command(args),
-        Command::Build(args) => run_lux_build_command(args),
-        Command::Play(args) => run_lux_play_command(args),
+        Command::Triage(args) => lux_triage::run_triage_command(&args),
+        Command::Build(args) => {
+            eprintln!("DEPRECATED: 'lux build' is deprecated. Use 'lux unity build' instead.");
+            run_lux_build_command(args)
+        }
+        Command::Play(args) => {
+            eprintln!("DEPRECATED: 'lux play' is deprecated. Use 'lux unity play' instead.");
+            run_lux_play_command(args)
+        }
         Command::Verify(args) => run_lux_verify_command(args),
+        Command::Run(args) => lux_run::run_command(&args),
         Command::Tui(_) => Ok(()),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Skill(args) => run_skill_command(args),
         Command::AiLog(args) => run_ai_log_command(args),
-        Command::Mcp(args) => run_mcp_command(args),
-        Command::Compile(args) => run_batch_compile(args),
-        Command::Bridge(args) => run_bridge_command(args),
-        Command::RunTests(args) => run_batch_tests(args),
-        Command::Screenshot(args) => run_screenshot_command(args),
+        Command::Compile(args) => {
+            eprintln!("DEPRECATED: 'lux compile' is deprecated. Use 'lux unity compile' instead.");
+            run_batch_compile(args)
+        }
+        Command::Bridge(args) => {
+            eprintln!("DEPRECATED: 'lux bridge' is deprecated. Use 'lux unity bridge' instead.");
+            run_bridge_command(args)
+        }
+        Command::RunTests(args) => {
+            eprintln!(
+                "DEPRECATED: 'lux run-tests' is deprecated. Use 'lux unity run-tests' instead."
+            );
+            run_batch_tests(args)
+        }
+        Command::Screenshot(args) => {
+            eprintln!("DEPRECATED: 'lux screenshot' (visual regression) is deprecated. Use 'lux unity visual-regression' instead.");
+            run_screenshot_command(args)
+        }
         Command::Session(args) => run_session_command(args),
         Command::Install(args) => run_install_command(args),
         Command::Addon(args) => run_addon_command(args),
@@ -1067,6 +1251,9 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
             generate(shell, &mut cmd, name, &mut std::io::stdout());
             Ok(())
         }
+        Command::SelfUpdate(args) => run_self_update_command(args),
+        Command::Doctor(args) => lux_doctor::run_doctor_command(args),
+        Command::AgentsInstall(args) => lux_agents_install::run_agents_install_command(args),
     }
 }
 
@@ -1585,6 +1772,15 @@ fn run_gui_command() -> anyhow::Result<()> {
 
 fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
     let project_root = resolve_lux_project_root(&args.project_path)?;
+    let lux_path = project_root.join(".lux");
+    let reinit = lux_path.exists();
+    if reinit && !args.force {
+        eprintln!(
+            "⚠️  Lux workspace already exists at {}. Reinitializing...",
+            lux_path.display()
+        );
+    }
+
     let options = lux_spec::LuxInitInteractiveOptions {
         interactive: if args.no_interactive {
             false
@@ -1596,21 +1792,65 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
     };
 
     let mut io = lux_spec::TerminalSpecQuestionIo;
-    if args.force {
+    if reinit {
         lux_spec::lux_reinit(&project_root)?;
     }
     let lux_path = lux_spec::lux_init_interactive(&project_root, &mut io, options)?;
     eprintln!("Initialized Lux at {}", lux_path.display());
 
-    if let Err(err) = register_mcp_in_opencode(&project_root) {
-        eprintln!("⚠️  Could not register Lux MCP in OpenCode: {err:#}");
-    }
-
     if let Err(err) = install_opencode_plugin(&project_root) {
         eprintln!("⚠️  Could not install Lux OpenCode plugin: {err:#}");
     }
 
+    let agents_skills_dir = project_root.join(".agents").join("skills");
+    let has_existing_lux_skills = agents_skills_dir.is_dir()
+        && std::fs::read_dir(&agents_skills_dir).is_ok_and(|mut it| {
+            it.filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with("lux-") && e.path().is_dir())
+        });
+
+    let should_install_skills = if has_existing_lux_skills && !args.force {
+        prompt_skill_overwrite(&project_root)?
+    } else {
+        !args.no_interactive || has_existing_lux_skills
+    };
+
+    if should_install_skills {
+        let install_args = lux_agents_install::AgentsInstallArgs {
+            project_path: Some(project_root.clone()),
+            force: args.force,
+            list_only: false,
+            skill_names: None,
+        };
+        match lux_agents_install::run_agents_install_command(install_args) {
+            Ok(()) => eprintln!(
+                "✅ Lux workflow skills installed to .agents/skills/ ({})",
+                lux_agents_install::list_bundled_skills().len()
+            ),
+            Err(err) => eprintln!("⚠️  Could not install Lux workflow skills: {err:#}"),
+        }
+    } else if has_existing_lux_skills {
+        eprintln!(
+            "ℹ️  Skipped skill installation (existing lux-* skills preserved). Run 'lux agents-install --force' to overwrite."
+        );
+    }
+
     Ok(())
+}
+
+fn prompt_skill_overwrite(project_root: &Path) -> anyhow::Result<bool> {
+    use std::io::{self, BufRead};
+    eprintln!();
+    eprintln!(
+        "⚠️  Existing Lux workflow skills found in {}/.agents/skills/:",
+        project_root.display()
+    );
+    eprintln!("   Installing will OVERWRITE existing lux-* skill files.");
+    eprintln!();
+    eprint!("   Overwrite existing lux-* skills? [y/N]: ");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(matches!(input.trim(), "y" | "yes" | "Y" | "YES"))
 }
 
 fn run_lux_spec_command(args: LuxSpecArgs) -> anyhow::Result<()> {
@@ -1710,6 +1950,32 @@ fn validate_lux_spec(project_root: &Path) -> anyhow::Result<()> {
     }
 }
 
+fn run_lux_roadmap_command(args: LuxRoadmapArgs) -> anyhow::Result<()> {
+    let project_root = resolve_lux_project_root(&args.project_path)?;
+    match args.action.unwrap_or(LuxRoadmapAction::Status) {
+        LuxRoadmapAction::Status => print_lux_roadmap_status(&project_root),
+    }
+}
+
+fn print_lux_roadmap_status(project_root: &Path) -> anyhow::Result<()> {
+    let roadmap = lux_roadmap::load(project_root)?;
+    println!(
+        "Lux roadmap: {}",
+        lux_roadmap::roadmap_file_path(project_root).display()
+    );
+    println!("Schema: {}", roadmap.schema_version);
+    println!("Updated: {}", roadmap.updated_at);
+    println!("Authoritative: {}", roadmap.authoritative);
+    println!("Capabilities: {}", roadmap.capabilities.len());
+    println!("Evidence refs: {}", roadmap.evidence_refs.len());
+    println!("Experimental flags: {}", roadmap.experimental_flags.len());
+    println!("Phases: {}", roadmap.phases.len());
+    for phase in roadmap.phases {
+        println!("- {}: {:?}", phase.name, phase.status);
+    }
+    Ok(())
+}
+
 fn run_lux_kanban_command(args: LuxProjectArgs) -> anyhow::Result<()> {
     use lux_ticket::TicketStore;
 
@@ -1800,7 +2066,8 @@ fn run_lux_play_command(args: LuxProjectArgs) -> anyhow::Result<()> {
 
 fn run_lux_verify_command(args: LuxProjectArgs) -> anyhow::Result<()> {
     let project_root = resolve_lux_project_root(&args.project_path)?;
-    let result = lux_verification::verify_all(&project_root)?;
+    let result =
+        lux_verification::verify_all(&project_root, lux_verification::VerificationMode::Cached)?;
     println!(
         "Lux verification: {}",
         if result.passed { "passed" } else { "failed" }
@@ -1940,6 +2207,62 @@ fn run_status_command(args: StatusArgs, config: &config::LuxConfig) -> anyhow::R
             "bridge": bridge,
         }))?
     );
+    Ok(())
+}
+
+fn run_self_update_command(args: SelfUpdateArgs) -> anyhow::Result<()> {
+    let project_path = match args.project_path {
+        Some(p) => p,
+        None => std::env::current_dir().context("failed to get current directory")?,
+    };
+
+    let state_path = lux_run_state::RunState::path(&project_path);
+    if state_path.exists() {
+        let state = lux_run_state::RunState::load(&project_path)?;
+        let status = state
+            .status
+            .parse::<lux_run_state::RunStatus>()
+            .with_context(|| {
+                format!(
+                    "failed to parse run status '{}' from {}",
+                    state.status,
+                    state_path.display()
+                )
+            })?;
+
+        let is_safe = matches!(
+            status,
+            lux_run_state::RunStatus::Idle
+                | lux_run_state::RunStatus::Completed
+                | lux_run_state::RunStatus::Failed
+                | lux_run_state::RunStatus::Interrupted
+        );
+
+        if !is_safe {
+            if args.force {
+                eprintln!(
+                    "warning: lux run is active (status={}, run_id={}). Proceeding with --force.",
+                    state.status, state.run_id
+                );
+            } else {
+                anyhow::bail!(
+                    "lux update refused: run is active (status={}, run_id={}). \
+                     Stop or complete the run first, or pass --force to override.",
+                    state.status,
+                    state.run_id
+                );
+            }
+        }
+    }
+
+    if auto_update::update_check_due() {
+        eprintln!("Update check is due. Spawning background update check...");
+        auto_update::maybe_spawn_update_check(false);
+        eprintln!("Update check spawned. The binary will be replaced on next restart if an update is available.");
+    } else {
+        eprintln!("No update check due. lux is up to date.");
+    }
+
     Ok(())
 }
 
@@ -2086,66 +2409,6 @@ fn edit_config_file() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// lux mcp
-// ---------------------------------------------------------------------------
-
-fn run_mcp_command(args: McpArgs) -> anyhow::Result<()> {
-    match args.action {
-        McpAction::Serve => mcp::run_stdio_server(mcp::create_lux_mcp_server()),
-        McpAction::Register(register_args) => run_mcp_register_command(register_args),
-    }
-}
-
-fn run_mcp_register_command(args: McpRegisterArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    register_mcp_in_opencode(&project_root)
-}
-
-fn register_mcp_in_opencode(project_root: &Path) -> anyhow::Result<()> {
-    let opencode_path = project_root.join("opencode.json");
-    let mut config = if opencode_path.is_file() {
-        let text = fs::read_to_string(&opencode_path)
-            .with_context(|| format!("failed to read {}", opencode_path.display()))?;
-        serde_json::from_str::<Value>(&text)
-            .with_context(|| format!("failed to parse {}", opencode_path.display()))?
-    } else {
-        json!({})
-    };
-
-    if !config.is_object() {
-        bail!("{} must contain a JSON object", opencode_path.display());
-    }
-
-    let lux_command = resolve_lux_mcp_command()?;
-    let root_object = config.as_object_mut().expect("validated JSON object");
-    root_object.remove("mcpServers");
-
-    let mcp_config = root_object
-        .entry("mcp".to_string())
-        .or_insert_with(|| json!({}));
-    if !mcp_config.is_object() {
-        bail!("{}.mcp must be a JSON object", opencode_path.display());
-    }
-
-    mcp_config
-        .as_object_mut()
-        .expect("validated mcp object")
-        .insert(
-            "lux".to_string(),
-            json!({
-                "type": "local",
-                "command": [lux_command, "mcp", "serve"],
-            }),
-        );
-
-    let json_text = serde_json::to_string_pretty(&config).context("failed to serialize opencode config")?;
-    fs::write(&opencode_path, format!("{json_text}\n"))
-        .with_context(|| format!("failed to write {}", opencode_path.display()))?;
-    eprintln!("  Registered Lux MCP server in {}", opencode_path.display());
-    Ok(())
-}
-
 fn install_opencode_plugin(project_root: &Path) -> anyhow::Result<()> {
     let plugin_dir = project_root.join(".opencode").join("plugins");
     fs::create_dir_all(&plugin_dir)
@@ -2166,8 +2429,7 @@ fn install_opencode_plugin(project_root: &Path) -> anyhow::Result<()> {
     let dest = plugin_dir.join("lux-plugin.ts");
     let content = fs::read_to_string(&builtin_plugin)
         .with_context(|| format!("failed to read {}", builtin_plugin.display()))?;
-    fs::write(&dest, &content)
-        .with_context(|| format!("failed to write {}", dest.display()))?;
+    fs::write(&dest, &content).with_context(|| format!("failed to write {}", dest.display()))?;
     eprintln!("  Installed Lux OpenCode plugin at {}", dest.display());
     Ok(())
 }
@@ -2182,28 +2444,6 @@ fn resolve_lux_install_root() -> PathBuf {
         }
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
-}
-
-fn resolve_lux_mcp_command() -> anyhow::Result<String> {
-    if let Ok(path) = std::env::current_exe() {
-        if path.is_file() {
-            return Ok(path.display().to_string());
-        }
-    }
-
-    let output = ProcessCommand::new("which")
-        .arg("lux")
-        .stdin(Stdio::null())
-        .output()
-        .context("failed to resolve lux executable with which")?;
-    if !output.status.success() {
-        bail!("failed to resolve lux executable");
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        bail!("which lux returned an empty path");
-    }
-    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -3194,7 +3434,7 @@ fn core_skills_dir() -> PathBuf {
 fn project_skills_dir() -> Option<PathBuf> {
     std::env::current_dir()
         .ok()
-        .map(|d| d.join(".lux").join("skills"))
+        .map(|d| d.join(".agents").join("skills"))
 }
 
 fn global_skills_dir() -> Option<PathBuf> {
@@ -3203,7 +3443,7 @@ fn global_skills_dir() -> Option<PathBuf> {
     } else {
         std::env::var("HOME").ok()
     };
-    home.map(|h| PathBuf::from(h).join(".lux").join("skills"))
+    home.map(|h| PathBuf::from(h).join(".agents").join("skills"))
 }
 
 fn read_skill_references(directory_path: &Path) -> Vec<String> {
@@ -3255,14 +3495,12 @@ fn run_lux_unity_command(args: UnityArgs) -> anyhow::Result<()> {
         UnityCommand::BackendListCommands(backend_list_commands_args) => {
             print_lux_backend_command_list(backend_list_commands_args)
         }
-        UnityCommand::GetLogs(get_logs_args) => print_lux_backend_console_logs(get_logs_args),
+        UnityCommand::GetLogs(get_logs_args) => run_uloop_get_logs(get_logs_args),
         UnityCommand::ClearConsole(clear_console_args) => {
-            clear_lux_backend_clear_console(clear_console_args)
+            run_uloop_clear_console(clear_console_args)
         }
-        UnityCommand::FocusWindow(focus_window_args) => {
-            print_lux_backend_focus_window(focus_window_args)
-        }
-        UnityCommand::Launch(launch_args) => run_lux_unity_launch(launch_args),
+        UnityCommand::FocusWindow(focus_window_args) => run_uloop_focus_window(focus_window_args),
+        UnityCommand::Launch(launch_args) => run_uloop_launch(launch_args),
         UnityCommand::SceneSmoke(scene_smoke_args) => run_lux_scene_smoke(scene_smoke_args),
         UnityCommand::CreateObjects(create_objects_args) => {
             run_lux_create_objects(create_objects_args)
@@ -3274,28 +3512,287 @@ fn run_lux_unity_command(args: UnityArgs) -> anyhow::Result<()> {
             print_lux_backend_get_hierarchy(get_hierarchy_args)
         }
         UnityCommand::ControlPlayMode(control_play_mode_args) => {
-            print_lux_backend_control_play_mode(control_play_mode_args)
+            run_uloop_control_play_mode(control_play_mode_args)
         }
-        UnityCommand::Screenshot(screenshot_args) => print_lux_backend_screenshot(screenshot_args),
+        UnityCommand::Screenshot(screenshot_args) => run_uloop_screenshot(screenshot_args),
         UnityCommand::SimulateMouseUi(simulate_mouse_ui_args) => {
-            print_lux_backend_simulate_mouse_ui(simulate_mouse_ui_args)
+            run_uloop_simulate_mouse_ui(simulate_mouse_ui_args)
         }
         UnityCommand::SimulateKeyboard(simulate_keyboard_args) => {
-            print_lux_backend_simulate_keyboard(simulate_keyboard_args)
+            run_uloop_simulate_keyboard(simulate_keyboard_args)
         }
         UnityCommand::SimulateMouseInput(simulate_mouse_input_args) => {
-            print_lux_backend_simulate_mouse_input(simulate_mouse_input_args)
+            run_uloop_simulate_mouse_input(simulate_mouse_input_args)
         }
-        UnityCommand::RecordInput(record_input_args) => {
-            print_lux_backend_record_input(record_input_args)
-        }
-        UnityCommand::ReplayInput(replay_input_args) => {
-            print_lux_backend_replay_input(replay_input_args)
-        }
+        UnityCommand::RecordInput(record_input_args) => run_uloop_record_input(record_input_args),
+        UnityCommand::ReplayInput(replay_input_args) => run_uloop_replay_input(replay_input_args),
         UnityCommand::ExecuteDynamicCode(execute_dynamic_code_args) => {
-            print_lux_backend_execute_dynamic_code(execute_dynamic_code_args)
+            run_uloop_execute_dynamic_code(execute_dynamic_code_args)
+        }
+        // === MIGRATED from top-level (v2.1) ===
+        UnityCommand::Build(build_args) => {
+            eprintln!("DEPRECATED: 'lux build' is deprecated. Use 'lux unity build' instead.");
+            run_lux_build_command(LuxBuildArgs {
+                project_path: build_args.project_path,
+                target: build_args.target,
+            })
+        }
+        UnityCommand::Play(play_args) => {
+            eprintln!("DEPRECATED: 'lux play' is deprecated. Use 'lux unity play' instead.");
+            run_lux_play_command(LuxProjectArgs {
+                project_path: play_args.project_path,
+            })
+        }
+        UnityCommand::Compile(compile_args) => {
+            eprintln!("DEPRECATED: 'lux compile' is deprecated. Use 'lux unity compile' instead.");
+            run_uloop_compile(compile_args)
+        }
+        UnityCommand::Bridge(bridge_args) => {
+            eprintln!("DEPRECATED: 'lux bridge' is deprecated. Use 'lux unity bridge' instead.");
+            let bridge_action = match bridge_args.action {
+                UnityBridgeAction::Watch(w) => BridgeAction::Watch(BridgeWatchArgs {
+                    project_path: w.project_path,
+                }),
+                UnityBridgeAction::Install(i) => BridgeAction::Install(BridgeInstallArgs {
+                    project_path: i.project_path,
+                }),
+            };
+            run_bridge_command(BridgeArgs {
+                action: bridge_action,
+            })
+        }
+        UnityCommand::RunTests(tests_args) => {
+            eprintln!(
+                "DEPRECATED: 'lux run-tests' is deprecated. Use 'lux unity run-tests' instead."
+            );
+            run_uloop_run_tests(tests_args)
+        }
+        UnityCommand::VisualRegression(vr_args) => {
+            eprintln!("DEPRECATED: 'lux screenshot' (visual regression) is deprecated. Use 'lux unity visual-regression' instead.");
+            run_screenshot_command(ScreenshotArgs {
+                baseline: vr_args.baseline,
+                compare: vr_args.compare,
+                project_path: vr_args.project_path,
+            })
+        }
+        UnityCommand::InstallUloop(install_args) => {
+            let project = resolve_project_root(&Some(install_args.project_path))?;
+            install_uloop_package_with_options(
+                &project,
+                install_args.local,
+                install_args.force,
+                install_args.version.as_deref(),
+            )
         }
     }
+}
+
+fn push_string_arg(uloop_args: &mut Vec<String>, flag: &str, value: impl ToString) {
+    uloop_args.push(flag.to_string());
+    uloop_args.push(value.to_string());
+}
+
+fn push_flag_arg(uloop_args: &mut Vec<String>, flag: &str) {
+    uloop_args.push(flag.to_string());
+}
+
+fn push_optional_string_arg(uloop_args: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        uloop_args.push(flag.to_string());
+        uloop_args.push(value.to_string());
+    }
+}
+
+fn push_optional_path_arg(uloop_args: &mut Vec<String>, flag: &str, value: Option<&Path>) {
+    if let Some(value) = value {
+        uloop_args.push(flag.to_string());
+        uloop_args.push(value.to_string_lossy().into_owned());
+    }
+}
+
+fn uloop_bool(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+fn uloop_pascal_word(value: &str) -> String {
+    let mut output = String::new();
+    let mut capitalize_next = true;
+    for ch in value.chars() {
+        if ch == '-' || ch == '_' || ch == ' ' {
+            capitalize_next = true;
+            continue;
+        }
+        if capitalize_next {
+            for upper in ch.to_uppercase() {
+                output.push(upper);
+            }
+            capitalize_next = false;
+        } else {
+            output.push(ch.to_ascii_lowercase());
+        }
+    }
+    output
+}
+
+fn run_uloop_with_project(
+    project_path: &Option<PathBuf>,
+    uloop_args: Vec<String>,
+) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(project_path)?;
+    let uloop_arg_refs = uloop_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let (stdout, stderr, code) =
+        uloop_runner::run_uloop_command(&uloop_arg_refs, Some(&project_root))?;
+    print!("{stdout}");
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+    }
+    std::process::exit(code);
+}
+
+fn run_uloop_get_logs(args: UnityGetLogsArgs) -> anyhow::Result<()> {
+    run_uloop_with_project(&args.project_path, vec!["get-logs".to_string()])
+}
+
+fn run_uloop_clear_console(args: UnityClearConsoleArgs) -> anyhow::Result<()> {
+    run_uloop_with_project(&args.project_path, vec!["clear-console".to_string()])
+}
+
+fn run_uloop_focus_window(args: UnityFocusWindowArgs) -> anyhow::Result<()> {
+    run_uloop_with_project(&args.project_path, vec!["focus-window".to_string()])
+}
+
+fn run_uloop_launch(args: UnityLaunchArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let uloop_args = [
+        "launch".to_string(),
+        project_root.to_string_lossy().into_owned(),
+    ];
+    let uloop_arg_refs = uloop_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let (stdout, stderr, code) = uloop_runner::run_uloop_command(&uloop_arg_refs, None)?;
+    print!("{stdout}");
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+    }
+    std::process::exit(code);
+}
+
+fn run_uloop_control_play_mode(args: UnityControlPlayModeArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["control-play-mode".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_screenshot(args: UnityScreenshotArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["screenshot".to_string()];
+    push_string_arg(&mut uloop_args, "--capture-mode", args.capture_mode);
+    push_string_arg(
+        &mut uloop_args,
+        "--annotate-elements",
+        uloop_bool(args.annotate_elements),
+    );
+    push_string_arg(
+        &mut uloop_args,
+        "--elements-only",
+        uloop_bool(args.elements_only),
+    );
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_simulate_mouse_ui(args: UnitySimulateMouseUiArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["simulate-mouse-ui".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    push_string_arg(&mut uloop_args, "--x", args.x);
+    push_string_arg(&mut uloop_args, "--y", args.y);
+    push_string_arg(&mut uloop_args, "--duration", args.duration_ms);
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_simulate_keyboard(args: UnitySimulateKeyboardArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["simulate-keyboard".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    push_string_arg(&mut uloop_args, "--key", args.key);
+    push_string_arg(&mut uloop_args, "--duration", args.duration_ms);
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_simulate_mouse_input(args: UnitySimulateMouseInputArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["simulate-mouse-input".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    push_string_arg(&mut uloop_args, "--button", uloop_pascal_word(&args.button));
+    push_string_arg(&mut uloop_args, "--delta-x", args.delta_x);
+    push_string_arg(&mut uloop_args, "--delta-y", args.delta_y);
+    push_string_arg(&mut uloop_args, "--scroll-x", args.scroll_x);
+    push_string_arg(&mut uloop_args, "--scroll-y", args.scroll_y);
+    push_string_arg(&mut uloop_args, "--duration", args.duration_ms);
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_record_input(args: UnityRecordInputArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["record-input".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_replay_input(args: UnityReplayInputArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["replay-input".to_string()];
+    push_string_arg(
+        &mut uloop_args,
+        "--action",
+        uloop_pascal_word(args.action.as_str()),
+    );
+    push_optional_path_arg(&mut uloop_args, "--input-path", args.file.as_deref());
+    run_uloop_with_project(&args.project_path, uloop_args)
+}
+
+fn run_uloop_execute_dynamic_code(args: UnityExecuteDynamicCodeArgs) -> anyhow::Result<()> {
+    let project_path = args.project_path.clone();
+    let code = resolve_dynamic_code_source(&args)?;
+    let mut uloop_args = vec!["execute-dynamic-code".to_string()];
+    push_string_arg(&mut uloop_args, "--code", code);
+    run_uloop_with_project(&project_path, uloop_args)
+}
+
+fn run_uloop_compile(args: UnityCompileArgs) -> anyhow::Result<()> {
+    run_uloop_with_project(&args.project_path, vec!["compile".to_string()])
+}
+
+fn run_uloop_run_tests(args: UnityRunTestsArgs) -> anyhow::Result<()> {
+    let mut uloop_args = vec!["run-tests".to_string()];
+    push_string_arg(&mut uloop_args, "--test-mode", args.test_platform);
+    push_string_arg(&mut uloop_args, "--filter-type", args.filter_type);
+    push_optional_string_arg(
+        &mut uloop_args,
+        "--filter-value",
+        args.filter_value.as_deref(),
+    );
+    if args.save_before_run {
+        push_flag_arg(&mut uloop_args, "--save-before-run");
+    }
+    run_uloop_with_project(&args.project_path, uloop_args)
 }
 
 fn run_lux_create_objects(args: UnityCreateObjectsArgs) -> anyhow::Result<()> {
@@ -4671,7 +5168,18 @@ fn send_unity_tcp_line_with_timeout(
 fn run_bridge_command(args: BridgeArgs) -> anyhow::Result<()> {
     match args.action {
         BridgeAction::Watch(watch_args) => watch_unity_bridge_events(watch_args),
-        BridgeAction::Install(install_args) => install_bridge_files(install_args),
+        BridgeAction::Install(install_args) => {
+            let project_root = install_args.project_path.clone();
+            install_bridge_files(install_args)?;
+
+            // Also install uloop (unity-cli-loop) for unity CLI operations
+            if let Err(e) = install_uloop_package(&project_root) {
+                eprintln!("⚠️  uloop installation skipped (non-critical): {e}");
+                // Don't fail bridge install — uloop is optional enhancement
+            }
+
+            Ok(())
+        }
     }
 }
 
@@ -4774,7 +5282,10 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
     let plugin_dir = opencode_dir.join("plugins/lux");
 
     if plugin_dir.exists() {
-        eprintln!("  → OpenCode plugin already exists at {}", plugin_dir.display());
+        eprintln!(
+            "  → OpenCode plugin already exists at {}",
+            plugin_dir.display()
+        );
         eprintln!("    To update, remove the existing plugin directory first.");
     } else {
         std::fs::create_dir_all(&plugin_dir)
@@ -4792,13 +5303,38 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
                 include_str!("templates/plugin/continuation-injector.ts"),
             ),
             (
+                "ticket-loader.ts",
+                include_str!("templates/plugin/ticket-loader.ts"),
+            ),
+            (
+                "session-state.ts",
+                include_str!("templates/plugin/session-state.ts"),
+            ),
+            (
+                "stagnation-detection.ts",
+                include_str!("templates/plugin/stagnation-detection.ts"),
+            ),
+            (
+                "compaction-guard.ts",
+                include_str!("templates/plugin/compaction-guard.ts"),
+            ),
+            (
                 "glossary-manager.ts",
                 include_str!("templates/plugin/glossary-manager.ts"),
             ),
-            ("package.json", include_str!("templates/plugin/package.json")),
-            ("tsconfig.json", include_str!("templates/plugin/tsconfig.json")),
+            (
+                "package.json",
+                include_str!("templates/plugin/package.json"),
+            ),
+            (
+                "tsconfig.json",
+                include_str!("templates/plugin/tsconfig.json"),
+            ),
             ("README.md", include_str!("templates/plugin/README.md")),
-            ("node-shims.d.ts", include_str!("templates/plugin/node-shims.d.ts")),
+            (
+                "node-shims.d.ts",
+                include_str!("templates/plugin/node-shims.d.ts"),
+            ),
         ];
 
         for (name, content) in &plugin_files {
@@ -4820,10 +5356,7 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
             "lux-init.md",
             include_str!("templates/commands/lux-init.md"),
         ),
-        (
-            "lux-run.md",
-            include_str!("templates/commands/lux-run.md"),
-        ),
+        ("lux-run.md", include_str!("templates/commands/lux-run.md")),
         (
             "lux-spec-validate.md",
             include_str!("templates/commands/lux-spec-validate.md"),
@@ -4873,6 +5406,108 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
     eprintln!("Bridge installed to {}", assets_editor.display());
     eprintln!("Open Unity Editor and wait for recompile. Menu 'AI Bridge' will appear.");
     Ok(())
+}
+
+fn install_uloop_package(project_root: &Path) -> anyhow::Result<()> {
+    install_uloop_package_with_options(project_root, false, false, None)
+}
+
+fn install_uloop_package_with_options(
+    project_root: &Path,
+    local: bool,
+    force: bool,
+    version: Option<&str>,
+) -> anyhow::Result<()> {
+    eprintln!("📦 Installing uloop (unity-cli-loop)...");
+
+    let pkg_json = project_root.join("package.json");
+    let install_local = local || pkg_json.exists();
+    let package = match version {
+        Some(version) if !version.trim().is_empty() => format!("uloop-cli@{}", version.trim()),
+        _ => "uloop-cli".to_string(),
+    };
+
+    let mut cmd = ProcessCommand::new("npm");
+    cmd.arg("install");
+    if install_local {
+        cmd.arg(&package).arg("--save-dev");
+        eprintln!("   Installing uloop-cli as devDependency in Unity project");
+    } else {
+        cmd.arg("-g").arg(&package);
+        eprintln!("   Installing uloop-cli globally (-g)");
+    }
+    if force {
+        cmd.arg("--force");
+    }
+
+    let output = cmd
+        .current_dir(project_root)
+        .output()
+        .context("failed to install uloop-cli via npm")?;
+
+    if !output.status.success() {
+        bail!(
+            "npm install uloop-cli failed (exit code {}):\n{}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let installed_version = read_installed_uloop_version(project_root, install_local)
+        .unwrap_or_else(|_| "unknown".to_string());
+    let install_state = serde_json::json!({
+        "installed_at": chrono::Utc::now().to_rfc3339(),
+        "version": installed_version,
+        "install_scope": if install_local { "local" } else { "global" },
+        "project_root": project_root.to_string_lossy(),
+    });
+
+    let state_path = project_root.join(".lux").join("uloop-install.json");
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&install_state)?)
+        .context("failed to write uloop install state")?;
+
+    eprintln!(
+        "✅ uloop (unity-cli-loop) v{} installed successfully",
+        install_state
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    );
+    Ok(())
+}
+
+fn read_installed_uloop_version(project_root: &Path, local: bool) -> anyhow::Result<String> {
+    let mut cmd = ProcessCommand::new("npm");
+    cmd.arg("list");
+    if !local {
+        cmd.arg("-g");
+    }
+    cmd.arg("uloop-cli").arg("--depth=0").arg("--json");
+
+    let output = cmd
+        .current_dir(project_root)
+        .output()
+        .context("failed to query installed uloop-cli version")?;
+    if !output.status.success() {
+        bail!(
+            "npm list uloop-cli failed (exit code {}):\n{}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .context("failed to parse npm list uloop-cli output")?;
+    value
+        .get("dependencies")
+        .and_then(|dependencies| dependencies.get("uloop-cli"))
+        .and_then(|dependency| dependency.get("version"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .context("npm list output did not include uloop-cli version")
 }
 
 fn connect_unity_tcp_with_retry(

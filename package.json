@@ -1,45 +1,20 @@
 {
-  "name": "com.linalab.lux",
+  "name": "@linalab/lux-app",
   "version": "0.1.0",
-  "displayName": "LUX - AI Editor Adapter",
-  "description": "Unified Unity Editor AI adapter and automation toolkit. Bridges Claude Code, OpenAI Codex, OpenCode with Unity Editor through web UI, visual pipeline editor, WebRTC remote access, Git integration, Codex Image generation, and skill dispatch system.",
-  "unity": "6000.0",
-  "author": {
-    "name": "Linalab.io",
-    "url": "https://github.com/Linalab-io"
+  "private": true,
+  "description": "Standalone LUX app workspace.",
+  "type": "module",
+  "workspaces": [
+    "mcp-helper"
+  ],
+  "scripts": {
+    "mcp-helper:build": "npm --workspace mcp-helper run build",
+    "mcp-helper:test": "npm --workspace mcp-helper run test",
+    "gateway:build": "cargo build --workspace",
+    "gateway:test": "cargo test --workspace",
+    "policy-check": "node scripts/policy-scan.mjs"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Linalab-io/lux.git"
-  },
-  "documentationUrl": "https://github.com/Linalab-io/lux",
-  "dependencies": {
-    "com.linalab.unity-log": "0.0.1",
-    "com.unity.nuget.newtonsoft-json": "3.2.1",
-    "com.unity.test-framework": "1.1.33",
-    "com.unity.ugui": "1.0.0"
-  },
-  "keywords": [
-    "unity",
-    "editor",
-    "ai",
-    "ai-adapter",
-    "coding-assistant",
-    "claude",
-    "codex",
-    "opencode",
-    "git",
-    "webrtc",
-    "remote-access",
-    "pipeline-editor",
-    "visual-editor",
-    "codex-image",
-    "image-generation",
-    "skill-system",
-    "automation",
-    "cli",
-    "web-ui",
-    "linalab",
-    "lux"
-  ]
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }

@@ -87,24 +87,25 @@ fn lux_loop_state_machine_requires_approval_between_steps() {
     let snapshot = orchestrator.approve_next().unwrap();
     assert_eq!(snapshot.state, LoopState::AwaitingPlay);
     assert_eq!(snapshot.approval_gate, Some(ApprovalGate::StartPlay));
-    assert_eq!(snapshot.pending_state, None);
-
-    let snapshot = orchestrator.record_play_started().unwrap();
-    assert_eq!(snapshot.state, LoopState::AwaitingPlay);
     assert_eq!(snapshot.pending_state, Some(LoopState::CollectingFeedback));
 
     let snapshot = orchestrator.approve_next().unwrap();
     assert_eq!(snapshot.state, LoopState::CollectingFeedback);
     assert!(!snapshot.requires_user_approval);
 
-    let snapshot = orchestrator
-        .record_feedback(json!({"fun": "needs polish"}))
-        .unwrap();
-    assert_eq!(snapshot.feedback_count, 1);
-    assert_eq!(snapshot.pending_state, Some(LoopState::Updating));
+    let snapshot = orchestrator.record_play_started().unwrap();
+    assert_eq!(snapshot.state, LoopState::CollectingFeedback);
+    assert!(!snapshot.requires_user_approval);
 
-    let snapshot = orchestrator.approve_next().unwrap();
-    assert_eq!(snapshot.state, LoopState::Updating);
+    let snapshot = orchestrator
+        .record_feedback(&json!({"fun": "needs polish"}))
+        .unwrap();
+    assert_eq!(snapshot.iteration, 1);
+    assert_eq!(snapshot.feedback_count, 0);
+    assert_eq!(
+        snapshot.approval_gate,
+        Some(ApprovalGate::CompleteIteration)
+    );
     assert_eq!(snapshot.pending_state, Some(LoopState::Idle));
 
     let snapshot = orchestrator.approve_next().unwrap();
@@ -114,7 +115,56 @@ fn lux_loop_state_machine_requires_approval_between_steps() {
 
     let recorded = events.lock().unwrap();
     assert!(recorded.contains(&("Idle".to_string(), "Analyzing".to_string())));
-    assert!(recorded.contains(&("Updating".to_string(), "Idle".to_string())));
+    assert!(recorded.contains(&("CollectingFeedback".to_string(), "Idle".to_string())));
+}
+
+#[test]
+fn lux_loop_can_complete_two_sequential_iterations() {
+    let project = TestProject::new("two-iterations");
+    let mut orchestrator =
+        LoopOrchestrator::with_max_iterations(project.path(), 2, EventRouter::new());
+
+    let snapshot = orchestrator.start().unwrap();
+    assert_eq!(snapshot.state, LoopState::Analyzing);
+
+    orchestrator.approve_next().unwrap();
+    orchestrator.approve_next().unwrap();
+    let awaiting = orchestrator.approve_next().unwrap();
+    assert_eq!(awaiting.state, LoopState::AwaitingPlay);
+    assert_eq!(awaiting.pending_state, Some(LoopState::CollectingFeedback));
+
+    let collecting = orchestrator.approve_next().unwrap();
+    assert_eq!(collecting.state, LoopState::CollectingFeedback);
+    let collecting = orchestrator.record_play_started().unwrap();
+    assert_eq!(collecting.state, LoopState::CollectingFeedback);
+
+    let completed = orchestrator
+        .record_feedback(&json!({"iteration": 1, "notes": "tighten controls"}))
+        .unwrap();
+    assert_eq!(completed.iteration, 1);
+    assert_eq!(
+        completed.approval_gate,
+        Some(ApprovalGate::CompleteIteration)
+    );
+    assert_eq!(completed.pending_state, Some(LoopState::Idle));
+
+    let idle = orchestrator.approve_next().unwrap();
+    assert_eq!(idle.state, LoopState::Idle);
+    assert_eq!(idle.iteration, 1);
+
+    orchestrator.start().unwrap();
+    orchestrator.approve_next().unwrap();
+    orchestrator.approve_next().unwrap();
+    orchestrator.approve_next().unwrap();
+    orchestrator.approve_next().unwrap();
+    orchestrator.record_play_started().unwrap();
+    let done = orchestrator
+        .record_feedback(&json!({"iteration": 2, "notes": "accepted"}))
+        .unwrap();
+    assert_eq!(done.iteration, 2);
+    assert_eq!(done.state, LoopState::Idle);
+    assert_eq!(done.pending_state, None);
+    assert!(!done.requires_user_approval);
 }
 
 #[test]
@@ -141,13 +191,12 @@ fn lux_loop_max_iterations_guard_blocks_restart() {
     orchestrator.approve_next().unwrap();
     orchestrator.approve_next().unwrap();
     orchestrator.approve_next().unwrap();
+    orchestrator.approve_next().unwrap();
     orchestrator.record_play_started().unwrap();
-    orchestrator.approve_next().unwrap();
     orchestrator
-        .record_feedback(json!({"issue": "short loop"}))
+        .record_feedback(&json!({"issue": "short loop"}))
         .unwrap();
-    orchestrator.approve_next().unwrap();
-    let idle = orchestrator.approve_next().unwrap();
+    let idle = orchestrator.snapshot();
     assert_eq!(idle.iteration, 1);
     assert_eq!(idle.state, LoopState::Idle);
 

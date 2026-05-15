@@ -1,0 +1,17 @@
+{
+  "name": "perf-profile",
+  "version": "1.0.0",
+  "description": "Use to investigate latency, memory, CPU, file IO, startup, or UI responsiveness. Define the measured claim, collect baseline data, identify the hot path, change one variable, and verify improvement without weakening correctness.",
+  "displayName": "Performance Profile",
+  "type": "core",
+  "keywords": [
+    "lux",
+    "perf",
+    "profile",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

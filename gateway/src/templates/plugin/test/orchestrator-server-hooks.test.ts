@@ -11,19 +11,14 @@ vi.mock('../compaction-guard', () => ({
 }))
 
 vi.mock('../continuation-state-client', () => ({
-  readContinuationState: vi.fn(() => ({
-    session_id: null,
-    continuation_count: 0,
-    stagnation_count: 0,
-    consecutive_failures: 0,
-    last_ambiguity: null,
-    last_ticket_baseline: null,
-    current_ticket_id: null,
-    status: 'Active',
-    started_at: null,
-    updated_at: '',
-    stop_reason: null,
-  })),
+      readContinuationState: vi.fn(async () => ({
+        status: 'Idle',
+        continuation_count: 0,
+        stagnation_count: 0,
+        consecutive_failures: 0,
+        current_ticket_id: null,
+        stop_reason: null
+      })),
   writeContinuationState: vi.fn().mockResolvedValue({ seq: 1 }),
 }))
 

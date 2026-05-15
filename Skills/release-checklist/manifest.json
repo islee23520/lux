@@ -1,0 +1,17 @@
+{
+  "name": "release-checklist",
+  "version": "1.0.0",
+  "description": "Use before packaging or publishing. Verify build, tests, docs, CLI help, version metadata, migration notes, security posture, rollback plan, and known limitations. Do not release with unexplained failing checks.",
+  "displayName": "Release Checklist",
+  "type": "core",
+  "keywords": [
+    "checklist",
+    "lux",
+    "release",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

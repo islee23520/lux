@@ -9,6 +9,12 @@ use std::fs;
 use std::fs::File;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+
+fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
 
 // ===========================================================================
 // AC2-a: Default path resolution returns .lux/ai-action-log.jsonl
@@ -16,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 #[test]
 fn default_path_resolves_to_dot_lux_ai_action_log() {
+    let _guard = env_guard();
     std::env::remove_var("LUX_EVENT_LOG_PATH");
     let root = Path::new("/unity/project");
     let resolved = lux::ai_log::resolve_log_path(root);
@@ -28,6 +35,7 @@ fn default_path_resolves_to_dot_lux_ai_action_log() {
 
 #[test]
 fn default_path_uses_forward_slashes_on_windows_paths() {
+    let _guard = env_guard();
     std::env::remove_var("LUX_EVENT_LOG_PATH");
     let resolved = lux::ai_log::resolve_log_path(r#"C:\Unity\MyProject"#);
     assert_eq!(
@@ -38,6 +46,7 @@ fn default_path_uses_forward_slashes_on_windows_paths() {
 
 #[test]
 fn ensure_log_path_creates_dot_lux_directory_and_returns_path() {
+    let _guard = env_guard();
     std::env::remove_var("LUX_EVENT_LOG_PATH");
     let root = temp_dir_unique("ensure-default");
     let log_path = ensure_log_path(&root).unwrap();
@@ -57,6 +66,7 @@ fn ensure_log_path_creates_dot_lux_directory_and_returns_path() {
 
 #[test]
 fn env_var_lux_event_log_path_overrides_default_resolution() {
+    let _guard = env_guard();
     let custom = "/custom/log/events.jsonl";
     std::env::set_var("LUX_EVENT_LOG_PATH", custom);
 
@@ -68,6 +78,7 @@ fn env_var_lux_event_log_path_overrides_default_resolution() {
 
 #[test]
 fn empty_env_var_falls_back_to_default_path() {
+    let _guard = env_guard();
     std::env::remove_var("LUX_EVENT_LOG_PATH");
     std::env::set_var("LUX_EVENT_LOG_PATH", "");
 
@@ -79,6 +90,7 @@ fn empty_env_var_falls_back_to_default_path() {
 
 #[test]
 fn ensure_log_path_respects_env_override() {
+    let _guard = env_guard();
     let root = temp_dir_unique("ensure-env");
     let custom = root.join("custom-dir/my-log.jsonl");
     std::env::set_var("LUX_EVENT_LOG_PATH", custom.to_str().unwrap());
@@ -296,6 +308,7 @@ fn parse_jsonl_on_empty_cursor() {
 
 #[test]
 fn legacy_log_migrated_from_user_settings_to_lux() {
+    let _guard = env_guard();
     let root = temp_dir_unique("legacy-migrate");
     let user_settings = root.join("UserSettings");
     fs::create_dir_all(&user_settings).unwrap();
@@ -330,6 +343,7 @@ fn legacy_log_migrated_from_user_settings_to_lux() {
 
 #[test]
 fn legacy_migration_skipped_when_new_path_already_exists() {
+    let _guard = env_guard();
     let root = temp_dir_unique("legacy-skip-new-exists");
     let user_settings = root.join("UserSettings");
     fs::create_dir_all(&user_settings).unwrap();
@@ -359,6 +373,7 @@ fn legacy_migration_skipped_when_new_path_already_exists() {
 
 #[test]
 fn no_legacy_path_means_clean_new_path() {
+    let _guard = env_guard();
     std::env::remove_var("LUX_EVENT_LOG_PATH");
     let root = temp_dir_unique("no-legacy");
 

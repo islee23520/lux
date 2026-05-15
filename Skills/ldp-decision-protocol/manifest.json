@@ -1,1 +1,18 @@
-{"name": "ldp-decision-protocol", "version": "1.0.0", "description": "Lina Decision Protocol (LDP) ethical verification integration for Lux Unity automation — pre-build ethics checks, post-operation verification, and decision audit trail", "displayName": "LDP Decision Protocol", "luxVersion": ">=0.1.0", "author": {"name": "Linalab"}, "keywords": ["ldp", "ethics", "decision-protocol", "verification", "guardrails", "ai-safety", "unity-automation"], "type": "integration", "source": null, "dependencies": {"lux-unity": ">=1.0.0"}}
+{
+  "name": "ldp-decision-protocol",
+  "version": "1.0.0",
+  "description": "Use for high-risk product, automation, or ethical decisions. Run: clarify intent; quantify evidence; check user/data/IP/fairness risks; define stop and rollback conditions; record approval. Verdicts: PASS, REVIEW, or REJECT. Hard reject privacy leaks, exploitative mechanics, unbounded destructive automation, and unverifiable claims.",
+  "displayName": "LDP Decision Protocol",
+  "type": "core",
+  "keywords": [
+    "decision",
+    "ldp",
+    "lux",
+    "protocol",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

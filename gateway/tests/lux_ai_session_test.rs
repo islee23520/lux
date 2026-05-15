@@ -1,11 +1,13 @@
 #[path = "../src/lux_ai_session.rs"]
 mod lux_ai_session;
-#[path = "../src/project.rs"]
-mod project;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
 #[path = "../src/lux_ambiguity.rs"]
 mod lux_ambiguity;
+#[path = "../src/lux_roadmap.rs"]
+mod lux_roadmap;
+#[path = "../src/lux_spec.rs"]
+mod lux_spec;
+#[path = "../src/project.rs"]
+mod project;
 
 use std::fs;
 use std::path::{Path, PathBuf};

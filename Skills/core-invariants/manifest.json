@@ -1,0 +1,17 @@
+{
+  "name": "core-invariants",
+  "version": "1.0.0",
+  "description": "Use when a change risks architectural drift. Enforce: .lux is SSoT; clear subsystem ownership; consistent schemas; atomic operations; idempotent retries; no silent fallback. Report violations and concrete repair steps.",
+  "displayName": "Core Invariants",
+  "type": "core",
+  "keywords": [
+    "core",
+    "invariants",
+    "lux",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

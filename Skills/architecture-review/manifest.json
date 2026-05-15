@@ -1,0 +1,17 @@
+{
+  "name": "architecture-review",
+  "version": "1.0.0",
+  "description": "Use to review an existing design or implementation for boundary drift. Check SSoT, responsibility split, protocol consistency, atomicity, idempotency, and observable failures. Return ranked findings with file references, risk level, and the smallest corrective action.",
+  "displayName": "Architecture Review",
+  "type": "core",
+  "keywords": [
+    "architecture",
+    "lux",
+    "review",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

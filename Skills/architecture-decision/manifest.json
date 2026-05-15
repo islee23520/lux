@@ -1,0 +1,17 @@
+{
+  "name": "architecture-decision",
+  "version": "1.0.0",
+  "description": "Use for durable technical choices. Output a short ADR: Context, Decision, Alternatives, Consequences, Verification, Owner. Prefer existing LUX boundaries: gateway owns CLI/server, bridge owns Unity protocol, mcp-helper owns MCP translation, Skills owns passive workflows. Reject duplicate state, hidden fallback, and broad rewrites without evidence.",
+  "displayName": "Architecture Decision",
+  "type": "core",
+  "keywords": [
+    "architecture",
+    "decision",
+    "lux",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

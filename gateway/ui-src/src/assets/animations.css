@@ -1,0 +1,59 @@
+@keyframes flicker {
+  0%, 19.999%, 22%, 62.999%, 64%, 64.999%, 70%, 100% {
+    opacity: 1;
+  }
+
+  20%, 21.999%, 63%, 63.999%, 65%, 69.999% {
+    opacity: 0.35;
+  }
+}
+
+.animate-flicker {
+  animation: flicker var(--duration-flicker, 4s) infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.animate-dot-pulse {
+  animation: dot-pulse var(--duration-pulse, 2s) ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes blink-cursor {
+  0%, 45% {
+    border-color: currentColor;
+  }
+
+  46%, 100% {
+    border-color: transparent;
+  }
+}
+
+.animate-blink-cursor {
+  animation: blink-cursor var(--duration-cursor, 0.8s) step-end infinite;
+  border-color: currentColor;
+}
+
+@keyframes data-ticker {
+  0% {
+    transform: translateY(0);
+  }
+
+  100% {
+    transform: translateY(-100%);
+  }
+}
+
+.animate-data-ticker {
+  animation: data-ticker var(--duration-data-ticker, 20s) linear infinite;
+}

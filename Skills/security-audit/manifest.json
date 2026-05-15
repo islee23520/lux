@@ -1,0 +1,17 @@
+{
+  "name": "security-audit",
+  "version": "1.0.0",
+  "description": "Use for credentials, command execution, network exposure, logs, generated code, or Unity automation guardrails. Check auth, input validation, path traversal, secret redaction, destructive actions, auditability, and least privilege.",
+  "displayName": "Security Audit",
+  "type": "core",
+  "keywords": [
+    "audit",
+    "lux",
+    "security",
+    "unity",
+    "workflow"
+  ],
+  "author": {
+    "name": "Linalab"
+  }
+}

@@ -1,3 +1,12 @@
+# ⚠️  DEPRECATED — This seed file references obsolete paths and architecture assumptions.
+# It references RustGateway~/, CodexImage/, LuxEditor/, Axum 0.8, and features
+# that were part of an earlier package-based architecture. The current standalone
+# LUX repo uses gateway/, bridge/, and Axum 0.7.
+# Do NOT use this seed for patching. A replacement seed should be written
+# against the current standalone structure when needed.
+#
+# Preserved for reference only. Contents are NOT applicable to current codebase.
+
 goal: |
   Close all verification gaps in LUX Phase 3 (CodexImage Node Editor) and Phase 4
   (Multi-AI Tool Integration), then harden the Addon Manager and CLI for production
@@ -99,7 +108,7 @@ ontology:
   fields:
     - name: phase
       type: string
-      description: "A" for verification or "B" for distribution
+      description: '"A" for verification or "B" for distribution'
     - name: deliverable_id
       type: string
       description: AC identifier (e.g., a1_e2e_pipeline_test)

@@ -11,8 +11,10 @@ const COMPLETION_WEIGHT: f64 = 0.40;
 const AI_EVAL_WEIGHT: f64 = 0.35;
 const AST_WEIGHT: f64 = 0.25;
 
+// Ambiguity polarity: 0.0 = fully clear, 1.0 = maximally ambiguous
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AmbiguityReport {
+    /// Backward-compatible field name carrying the canonical ambiguity score.
     pub overall_score: f64,
     pub domain_scores: HashMap<String, DomainAmbiguity>,
     pub schell_phase_scores: HashMap<String, f64>,
@@ -56,15 +58,13 @@ pub fn calculate_ambiguity(spec: &SpecProject) -> AmbiguityReport {
         }
 
         let analysis = analyze_domain(name, domain);
-        if analysis.composite_score < 0.5 {
+        if analysis.composite_score > 0.5 {
             targeted_questions.extend(analysis.questions.iter().take(3).enumerate().map(
                 |(index, question)| TargetedQuestion {
                     domain: name.to_string(),
                     phase: primary_schell_phase(name).to_string(),
                     question: question.clone(),
-                    priority: clamp_score(
-                        (1.0 - analysis.composite_score) + (0.15 / (index + 1) as f64),
-                    ),
+                    priority: clamp_score(analysis.composite_score + (0.15 / (index + 1) as f64)),
                     default_value: None,
                     options: Vec::new(),
                 },
@@ -74,7 +74,7 @@ pub fn calculate_ambiguity(spec: &SpecProject) -> AmbiguityReport {
     }
 
     let SpecAmbiguity {
-        composite_score: spec_composite_score,
+        composite_score: spec_ambiguity_score,
         questions: spec_questions,
     } = spec_analysis;
     targeted_questions.extend(spec_questions);
@@ -85,7 +85,7 @@ pub fn calculate_ambiguity(spec: &SpecProject) -> AmbiguityReport {
             .values()
             .map(|domain| domain.composite_score)
             .sum::<f64>()
-            + spec_composite_score)
+            + spec_ambiguity_score)
             / (BUILT_IN_DOMAIN_COUNT as f64 + 1.0),
     );
     let completion_ratio = clamp_score(defined_count as f64 / BUILT_IN_DOMAIN_COUNT as f64);
@@ -145,11 +145,12 @@ fn analyze_spec_fields(spec: &SpecProject) -> SpecAmbiguity {
         .filter(|(_, is_filled, _, _)| *is_filled)
         .map(|(_, _, weight, _)| *weight)
         .sum::<f64>();
-    let composite_score = if total_weight > 0.0 {
+    let clarity_score = if total_weight > 0.0 {
         clamp_score(filled_weight / total_weight)
     } else {
         0.0
     };
+    let composite_score = ambiguity_from_clarity(clarity_score);
 
     let questions = fields
         .iter()
@@ -161,7 +162,7 @@ fn analyze_spec_fields(spec: &SpecProject) -> SpecAmbiguity {
                     domain: "spec".to_string(),
                     phase: "phase5_assessment".to_string(),
                     question: question.to_string(),
-                    priority: clamp_score((1.0 - composite_score) + (*weight / total_weight) * 0.1),
+                    priority: clamp_score(composite_score + (*weight / total_weight) * 0.1),
                     default_value: None,
                     options: Vec::new(),
                 })
@@ -189,11 +190,12 @@ struct SpecAmbiguity {
 fn spec_field_questions(spec: &SpecProject) -> Vec<TargetedQuestion> {
     let mut questions = Vec::new();
 
-    if spec
-        .unity
-        .as_ref()
-        .is_none_or(|unity| unity.required_version.as_ref().is_none_or(|value| value.trim().is_empty()))
-    {
+    if spec.unity.as_ref().is_none_or(|unity| {
+        unity
+            .required_version
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
+    }) {
         let detected_version = spec
             .unity
             .as_ref()
@@ -217,9 +219,8 @@ fn spec_field_questions(spec: &SpecProject) -> Vec<TargetedQuestion> {
         questions.push(TargetedQuestion {
             domain: "spec".to_string(),
             phase: "targets.platforms".to_string(),
-            question:
-                "Which build targets should Lux optimize for first? (comma-separated)"
-                    .to_string(),
+            question: "Which build targets should Lux optimize for first? (comma-separated)"
+                .to_string(),
             priority: 0.85,
             default_value: Some("windows, mac".to_string()),
             options: vec![
@@ -246,8 +247,9 @@ fn spec_field_questions(spec: &SpecProject) -> Vec<TargetedQuestion> {
         questions.push(TargetedQuestion {
             domain: "spec".to_string(),
             phase: "packages.required".to_string(),
-            question: "Which Unity packages are mandatory for this project? (comma-separated package IDs)"
-                .to_string(),
+            question:
+                "Which Unity packages are mandatory for this project? (comma-separated package IDs)"
+                    .to_string(),
             priority: 0.7,
             default_value: if detected_packages.is_empty() {
                 None
@@ -258,11 +260,12 @@ fn spec_field_questions(spec: &SpecProject) -> Vec<TargetedQuestion> {
         });
     }
 
-    if spec
-        .testing
-        .as_ref()
-        .is_none_or(|testing| testing.framework.as_ref().is_none_or(|value| value.trim().is_empty()))
-    {
+    if spec.testing.as_ref().is_none_or(|testing| {
+        testing
+            .framework
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
+    }) {
         questions.push(TargetedQuestion {
             domain: "spec".to_string(),
             phase: "testing.strategy".to_string(),
@@ -288,11 +291,11 @@ fn built_in_domains(
     [
         ("design", spec.domains.design.as_ref()),
         ("architecture", spec.domains.architecture.as_ref()),
-        ("art_style", spec.domains.art_style.as_ref()),
+        ("art-style", spec.domains.art_style.as_ref()),
         ("audio", spec.domains.audio.as_ref()),
         ("narrative", spec.domains.narrative.as_ref()),
         ("levels", spec.domains.levels.as_ref()),
-        ("ui_ux", spec.domains.ui_ux.as_ref()),
+        ("ui-ux", spec.domains.ui_ux.as_ref()),
     ]
 }
 
@@ -308,7 +311,7 @@ fn analyze_domain(name: &str, domain: Option<&DomainSpec>) -> DomainAmbiguity {
             completion_ratio: 0.0,
             ai_eval_score: 0.0,
             ast_parsability: 0.0,
-            composite_score: 0.0,
+            composite_score: 1.0,
             questions: questions_for_missing_fields(name, &missing_fields),
             missing_fields,
         };
@@ -454,7 +457,13 @@ fn ast_parsability(markdown: Option<&str>) -> f64 {
 }
 
 fn composite_score(completion: f64, ai_eval: f64, ast: f64) -> f64 {
-    clamp_score((COMPLETION_WEIGHT * completion) + (AI_EVAL_WEIGHT * ai_eval) + (AST_WEIGHT * ast))
+    ambiguity_from_clarity(
+        (COMPLETION_WEIGHT * completion) + (AI_EVAL_WEIGHT * ai_eval) + (AST_WEIGHT * ast),
+    )
+}
+
+fn ambiguity_from_clarity(clarity_score: f64) -> f64 {
+    clamp_score(1.0 - clamp_score(clarity_score))
 }
 
 fn calculate_schell_phase_scores(
@@ -463,18 +472,18 @@ fn calculate_schell_phase_scores(
     let mut scores = HashMap::new();
     scores.insert(
         "phase1_experience".to_string(),
-        average_domains(domain_scores, &["design", "art_style", "audio", "ui_ux"]),
+        average_domains(domain_scores, &["design", "art-style", "audio", "ui-ux"]),
     );
     scores.insert(
         "phase2_tetrad".to_string(),
         average_domains(
             domain_scores,
-            &["design", "narrative", "art_style", "architecture"],
+            &["design", "narrative", "art-style", "architecture"],
         ),
     );
     scores.insert(
         "phase3_core_loop".to_string(),
-        average_domains(domain_scores, &["design", "levels", "ui_ux"]),
+        average_domains(domain_scores, &["design", "levels", "ui-ux"]),
     );
     scores.insert(
         "phase4_motivation".to_string(),
@@ -484,7 +493,7 @@ fn calculate_schell_phase_scores(
         "phase5_assessment".to_string(),
         average_domains(
             domain_scores,
-            &["design", "architecture", "levels", "ui_ux"],
+            &["design", "architecture", "levels", "ui-ux"],
         ),
     );
     scores
@@ -507,7 +516,7 @@ fn build_recommendations(
 ) -> Vec<String> {
     let mut recommendations = domain_scores
         .values()
-        .filter(|domain| domain.composite_score < 0.5)
+        .filter(|domain| domain.composite_score > 0.5)
         .map(|domain| {
             format!(
                 "Clarify {} by answering its targeted questions.",
@@ -517,10 +526,8 @@ fn build_recommendations(
         .collect::<Vec<_>>();
 
     for (phase, score) in schell_phase_scores {
-        if *score < 0.5 {
-            recommendations.push(format!(
-                "Strengthen {phase} coverage before implementation."
-            ));
+        if *score > 0.5 {
+            recommendations.push(format!("Reduce {phase} ambiguity before implementation."));
         }
     }
 
@@ -548,7 +555,7 @@ fn expected_fields(name: &str) -> Vec<&'static str> {
             "win_condition",
         ],
         "architecture" => vec!["engine", "platform", "networking", "data_storage"],
-        "art_style" => vec![
+        "art-style" => vec![
             "visual_style",
             "color_palette",
             "resolution",
@@ -562,7 +569,7 @@ fn expected_fields(name: &str) -> Vec<&'static str> {
             "world_building",
         ],
         "levels" => vec!["level_count", "difficulty_curve", "level_generation"],
-        "ui_ux" => vec!["hud_layout", "menu_flow", "accessibility", "input_mapping"],
+        "ui-ux" => vec!["hud_layout", "menu_flow", "accessibility", "input_mapping"],
         _ => Vec::new(),
     }
 }
@@ -571,11 +578,11 @@ fn domain_keywords(name: &str) -> Vec<&'static str> {
     match name {
         "design" => vec!["genre", "mechanic", "loop", "player", "win"],
         "architecture" => vec!["engine", "platform", "network", "storage", "system"],
-        "art_style" => vec!["visual", "color", "resolution", "animation", "style"],
+        "art-style" => vec!["visual", "color", "resolution", "animation", "style"],
         "audio" => vec!["music", "sfx", "ambient", "dynamic", "sound"],
         "narrative" => vec!["story", "character", "dialogue", "world", "arc"],
         "levels" => vec!["level", "difficulty", "procedural", "handcrafted", "curve"],
-        "ui_ux" => vec!["hud", "menu", "accessibility", "input", "flow"],
+        "ui-ux" => vec!["hud", "menu", "accessibility", "input", "flow"],
         _ => Vec::new(),
     }
 }
@@ -700,7 +707,7 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
             "Which platforms must be supported?",
             "Does the game require networking or online services?",
         ],
-        "art_style" => vec![
+        "art-style" => vec![
             "What visual style should the game use?",
             "What color palette defines the mood?",
             "What animation style should characters and UI use?",
@@ -720,7 +727,7 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
             "How should difficulty progress over time?",
             "Are levels procedural, handcrafted, or hybrid?",
         ],
-        "ui_ux" => vec![
+        "ui-ux" => vec![
             "What information belongs on the HUD?",
             "What is the menu flow from launch to gameplay?",
             "Which accessibility requirements are mandatory?",
@@ -731,8 +738,8 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
 
 fn primary_schell_phase(name: &str) -> &'static str {
     match name {
-        "design" | "levels" | "ui_ux" => "phase3_core_loop",
-        "architecture" | "art_style" | "narrative" => "phase2_tetrad",
+        "design" | "levels" | "ui-ux" => "phase3_core_loop",
+        "architecture" | "art-style" | "narrative" => "phase2_tetrad",
         "audio" => "phase1_experience",
         _ => "phase5_assessment",
     }
@@ -749,6 +756,6 @@ mod tests {
     #[test]
     fn composite_uses_expected_weights() {
         let score = composite_score(0.5, 0.6, 0.8);
-        assert!((score - 0.61).abs() < f64::EPSILON);
+        assert!((score - 0.39).abs() < f64::EPSILON);
     }
 }
