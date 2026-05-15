@@ -119,3 +119,30 @@
 - Full lifecycle tests cover success, verification failure/blocker creation, and transaction recovery in `gateway/tests/lux_lifecycle_test.rs`.
 - Existing ambiguity domain keys were normalized to spec field names (`art_style`, `ui_ux`) after full-suite tests exposed stale hyphenated keys.
 - Verification passed: `cd gateway && cargo test`.
+
+## Task 10 — Wave 4 End-to-End Evidence Bundle (2026-05-15)
+
+### Verification Results
+- `cargo test --workspace`: ALL PASS (0 failures). Previously noted pre-existing failure
+  `test_ambiguity_schell_phases` now PASSES — no longer a blocker.
+- `plugin npm run test:run`: 344/344 PASS (28 test files, 2.61s)
+- `ui-src tsc --noEmit`: PASS (exit 0)
+- `ui-src npm test`: 28/28 PASS (7 test files, vitest)
+- `policy-scan.mjs --advisory-only`: exit 0 (Critical: 0, Warning: 48, Advisory: 154)
+- `e2e-lux-sequential-smoke.sh --quick`: ALL 12 steps PASS
+
+### Unity T3 Status
+- Unity executables ARE present at `/Applications/Unity/Hub/Editor/6000.0.75f1/` and `6000.3.13f1/`
+- T3 HARD FAIL: no target Unity project available → cannot run batch compile or scene smoke
+- Milestone push remains BLOCKED until T3 is satisfied with a real Unity project
+
+### AwaitingApproval Gate
+- After T3 passes: RunStatus → AwaitingApproval with approval.gate=ApproveDiff,
+  approval.pending_transition=milestone_push
+- Remote push NOT executed until explicit user approval
+- Upon approval: push → roadmap Pushed → RunStatus::Completed + stop_reason=milestone_complete
+
+### Commands That Work
+- `cargo test --workspace` (from gateway/) — all tests pass including ambiguity tests
+- `bash scripts/e2e-lux-sequential-smoke.sh --quick` — 12-step sequential smoke, all pass
+- `node scripts/policy-scan.mjs --advisory-only` — advisory-only exit 0
