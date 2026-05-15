@@ -117,6 +117,43 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
     assert_command_help_contains(&["unity", "simulate-mouse-input", "--help"], "--button");
     assert_command_help_contains(&["unity", "simulate-mouse-input", "--help"], "--delta-x");
     assert_command_help_contains(&["unity", "simulate-mouse-input", "--help"], "--scroll-y");
+    assert_command_help_contains(&["autonomous", "--help"], "dispatch");
+    assert_command_help_contains(&["autonomous", "dry-run", "--help"], "--project-path");
+    assert_command_help_contains(&["autonomous", "dispatch", "--help"], "--seq");
+    assert_command_help_contains(&["autonomous", "evidence", "--help"], "--run-id");
+}
+
+#[test]
+fn autonomous_cli_dry_run_non_mutating() {
+    let project_root = temp_lux_project("autonomous-dry-run");
+    let run_state_path = project_root.join(".lux").join("run-state.json");
+
+    let mtime_before = run_state_path
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "autonomous",
+            "dry-run",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux autonomous dry-run");
+
+    assert_command_success(&output, "lux autonomous dry-run");
+
+    let mtime_after = run_state_path
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    assert_eq!(
+        mtime_before, mtime_after,
+        "dry-run must not modify run-state.json"
+    );
 }
 
 #[test]
@@ -3258,4 +3295,15 @@ fn session_full_replay_cycle() {
     assert_eq!(replay["totalEvents"], 1);
     assert_eq!(replay["replayedEvents"], 1);
     assert_eq!(replay["errors"].as_array().map(|a| a.len()), Some(0));
+}
+
+fn temp_lux_project(name: &str) -> std::path::PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("lux-smoke-{name}-{nanos}"));
+    fs::create_dir_all(root.join(".lux")).unwrap();
+    root
 }

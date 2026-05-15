@@ -37,11 +37,13 @@ use crate::{
     lux_events::LuxEvent,
     lux_loop::{self, LoopOrchestrator, LoopSnapshot},
     lux_roadmap::{self, REMOTE_WEBRTC_EXPERIMENTAL_FLAG},
+    lux_run_state,
     lux_spec::{self, SpecProject},
     lux_spec_loop::{self, SpecLoopRun},
     lux_terminal::{self, TerminalManager, TerminalOutput, TerminalSession},
     lux_ticket::{
-        FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus, TicketStore,
+        is_execution_grade, FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus,
+        TicketStore,
     },
     lux_verification::{self, VerificationResult},
     protocol::{EventEnvelope, PROTOCOL_VERSION},
@@ -916,6 +918,11 @@ pub fn router(state: GatewayState) -> Router {
         .route("/:id/output", get(get_terminal_output_api))
         .route("/:id", axum::routing::delete(destroy_terminal_api))
         .route("/list", get(list_terminals_api));
+    let autonomous_router = Router::new()
+        .route("/status", get(autonomous_status))
+        .route("/dry-run", post(autonomous_dry_run))
+        .route("/dispatch", post(autonomous_dispatch))
+        .route("/evidence", get(autonomous_evidence));
 
     Router::new()
         .route("/health", get(health))
@@ -1010,6 +1017,7 @@ pub fn router(state: GatewayState) -> Router {
         .nest("/api/lux/spec-loop", spec_loop_router)
         .nest("/api/lux/terminal", terminal_router)
         .nest("/api/lux/runs", crate::lux_api::build_lux_api_router())
+        .nest("/api/lux/autonomous", autonomous_router)
         .nest("/api/lux", lux_router)
         .nest("/api/addons", crate::addon_routes::routes())
         .nest("/api/unity", crate::unity_launch::routes())
@@ -3773,6 +3781,130 @@ fn internal_error(error: anyhow::Error) -> Response {
         .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct AutonomousProjectQuery {
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutonomousDispatchRequest {
+    project_path: Option<PathBuf>,
+    seq: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutonomousEvidenceQuery {
+    project_path: Option<PathBuf>,
+    run_id: Option<String>,
+}
+
+async fn autonomous_status(
+    State(state): State<GatewayState>,
+    Query(query): Query<AutonomousProjectQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let project_path = query
+        .project_path
+        .or_else(|| state.config.project_root.clone())
+        .ok_or_else(|| bad_request(anyhow::anyhow!("project_path is required")))?;
+    let run_state = lux_run_state::RunState::load(&project_path).map_err(internal_error)?;
+    Ok(Json(
+        serde_json::to_value(&run_state).map_err(|e| internal_error(e.into()))?,
+    ))
+}
+
+async fn autonomous_dry_run(
+    State(state): State<GatewayState>,
+    Json(request): Json<AutonomousProjectQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let project_path = request
+        .project_path
+        .or_else(|| state.config.project_root.clone())
+        .ok_or_else(|| bad_request(anyhow::anyhow!("project_path is required")))?;
+    let run_state = lux_run_state::RunState::load(&project_path).map_err(internal_error)?;
+    let tickets = FileTicketStore::new(&project_path)
+        .list(Default::default())
+        .map_err(internal_error)?;
+    let dispatchable: Vec<_> = tickets
+        .iter()
+        .filter(|t| is_execution_grade(t))
+        .map(|t| json!({"id": t.id, "title": t.title}))
+        .collect();
+    Ok(Json(json!({
+        "seq": run_state.seq,
+        "status": run_state.status,
+        "dispatchable_count": dispatchable.len(),
+        "dispatchable_tickets": dispatchable,
+    })))
+}
+
+async fn autonomous_dispatch(
+    State(state): State<GatewayState>,
+    Json(request): Json<AutonomousDispatchRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let project_path = request
+        .project_path
+        .or_else(|| state.config.project_root.clone())
+        .ok_or_else(|| bad_request(anyhow::anyhow!("project_path is required")))?;
+    let new_state = lux_run_state::RunState::transition_with_seq_check(
+        &project_path,
+        request.seq,
+        lux_run_state::RunStatus::Executing,
+        "api dispatch",
+        |_s| {},
+    )
+    .map_err(|err| {
+        if err.to_string().contains("stale seq") {
+            let current_seq = lux_run_state::RunState::load(&project_path)
+                .map(|s| s.seq)
+                .unwrap_or(0);
+            (
+                StatusCode::CONFLICT,
+                Json(json!({"error": "stale_seq", "current_seq": current_seq})),
+            )
+                .into_response()
+        } else {
+            bad_request(err)
+        }
+    })?;
+    Ok(Json(
+        serde_json::to_value(&new_state).map_err(|e| internal_error(e.into()))?,
+    ))
+}
+
+async fn autonomous_evidence(
+    State(state): State<GatewayState>,
+    Query(query): Query<AutonomousEvidenceQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let project_path = query
+        .project_path
+        .or_else(|| state.config.project_root.clone())
+        .ok_or_else(|| bad_request(anyhow::anyhow!("project_path is required")))?;
+    let run_id = match query.run_id {
+        Some(id) => id,
+        None => {
+            lux_run_state::RunState::load(&project_path)
+                .map_err(internal_error)?
+                .run_id
+        }
+    };
+    let evidence_dir = project_path
+        .join(".lux")
+        .join("evidence")
+        .join("autonomous")
+        .join(&run_id);
+    if !evidence_dir.exists() {
+        return Ok(Json(json!({"run_id": run_id, "files": []})));
+    }
+    let files: Vec<String> = std::fs::read_dir(&evidence_dir)
+        .map_err(|e| internal_error(e.into()))?
+        .filter_map(|entry| entry.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    Ok(Json(
+        json!({"run_id": run_id, "path": evidence_dir.display().to_string(), "files": files}),
+    ))
+}
+
 async fn publish_event(state: &GatewayState, event: EventEnvelope) {
     state.record_event(event.clone()).await;
     let _ = state.events.send(event);
@@ -5656,6 +5788,31 @@ mod tests {
         assert!(discovered_names.contains(&"com.linalab.lux"));
         assert!(discovered_names.contains(&"com.linalab.unity-log"));
         assert!(!discovered_names.contains(&"com.other.package"));
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[tokio::test]
+    async fn autonomous_api_stale_seq_rejected() {
+        let project = temp_project_root("autonomous-stale-seq");
+        let mut run_state = lux_run_state::RunState::idle(&project).unwrap();
+        run_state.save(&project).unwrap();
+
+        let app = test_app_with_project(project.clone());
+
+        let response = json_request(
+            app,
+            Method::POST,
+            "/api/lux/autonomous/dispatch",
+            serde_json::json!({
+                "seq": 9999,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "stale_seq");
 
         let _ = fs::remove_dir_all(&project);
     }

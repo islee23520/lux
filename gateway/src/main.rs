@@ -147,6 +147,46 @@ enum Command {
     Doctor(lux_doctor::DoctorArgs),
     /// Install Lux workflow skills into .agents/skills/
     AgentsInstall(lux_agents_install::AgentsInstallArgs),
+    /// Control and inspect the autonomous agent dispatch pipeline
+    Autonomous(AutonomousArgs),
+}
+
+#[derive(Parser, Debug)]
+struct AutonomousArgs {
+    #[command(subcommand)]
+    action: AutonomousCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum AutonomousCommand {
+    /// Show current autonomous run state
+    Status(LuxProjectArgs),
+    /// Preview dispatch eligibility without mutating state
+    DryRun(LuxProjectArgs),
+    /// Trigger dispatch (requires DispatchReady state)
+    Dispatch(AutonomousDispatchArgs),
+    /// Show execution evidence for a run
+    Evidence(AutonomousEvidenceArgs),
+}
+
+#[derive(Parser, Debug)]
+struct AutonomousDispatchArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Expected seq value for optimistic concurrency check
+    #[arg(long)]
+    seq: u64,
+}
+
+#[derive(Parser, Debug)]
+struct AutonomousEvidenceArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Run ID to show evidence for (defaults to current run)
+    #[arg(long)]
+    run_id: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -1254,6 +1294,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::SelfUpdate(args) => run_self_update_command(args),
         Command::Doctor(args) => lux_doctor::run_doctor_command(args),
         Command::AgentsInstall(args) => lux_agents_install::run_agents_install_command(args),
+        Command::Autonomous(args) => run_autonomous_command(args),
     }
 }
 
@@ -2031,6 +2072,84 @@ fn run_lux_kanban_command(args: LuxProjectArgs) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+fn run_autonomous_command(args: AutonomousArgs) -> anyhow::Result<()> {
+    match args.action {
+        AutonomousCommand::Status(project_args) => {
+            let project_root = resolve_lux_project_root(&project_args.project_path)?;
+            let state = lux_run_state::RunState::load(&project_root)?;
+            println!("seq:    {}", state.seq);
+            println!("run_id: {}", state.run_id);
+            println!("status: {}", state.status);
+            if let Some(ticket_id) = &state.current_ticket_id {
+                println!("ticket: {ticket_id}");
+            }
+            println!("updated_at: {}", state.updated_at);
+            Ok(())
+        }
+        AutonomousCommand::DryRun(project_args) => {
+            let project_root = resolve_lux_project_root(&project_args.project_path)?;
+            let state = match lux_run_state::RunState::load(&project_root) {
+                Ok(s) => s,
+                Err(_) => lux_run_state::RunState::idle(&project_root)?,
+            };
+            use lux_ticket::TicketStore;
+            let tickets =
+                lux_ticket::FileTicketStore::new(&project_root).list(Default::default())?;
+            let dispatchable: Vec<_> = tickets
+                .iter()
+                .filter(|t| lux_ticket::is_execution_grade(t))
+                .collect();
+            println!("dry-run: seq={} status={}", state.seq, state.status);
+            println!("dispatchable tickets: {}", dispatchable.len());
+            for ticket in &dispatchable {
+                println!("  - {} ({})", ticket.id, ticket.title);
+            }
+            Ok(())
+        }
+        AutonomousCommand::Dispatch(dispatch_args) => {
+            let project_root = resolve_lux_project_root(&dispatch_args.project_path)?;
+            let new_state = lux_run_state::RunState::transition_with_seq_check(
+                &project_root,
+                dispatch_args.seq,
+                lux_run_state::RunStatus::Executing,
+                "cli dispatch",
+                |_s| {},
+            )?;
+            println!(
+                "dispatched: seq={} status={}",
+                new_state.seq, new_state.status
+            );
+            Ok(())
+        }
+        AutonomousCommand::Evidence(evidence_args) => {
+            let project_root = resolve_lux_project_root(&evidence_args.project_path)?;
+            let run_id = match evidence_args.run_id {
+                Some(id) => id,
+                None => {
+                    let state = lux_run_state::RunState::load(&project_root)?;
+                    state.run_id
+                }
+            };
+            let evidence_dir = project_root
+                .join(".lux")
+                .join("evidence")
+                .join("autonomous")
+                .join(&run_id);
+            if !evidence_dir.exists() {
+                eprintln!("no evidence found for run_id: {run_id}");
+                return Ok(());
+            }
+            println!("evidence for run_id: {run_id}");
+            println!("path: {}", evidence_dir.display());
+            for entry in std::fs::read_dir(&evidence_dir)? {
+                let entry = entry?;
+                println!("  {}", entry.file_name().to_string_lossy());
+            }
+            Ok(())
+        }
+    }
 }
 
 fn run_lux_build_command(args: LuxBuildArgs) -> anyhow::Result<()> {
