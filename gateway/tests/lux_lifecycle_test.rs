@@ -368,9 +368,9 @@ fn ticket_executor_fake_success() {
     let opts = executor_opts(temp.path(), "run-fake-success", &ticket.id);
     let executor = FakeExecutor::success(&opts.run_id);
 
-    let result = executor
-        .execute(&ticket, &opts)
-        .expect("fake executor should return success");
+        let result = executor
+            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+            .expect("fake executor should return success");
 
     assert_eq!(result.status, ExecutorStatus::Success);
     assert_eq!(result.exit_code, Some(0));
@@ -390,9 +390,9 @@ fn ticket_executor_fake_failure() {
     let opts = executor_opts(temp.path(), "run-fake-failure", &ticket.id);
     let executor = FakeExecutor::failed(&opts.run_id, 17);
 
-    let result = executor
-        .execute(&ticket, &opts)
-        .expect("fake executor should return failure");
+        let result = executor
+            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+            .expect("fake executor should return failure");
 
     assert_eq!(result.status, ExecutorStatus::Failed);
     assert_eq!(result.exit_code, Some(17));
@@ -405,9 +405,9 @@ fn ticket_executor_missing_opencode() {
     let opts = executor_opts(temp.path(), "run-missing-opencode", &ticket.id);
     let executor = OpenCodeExecutor::with_binary("lux-opencode-binary-that-does-not-exist");
 
-    let result = executor
-        .execute(&ticket, &opts)
-        .expect("missing binary should be explicit executor status");
+        let result = executor
+            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+            .expect("missing binary should be explicit executor status");
 
     assert_eq!(result.status, ExecutorStatus::MissingBinary);
     assert_eq!(result.exit_code, None);
@@ -451,9 +451,9 @@ fn ticket_executor_result_has_evidence_refs() {
     let opts = executor_opts(temp.path(), "run-evidence-refs", &ticket.id);
     let executor = OpenCodeExecutor::with_binary("lux-opencode-binary-that-does-not-exist");
 
-    let result = executor
-        .execute(&ticket, &opts)
-        .expect("executor result should be returned");
+        let result = executor
+            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+            .expect("executor result should be returned");
 
     assert!(!result.evidence_refs.is_empty());
     assert!(result
@@ -700,4 +700,45 @@ fn execution_max_concurrency_one() {
     );
 
     let _ = run_id_b;
+}
+
+#[test]
+fn autonomous_evidence_success_refs() {
+    use lux::lux_ticket_executor::NoopSink;
+
+    let temp = TestTempDir::new("evidence-success");
+    let run_id = "run-ev-success";
+    let ticket = execution_grade_ticket("ev-success");
+    let opts = executor_opts(temp.path(), run_id, &ticket.id);
+    let executor = FakeExecutor::success(run_id);
+
+    let result = executor
+        .execute(&ticket, &opts, &NoopSink)
+        .expect("execute should succeed");
+
+    assert_eq!(result.status, ExecutorStatus::Success);
+    assert!(!result.evidence_refs.is_empty(), "evidence_refs must be populated on success");
+    assert!(
+        result.evidence_refs.iter().any(|r| r.contains(run_id)),
+        "evidence_refs must reference the run_id directory"
+    );
+}
+
+#[test]
+fn autonomous_evidence_failure_event() {
+    use lux::lux_ticket_executor::NoopSink;
+
+    let temp = TestTempDir::new("evidence-failure");
+    let run_id = "run-ev-failure";
+    let ticket = execution_grade_ticket("ev-failure");
+    let opts = executor_opts(temp.path(), run_id, &ticket.id);
+    let executor = FakeExecutor::failed(run_id, 1);
+
+    let result = executor
+        .execute(&ticket, &opts, &NoopSink)
+        .expect("execute should not error");
+
+    assert_eq!(result.status, ExecutorStatus::Failed);
+    assert_eq!(result.exit_code, Some(1), "exit_code must be recorded on failure");
+    assert!(!result.evidence_refs.is_empty(), "evidence_refs must be populated on failure");
 }

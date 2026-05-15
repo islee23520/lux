@@ -32,6 +32,7 @@ fn ticket(
         spec_ref: spec_ref.map(|value| value.to_string()),
         created_at: "2026-05-11T00:00:00Z".to_string(),
         updated_at: "2026-05-11T00:00:00Z".to_string(),
+        ..Default::default()
     }
 }
 
@@ -232,6 +233,7 @@ fn test_lux_ticket_file_store_crud() {
         spec_ref: Some(".lux/spec/b".to_string()),
         created_at: "2026-05-11T00:00:00Z".to_string(),
         updated_at: "2026-05-11T01:00:00Z".to_string(),
+        ..Default::default()
     };
     let updated = store.update(&id, updated_ticket).unwrap();
     assert_eq!(updated.status, TicketStatus::ToDo);

@@ -38,7 +38,7 @@ pub struct BlockerPolicy {
     pub max_attempts: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Ticket {
     pub id: String,
     pub title: String,
@@ -69,8 +69,9 @@ pub struct Ticket {
     pub non_goals: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TicketStatus {
+    #[default]
     Backlog,
     Blocked,
     ToDo,
@@ -78,10 +79,11 @@ pub enum TicketStatus {
     Done,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TicketPriority {
     Critical,
     High,
+    #[default]
     Medium,
     Low,
 }

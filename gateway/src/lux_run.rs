@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    lux_events::{EventRouter, LuxEvent},
     lux_io::atomic_write_json,
     lux_lock::{acquire_lux_lock, LuxLockGuard, DEFAULT_STALE_THRESHOLD_SECS},
     lux_metrics::RunMetrics,
@@ -121,6 +122,7 @@ pub struct RunLifecycle {
     pub profile: TeamProfile,
     pub state: RunState,
     pub active_agents: HashMap<String, AgentSession>,
+    pub event_router: EventRouter,
     lock_guard: Option<LuxLockGuard>,
 }
 
@@ -221,6 +223,7 @@ impl RunLifecycle {
             profile,
             state,
             active_agents,
+            event_router: EventRouter::new(),
             lock_guard,
         }
     }
@@ -355,6 +358,7 @@ pub fn start_run(args: &RunArgs) -> Result<RunLifecycle> {
         profile,
         state,
         active_agents: HashMap::new(),
+        event_router: EventRouter::new(),
         lock_guard: Some(lock_guard),
     };
     save_manifest(&lifecycle)?;
@@ -465,6 +469,12 @@ pub fn execute_task(lifecycle: &mut RunLifecycle, task_id: &str) -> Result<()> {
             lifecycle.state.run_id
         ));
     }
+
+    lifecycle.event_router.route(&LuxEvent::AutonomousDispatchRequested {
+        run_id: lifecycle.state.run_id.clone(),
+        ticket_id: task_id.to_string(),
+    });
+
     save_manifest(lifecycle)?;
     lifecycle.save_metrics_best_effort();
     eprintln!("[lux-run] projected task {task_id} to role {}", role.role);
@@ -766,6 +776,7 @@ pub fn recover_run(project_path: &Path, run_id: &str) -> Result<RunLifecycle> {
         profile: manifest.profile,
         state: manifest.state,
         active_agents: manifest.active_agents,
+        event_router: EventRouter::new(),
         lock_guard: Some(lock_guard),
     };
     lifecycle

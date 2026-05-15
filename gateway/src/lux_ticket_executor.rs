@@ -9,9 +9,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::lux_ticket::Ticket;
+use crate::protocol::{EventCategory, EventEnvelope, EventSource, PROTOCOL_VERSION};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutorOpts {
@@ -38,8 +41,23 @@ pub struct ExecutorResult {
     pub evidence_refs: Vec<String>,
 }
 
+pub trait EventSink: Send + Sync {
+    fn emit(&self, event: EventEnvelope);
+}
+
+pub struct NoopSink;
+
+impl EventSink for NoopSink {
+    fn emit(&self, _event: EventEnvelope) {}
+}
+
 pub trait Executor {
-    fn execute(&self, ticket: &Ticket, opts: &ExecutorOpts) -> Result<ExecutorResult>;
+    fn execute(
+        &self,
+        ticket: &Ticket,
+        opts: &ExecutorOpts,
+        sink: &dyn EventSink,
+    ) -> Result<ExecutorResult>;
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +80,12 @@ impl FakeExecutor {
 }
 
 impl Executor for FakeExecutor {
-    fn execute(&self, _ticket: &Ticket, _opts: &ExecutorOpts) -> Result<ExecutorResult> {
+    fn execute(
+        &self,
+        _ticket: &Ticket,
+        _opts: &ExecutorOpts,
+        _sink: &dyn EventSink,
+    ) -> Result<ExecutorResult> {
         Ok(self.result.clone())
     }
 }
@@ -129,7 +152,12 @@ impl OpenCodeExecutor {
 }
 
 impl Executor for OpenCodeExecutor {
-    fn execute(&self, ticket: &Ticket, opts: &ExecutorOpts) -> Result<ExecutorResult> {
+    fn execute(
+        &self,
+        ticket: &Ticket,
+        opts: &ExecutorOpts,
+        sink: &dyn EventSink,
+    ) -> Result<ExecutorResult> {
         let evidence = EvidencePaths::new(&opts.working_dir, &opts.run_id);
         fs::create_dir_all(&evidence.absolute_dir).with_context(|| {
             format!(
@@ -174,6 +202,14 @@ impl Executor for OpenCodeExecutor {
             Err(error) => return Err(error).context("failed to spawn opencode executor"),
         };
 
+        sink.emit(audit_envelope(
+            EventCategory::AutonomousAudit,
+            &opts.run_id,
+            &opts.ticket_id,
+            "autonomous:execution_started",
+            serde_json::json!({ "run_id": opts.run_id, "ticket_id": opts.ticket_id }),
+        ));
+
         let started = Instant::now();
         let timeout = Duration::from_secs(opts.timeout_secs.max(1));
         loop {
@@ -186,15 +222,68 @@ impl Executor for OpenCodeExecutor {
                 } else {
                     ExecutorStatus::Failed
                 };
-                return Ok(evidence.result(executor_status, status.code()));
+                let result = evidence.result(executor_status.clone(), status.code());
+                let event_type = if executor_status == ExecutorStatus::Success {
+                    "autonomous:execution_completed"
+                } else {
+                    "autonomous:execution_failed"
+                };
+                sink.emit(audit_envelope(
+                    EventCategory::AutonomousAudit,
+                    &opts.run_id,
+                    &opts.ticket_id,
+                    event_type,
+                    serde_json::json!({
+                        "run_id": opts.run_id,
+                        "ticket_id": opts.ticket_id,
+                        "exit_code": result.exit_code,
+                        "evidence_refs": result.evidence_refs,
+                    }),
+                ));
+                return Ok(result);
             }
             if started.elapsed() >= timeout {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Ok(evidence.result(ExecutorStatus::Timeout, None));
+                let result = evidence.result(ExecutorStatus::Timeout, None);
+                sink.emit(audit_envelope(
+                    EventCategory::AutonomousAudit,
+                    &opts.run_id,
+                    &opts.ticket_id,
+                    "autonomous:execution_failed",
+                    serde_json::json!({
+                        "run_id": opts.run_id,
+                        "ticket_id": opts.ticket_id,
+                        "exit_code": null,
+                        "evidence_refs": result.evidence_refs,
+                    }),
+                ));
+                return Ok(result);
             }
             thread::sleep(Duration::from_millis(200));
         }
+    }
+}
+
+fn audit_envelope(
+    category: EventCategory,
+    run_id: &str,
+    ticket_id: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> EventEnvelope {
+    EventEnvelope {
+        schema_version: PROTOCOL_VERSION,
+        event_id: Uuid::new_v4().to_string(),
+        category,
+        source: EventSource::Ai,
+        session_id: format!("{run_id}:{ticket_id}"),
+        captured_at_utc: Utc::now().to_rfc3339(),
+        project_path: None,
+        summary: Some(event_type.to_string()),
+        redaction_metadata: None,
+        retention_metadata: None,
+        payload,
     }
 }
 

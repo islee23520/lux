@@ -493,6 +493,7 @@ fn create_kanban_tickets_from_spec(project_path: &Path, spec: &SpecProject) -> V
                 spec_ref: Some(domain.content_path.clone()),
                 created_at: now.clone(),
                 updated_at: now.clone(),
+                ..Default::default()
             };
             store.create(ticket).expect("ticket should be created")
         })

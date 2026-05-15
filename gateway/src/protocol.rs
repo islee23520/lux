@@ -86,6 +86,8 @@ pub enum EventCategory {
     Input,
     Screenshot,
     Hierarchy,
+    /// Lifecycle audit events emitted during autonomous ticket execution.
+    AutonomousAudit,
 }
 
 /// Records which fields were redacted, why, and when — without leaking original values.

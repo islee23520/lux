@@ -86,6 +86,49 @@ pub enum LuxEvent {
         max_iterations: u32,
         requires_user_approval: bool,
     },
+
+    #[serde(rename = "autonomous:dispatch_requested")]
+    AutonomousDispatchRequested { run_id: String, ticket_id: String },
+
+    #[serde(rename = "autonomous:execution_started")]
+    AutonomousExecutionStarted { run_id: String, ticket_id: String },
+
+    #[serde(rename = "autonomous:execution_completed")]
+    AutonomousExecutionCompleted {
+        run_id: String,
+        ticket_id: String,
+        exit_code: Option<i32>,
+        evidence_refs: Vec<String>,
+    },
+
+    #[serde(rename = "autonomous:execution_failed")]
+    AutonomousExecutionFailed {
+        run_id: String,
+        ticket_id: String,
+        exit_code: Option<i32>,
+        evidence_refs: Vec<String>,
+    },
+
+    #[serde(rename = "autonomous:verification_started")]
+    AutonomousVerificationStarted { run_id: String, ticket_id: String },
+
+    #[serde(rename = "autonomous:verification_completed")]
+    AutonomousVerificationCompleted {
+        run_id: String,
+        ticket_id: String,
+        passed: bool,
+        evidence_ref: String,
+    },
+
+    #[serde(rename = "autonomous:blocker_created")]
+    AutonomousBlockerCreated {
+        run_id: String,
+        ticket_id: String,
+        blocker_ticket_id: String,
+    },
+
+    #[serde(rename = "autonomous:retry_scheduled")]
+    AutonomousRetryScheduled { run_id: String, ticket_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -153,6 +196,14 @@ impl LuxEvent {
             LuxEvent::AiRequestInput { .. } => "ai:request_input",
             LuxEvent::VerificationResult { .. } => "verification:result",
             LuxEvent::LoopStateChange { .. } => "loop:state_change",
+            LuxEvent::AutonomousDispatchRequested { .. } => "autonomous:dispatch_requested",
+            LuxEvent::AutonomousExecutionStarted { .. } => "autonomous:execution_started",
+            LuxEvent::AutonomousExecutionCompleted { .. } => "autonomous:execution_completed",
+            LuxEvent::AutonomousExecutionFailed { .. } => "autonomous:execution_failed",
+            LuxEvent::AutonomousVerificationStarted { .. } => "autonomous:verification_started",
+            LuxEvent::AutonomousVerificationCompleted { .. } => "autonomous:verification_completed",
+            LuxEvent::AutonomousBlockerCreated { .. } => "autonomous:blocker_created",
+            LuxEvent::AutonomousRetryScheduled { .. } => "autonomous:retry_scheduled",
         }
     }
 }

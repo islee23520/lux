@@ -64,3 +64,27 @@ pub fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result
     }
     Ok(events)
 }
+
+pub fn write_evidence_file(
+    project_root: &Path,
+    relative_path: &str,
+    content: &str,
+    max_bytes: usize,
+) -> anyhow::Result<String> {
+    let abs_path = project_root.join(relative_path);
+    if let Some(parent) = abs_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create evidence directory {}", parent.display()))?;
+    }
+    let truncated = if content.len() > max_bytes {
+        &content[..max_bytes]
+    } else {
+        content
+    };
+    let tmp_path = abs_path.with_extension("txt.tmp");
+    fs::write(&tmp_path, truncated)
+        .with_context(|| format!("failed to write evidence tmp {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &abs_path)
+        .with_context(|| format!("failed to atomically replace evidence file {}", abs_path.display()))?;
+    Ok(relative_path.to_string())
+}
