@@ -9,6 +9,9 @@ use crate::lux_ai_session::{self, AiSession};
 use crate::lux_ambiguity::{self, AmbiguityReport};
 use crate::lux_build::{self, BuildManager, BuildTarget};
 use crate::lux_events::{EventRouter, LuxEvent};
+use crate::lux_io::atomic_write_json;
+use crate::lux_run_recover::ExecutionSession;
+use crate::lux_run_state::RunStatus;
 use crate::lux_spec::{self, SpecProject};
 use crate::lux_ticket::{
     FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus, TicketStore,
@@ -447,4 +450,51 @@ pub fn event_payload(event: &LuxEvent) -> Value {
         }),
         other => json!({ "type": other.event_type() }),
     }
+}
+
+pub fn write_execution_session(
+    project_path: &Path,
+    run_id: &str,
+    session: &ExecutionSession,
+) -> Result<()> {
+    let path = ExecutionSession::path(project_path, run_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create session dir {}", parent.display()))?;
+    }
+    atomic_write_json(&path, session)
+}
+
+pub fn update_heartbeat(project_path: &Path, run_id: &str) -> Result<()> {
+    let mut session = ExecutionSession::load(project_path, run_id)?
+        .ok_or_else(|| anyhow!("no session found for run {run_id}"))?;
+    session.heartbeat(project_path)
+}
+
+pub fn check_no_duplicate_dispatch(project_path: &Path, ticket_id: &str) -> Result<()> {
+    let runs_dir = project_path.join(".lux").join("runs");
+    if !runs_dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&runs_dir)
+        .with_context(|| format!("failed to read runs dir {}", runs_dir.display()))?
+    {
+        let entry = entry?;
+        let run_id = entry.file_name().to_string_lossy().to_string();
+        let session = match ExecutionSession::load(project_path, &run_id)? {
+            Some(s) => s,
+            None => continue,
+        };
+        if session.ticket_id != ticket_id {
+            continue;
+        }
+        let state = match crate::lux_run_state::RunState::load(project_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if state.status == RunStatus::ExecutingTicket.to_string() {
+            return Err(anyhow!("Ticket {} is already executing", ticket_id));
+        }
+    }
+    Ok(())
 }

@@ -34,6 +34,7 @@ pub struct ExecutionSession {
     pub last_heartbeat_at: String,
     pub timeout_secs: u64,
     pub max_attempts: u32,
+    pub attempt_number: u32,
 }
 
 impl ExecutionSession {
@@ -60,6 +61,7 @@ impl ExecutionSession {
             last_heartbeat_at: now,
             timeout_secs,
             max_attempts,
+            attempt_number: 0,
         };
         atomic_write_json(&Self::path(project_path, run_id), &session)?;
         Ok(session)
@@ -133,11 +135,22 @@ pub fn recover_stuck_executions(project_path: &Path) -> Result<Vec<String>> {
             continue;
         }
 
+        let target_status = if session.attempt_number < session.max_attempts {
+            RunStatus::RetryReady
+        } else {
+            RunStatus::Blocked
+        };
+        let reason_label = if target_status == RunStatus::RetryReady {
+            "recover_stuck_executions: heartbeat timeout"
+        } else {
+            "recover_stuck_executions: max attempts exceeded"
+        };
+
         match RunState::transition_with_seq_check(
             project_path,
             state.seq,
-            RunStatus::RetryReady,
-            "recover_stuck_executions: heartbeat timeout",
+            target_status,
+            reason_label,
             |s| {
                 s.last_error = Some(format!(
                     "execution timed out after {}s (ticket: {})",

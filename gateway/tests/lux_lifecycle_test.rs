@@ -5,6 +5,7 @@ use std::{
 
 use chrono::Utc;
 use lux::{
+    lux_loop::check_no_duplicate_dispatch,
     lux_roadmap::{RoadmapPhaseStatus, RoadmapReality},
     lux_run::{
         begin_milestone_push_approval, execute_milestone_push_with_runner, MilestonePushApproval,
@@ -517,6 +518,7 @@ fn execution_recovery_marks_retry_ready_on_timeout() {
         last_heartbeat_at: stale_time,
         timeout_secs: 300,
         max_attempts: 3,
+        attempt_number: 0,
     };
     lux::lux_io::atomic_write_json(
         &ExecutionSession::path(temp.path(), run_id),
@@ -551,4 +553,151 @@ fn execution_recovery_skips_live_session() {
 
     let state_after = RunState::load(temp.path()).expect("state should load");
     assert_eq!(state_after.status, RunStatus::ExecutingTicket.to_string());
+}
+
+#[test]
+fn execution_recovery_no_duplicate_dispatch() {
+    let temp = TestTempDir::new("no-dup-dispatch");
+    let run_id = "run-001";
+
+    let stale_time = (Utc::now() - chrono::Duration::seconds(9999)).to_rfc3339();
+    let session = ExecutionSession {
+        run_id: run_id.to_string(),
+        ticket_id: "ticket-001".to_string(),
+        started_at: stale_time.clone(),
+        last_heartbeat_at: stale_time,
+        timeout_secs: 300,
+        max_attempts: 3,
+        attempt_number: 0,
+    };
+    lux::lux_io::atomic_write_json(
+        &ExecutionSession::path(temp.path(), run_id),
+        &session,
+    )
+    .expect("session should be written");
+
+    let mut state = run_state(temp.path(), run_id);
+    state
+        .transition_to(RunStatus::ExecutingTicket, "test")
+        .expect("transition");
+    state.save(temp.path()).expect("save");
+
+    let result = check_no_duplicate_dispatch(temp.path(), "ticket-001");
+    assert!(result.is_err(), "duplicate dispatch must be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("already executing"),
+        "error must mention already executing"
+    );
+}
+
+#[test]
+fn execution_timeout_blocks_or_retries() {
+    let temp = TestTempDir::new("timeout-blocks-retries");
+    let run_id = "run-001";
+
+    let stale_time = (Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+    let session = ExecutionSession {
+        run_id: run_id.to_string(),
+        ticket_id: "ticket-retry".to_string(),
+        started_at: stale_time.clone(),
+        last_heartbeat_at: stale_time.clone(),
+        timeout_secs: 1,
+        max_attempts: 3,
+        attempt_number: 0,
+    };
+    lux::lux_io::atomic_write_json(
+        &ExecutionSession::path(temp.path(), run_id),
+        &session,
+    )
+    .expect("session should be written");
+
+    let mut state = run_state(temp.path(), run_id);
+    state
+        .transition_to(RunStatus::ExecutingTicket, "test")
+        .expect("transition");
+    state.save(temp.path()).expect("save");
+
+    let recovered = recover_stuck_executions(temp.path()).expect("recovery should succeed");
+    assert!(recovered.contains(&run_id.to_string()), "run-001 must be recovered");
+
+    let state_after = RunState::load(temp.path()).expect("state should load");
+    assert_eq!(
+        state_after.status,
+        RunStatus::RetryReady.to_string(),
+        "attempt_number=0 < max_attempts=3 must yield RetryReady"
+    );
+
+    let stale_time2 = (Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+    let session_maxed = ExecutionSession {
+        run_id: run_id.to_string(),
+        ticket_id: "ticket-retry".to_string(),
+        started_at: stale_time2.clone(),
+        last_heartbeat_at: stale_time2,
+        timeout_secs: 1,
+        max_attempts: 3,
+        attempt_number: 3,
+    };
+    lux::lux_io::atomic_write_json(
+        &ExecutionSession::path(temp.path(), run_id),
+        &session_maxed,
+    )
+    .expect("session should be written");
+
+    let mut state2 = RunState::load(temp.path()).expect("load state");
+    state2
+        .transition_to(RunStatus::ExecutingTicket, "re-dispatch")
+        .expect("transition back");
+    state2.save(temp.path()).expect("save");
+
+    let recovered2 = recover_stuck_executions(temp.path()).expect("recovery should succeed");
+    assert!(recovered2.contains(&run_id.to_string()), "run-001 must be recovered again");
+
+    let state_blocked = RunState::load(temp.path()).expect("state should load");
+    assert_eq!(
+        state_blocked.status,
+        RunStatus::Blocked.to_string(),
+        "attempt_number=3 >= max_attempts=3 must yield Blocked"
+    );
+}
+
+#[test]
+fn execution_max_concurrency_one() {
+    let temp = TestTempDir::new("max-concurrency");
+    let run_id_a = "run-concurrent-a";
+    let run_id_b = "run-concurrent-b";
+    let ticket_id = "ticket-shared";
+
+    let now = Utc::now().to_rfc3339();
+    let session_a = ExecutionSession {
+        run_id: run_id_a.to_string(),
+        ticket_id: ticket_id.to_string(),
+        started_at: now.clone(),
+        last_heartbeat_at: now.clone(),
+        timeout_secs: 300,
+        max_attempts: 3,
+        attempt_number: 0,
+    };
+    lux::lux_io::atomic_write_json(
+        &ExecutionSession::path(temp.path(), run_id_a),
+        &session_a,
+    )
+    .expect("session A should be written");
+
+    let mut state_a = run_state(temp.path(), run_id_a);
+    state_a
+        .transition_to(RunStatus::ExecutingTicket, "test")
+        .expect("transition A");
+    state_a.save(temp.path()).expect("save A");
+
+    let result = check_no_duplicate_dispatch(temp.path(), ticket_id);
+    assert!(
+        result.is_err(),
+        "second dispatch for same ticket must be rejected"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("already executing"),
+        "error must mention already executing"
+    );
+
+    let _ = run_id_b;
 }

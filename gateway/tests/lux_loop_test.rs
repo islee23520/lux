@@ -6,6 +6,7 @@ use std::{
 
 use lux::lux_events::{EventRouter, LuxEvent};
 use lux::lux_loop::{ApprovalGate, LoopOrchestrator, LoopState};
+use lux::lux_run_recover::ExecutionSession;
 use lux::lux_run_state::RunState;
 use lux::lux_spec::{lux_init, lux_load, lux_save};
 use serde_json::json;
@@ -206,4 +207,31 @@ fn lux_loop_max_iterations_guard_blocks_restart() {
         .start()
         .expect_err("max iteration guard should stop restart");
     assert!(error.to_string().contains("max iterations"));
+}
+
+#[test]
+fn loop_heartbeat_is_updated_on_tick() {
+    let project = TestProject::new("heartbeat-tick");
+    let run_id = "run-heartbeat";
+
+    ExecutionSession::begin(project.path(), run_id, "ticket-hb", 300, 3)
+        .expect("session should be created");
+
+    let before = ExecutionSession::load(project.path(), run_id)
+        .expect("load should succeed")
+        .expect("session should exist");
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    lux::lux_loop::update_heartbeat(project.path(), run_id)
+        .expect("heartbeat update should succeed");
+
+    let after = ExecutionSession::load(project.path(), run_id)
+        .expect("load should succeed")
+        .expect("session should exist");
+
+    assert!(
+        after.last_heartbeat_at > before.last_heartbeat_at,
+        "last_heartbeat_at must advance after update_heartbeat"
+    );
 }
