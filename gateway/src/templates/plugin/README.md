@@ -16,13 +16,24 @@ This plugin is auto-installed by `lux bridge install` into `.opencode/plugins/lu
 ## Configuration
 
 Default configuration:
-- `maxContinuations`: 10 (per-session continuation limit)
+- `maxContinuations`: 50 (per-session continuation limit)
 - `specPath`: `.lux/spec.json`
 - `glossaryPath`: `.lux/glossary.md`
+
+> [!NOTE]
+> Legacy `.lux/continuation-state.json` is deprecated. The plugin now uses the internal gateway state for tracking.
 
 ## How It Works
 
 1. When an OpenCode session becomes idle, the plugin evaluates the spec
 2. If ambiguity is high or work is incomplete, it injects a continuation prompt
-3. The continuation counter prevents infinite loops (max 10 by default)
+3. The continuation counter prevents infinite loops (max 50 by default)
 4. Glossary terms discovered during development are auto-appended
+
+### Canonical Stop Reasons
+
+The orchestrator stops continuation when:
+- `max_continuations_reached`: The session hit the limit (default 50).
+- `spec_satisfied`: Ambiguity score is below threshold and all requirements met.
+- `manual_intervention`: User explicitly stopped the loop.
+- `stagnation_detected`: No progress made across multiple continuations.

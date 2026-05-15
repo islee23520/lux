@@ -1,3 +1,4 @@
+target/
 node_modules/
 **/node_modules/
 .DS_Store
@@ -6,3 +7,34 @@ RustGateway~/target/
 .playwright-mcp
 .sisyphus/
 .contexty
+
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+[Uu]ser[Ss]ettings/
+
+# Unity meta files
+*.meta
+
+# IDE
+.vs/
+.idea/
+*.csproj
+*.sln
+*.sln.meta
+*.user
+*.userprefs
+
+# macOS
+.DS_Store
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/

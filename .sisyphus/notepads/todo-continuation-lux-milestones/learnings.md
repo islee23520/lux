@@ -99,3 +99,14 @@
 - `RunState::update_with_seq_check(project_path, expected_seq, expected_status, patch)` validates seq, applies patch, increments seq, saves atomically.
 - vitest: 343/343 passed (28 test files); `cargo test --test lux_run_state_test`: 17/17 passed (3 new seq-check tests added); `cargo build` clean; `npx tsc --noEmit` 0 errors.
 - Evidence files: `.sisyphus/evidence/task-2-plugin-api-write.txt`, `task-2-server-canonical-write.txt`, `task-2-stale-seq-conflict.txt`.
+
+## Task 9: Documentation Updates for Autonomous Milestone Continuation
+- Updated README.md to clarify .lux/roadmap.json as the SSoT.
+- Documented T3 Unity verification requirement for milestone push (batchmode compile + scene smoke).
+- Documented deprecation of legacy .lux/continuation-state.json.
+- Clarified that team-mode/hyperplan is producer-only and cannot write .lux/ state directly.
+- Updated gateway/src/templates/plugin/README.md:
+    - maxContinuations increased from 10 to 50.
+    - Documented canonical stop reasons (max_continuations_reached, spec_satisfied, manual_intervention, stagnation_detected).
+    - Documented legacy state deprecation.
+- Verified that forbidden commands (ralph, start-work) and typos (max_continations) are not present in the updated documentation.
