@@ -25,6 +25,19 @@ const VERIFICATION_BLOCKER_SPEC_REF: &str = ".lux/verification/latest.json";
 pub const T3_COMPILE_TIMEOUT_SECS: u64 = 600;
 pub const T3_SCENE_SMOKE_TIMEOUT_SECS: u64 = 300;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockerConfig {
+    pub max_blocker_attempts_per_ticket: u32,
+}
+
+impl Default for BlockerConfig {
+    fn default() -> Self {
+        Self {
+            max_blocker_attempts_per_ticket: 3,
+        }
+    }
+}
+
 const T3_BUILD_TARGET: &str = "WebGL";
 const T3_COMPILE_METHOD: &str = "Linalab.Lux.Editor.LuxBatchAutomation.Compile";
 const T3_SCENE_SMOKE_METHOD: &str = "Linalab.Lux.Editor.LuxSceneSmoke.Run";
@@ -716,9 +729,10 @@ pub fn create_blocker_tickets(
 
         if next_attempt > config.max_blocker_attempts_per_ticket {
             quarantine_run_state(
-                &mut run_state,
                 project_path,
+                &mut run_state,
                 StopReason::BlockerEscalationRequired,
+                "verification blocker attempt limit exceeded",
             )?;
             bail!(StopReason::BlockerEscalationRequired.as_str());
         }
@@ -742,9 +756,10 @@ pub fn create_blocker_tickets(
         if let Some(blocked_ticket_id) = current_ticket_id.as_deref() {
             if store.blocker_dependency_would_cycle(blocked_ticket_id, &effective_blocker_id)? {
                 quarantine_run_state(
-                    &mut run_state,
                     project_path,
+                    &mut run_state,
                     StopReason::BlockerCycleDetected,
+                    "verification blocker cycle detected",
                 )?;
                 bail!(StopReason::BlockerCycleDetected.as_str());
             }
@@ -752,9 +767,10 @@ pub fn create_blocker_tickets(
                 store.prospective_blocker_depth(blocked_ticket_id, &effective_blocker_id)?;
             if prospective_depth > config.max_blocker_depth {
                 quarantine_run_state(
-                    &mut run_state,
                     project_path,
+                    &mut run_state,
                     StopReason::BlockerEscalationRequired,
+                    "verification blocker depth exceeded",
                 )?;
                 bail!(StopReason::BlockerEscalationRequired.as_str());
             }
@@ -768,9 +784,10 @@ pub fn create_blocker_tickets(
         let next_generation_count = run_state.consecutive_blocker_generations + 1;
         if next_generation_count > config.max_consecutive_blocker_generations {
             quarantine_run_state(
-                &mut run_state,
                 project_path,
+                &mut run_state,
                 StopReason::BlockerEscalationRequired,
+                "verification blocker generation limit exceeded",
             )?;
             bail!(StopReason::BlockerEscalationRequired.as_str());
         }
@@ -830,14 +847,51 @@ fn reset_blocker_generation_count(project_path: &Path) -> Result<()> {
     run_state.save(project_path)
 }
 
-fn quarantine_run_state(
-    run_state: &mut RunState,
+pub fn quarantine_run_state(
     project_path: &Path,
+    run_state: &mut RunState,
     reason: StopReason,
+    note: &str,
 ) -> Result<()> {
+    write_quarantine_evidence(project_path, run_state, reason, note)?;
     run_state.transition_to(RunStatus::Quarantined, reason.as_str())?;
     run_state.last_error = Some(reason.as_str().to_string());
+    run_state.stop_reason = Some(reason.as_str().to_string());
     run_state.save(project_path)
+}
+
+fn write_quarantine_evidence(
+    project_path: &Path,
+    run_state: &RunState,
+    reason: StopReason,
+    note: &str,
+) -> Result<()> {
+    let run_id = if run_state.run_id.is_empty() {
+        "unknown-run"
+    } else {
+        run_state.run_id.as_str()
+    };
+    let evidence_path = project_path
+        .join(".lux")
+        .join("evidence")
+        .join("blockers")
+        .join(format!("quarantine-{run_id}.json"));
+    if let Some(parent) = evidence_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create evidence dir {}", parent.display()))?;
+    }
+    crate::lux_io::atomic_write_json(
+        &evidence_path,
+        &json!({
+            "run_id": run_state.run_id,
+            "ticket_id": run_state.ticket_id,
+            "current_ticket_id": run_state.current_ticket_id,
+            "reason": reason.as_str(),
+            "note": note,
+            "blocker_attempts": run_state.blocker_attempts,
+            "written_at": Utc::now().to_rfc3339(),
+        }),
+    )
 }
 
 fn touch_run_state(run_state: &mut RunState) {

@@ -290,8 +290,8 @@ fn execute_task_concurrency_guard_rejects_duplicate_dispatch() {
         Some(lock2),
     );
 
-    let err = execute_task(&mut lifecycle2, task_id)
-        .expect_err("duplicate dispatch must be rejected");
+    let err =
+        execute_task(&mut lifecycle2, task_id).expect_err("duplicate dispatch must be rejected");
     assert!(
         err.to_string().contains("execution already in progress"),
         "error must mention concurrent execution: {err}"

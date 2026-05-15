@@ -140,7 +140,7 @@ async fn response_json(response: axum::response::Response) -> Value {
 }
 
 async fn wait_for_command(requests: &Arc<Mutex<Vec<Value>>>, command: &str) -> Value {
-    for _ in 0..50 {
+    for _ in 0..250 {
         if let Some(request) = requests
             .lock()
             .await

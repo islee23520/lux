@@ -5,7 +5,7 @@ use std::{
 
 use chrono::Utc;
 use lux::{
-    lux_loop::check_no_duplicate_dispatch,
+    lux_loop::{check_no_duplicate_dispatch, create_executor_blocker, schedule_retry_ready},
     lux_roadmap::{RoadmapPhaseStatus, RoadmapReality},
     lux_run::{
         begin_milestone_push_approval, execute_milestone_push_with_runner, MilestonePushApproval,
@@ -15,9 +15,9 @@ use lux::{
     lux_run_state::{ApprovalGateType, RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNode, TaskStatus},
     lux_ticket::{
-        is_execution_grade, should_dispatch, validate_execution_grade, BlockerPolicy,
-        DispatchPolicy, FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus,
-        TicketStore,
+        is_execution_grade, should_dispatch, stable_blocker_key, validate_execution_grade,
+        BlockerPolicy, DispatchPolicy, FileTicketStore, Ticket, TicketFilter, TicketPriority,
+        TicketStatus, TicketStore,
     },
     lux_ticket_executor::{Executor, ExecutorOpts, ExecutorStatus, FakeExecutor, OpenCodeExecutor},
     lux_verification::{create_blocker_tickets, CheckCategory, CheckResult, VerificationResult},
@@ -368,9 +368,9 @@ fn ticket_executor_fake_success() {
     let opts = executor_opts(temp.path(), "run-fake-success", &ticket.id);
     let executor = FakeExecutor::success(&opts.run_id);
 
-        let result = executor
-            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
-            .expect("fake executor should return success");
+    let result = executor
+        .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+        .expect("fake executor should return success");
 
     assert_eq!(result.status, ExecutorStatus::Success);
     assert_eq!(result.exit_code, Some(0));
@@ -390,9 +390,9 @@ fn ticket_executor_fake_failure() {
     let opts = executor_opts(temp.path(), "run-fake-failure", &ticket.id);
     let executor = FakeExecutor::failed(&opts.run_id, 17);
 
-        let result = executor
-            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
-            .expect("fake executor should return failure");
+    let result = executor
+        .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+        .expect("fake executor should return failure");
 
     assert_eq!(result.status, ExecutorStatus::Failed);
     assert_eq!(result.exit_code, Some(17));
@@ -405,9 +405,9 @@ fn ticket_executor_missing_opencode() {
     let opts = executor_opts(temp.path(), "run-missing-opencode", &ticket.id);
     let executor = OpenCodeExecutor::with_binary("lux-opencode-binary-that-does-not-exist");
 
-        let result = executor
-            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
-            .expect("missing binary should be explicit executor status");
+    let result = executor
+        .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+        .expect("missing binary should be explicit executor status");
 
     assert_eq!(result.status, ExecutorStatus::MissingBinary);
     assert_eq!(result.exit_code, None);
@@ -451,9 +451,9 @@ fn ticket_executor_result_has_evidence_refs() {
     let opts = executor_opts(temp.path(), "run-evidence-refs", &ticket.id);
     let executor = OpenCodeExecutor::with_binary("lux-opencode-binary-that-does-not-exist");
 
-        let result = executor
-            .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
-            .expect("executor result should be returned");
+    let result = executor
+        .execute(&ticket, &opts, &lux::lux_ticket_executor::NoopSink)
+        .expect("executor result should be returned");
 
     assert!(!result.evidence_refs.is_empty());
     assert!(result
@@ -520,18 +520,19 @@ fn execution_recovery_marks_retry_ready_on_timeout() {
         max_attempts: 3,
         attempt_number: 0,
     };
-    lux::lux_io::atomic_write_json(
-        &ExecutionSession::path(temp.path(), run_id),
-        &session,
-    )
-    .expect("session should be written");
+    lux::lux_io::atomic_write_json(&ExecutionSession::path(temp.path(), run_id), &session)
+        .expect("session should be written");
 
     let recovered = recover_stuck_executions(temp.path()).expect("recovery should succeed");
     assert_eq!(recovered, vec![run_id.to_string()]);
 
     let state_after = RunState::load(temp.path()).expect("state should load");
     assert_eq!(state_after.status, RunStatus::RetryReady.to_string());
-    assert!(state_after.last_error.as_deref().unwrap_or("").contains("timed out"));
+    assert!(state_after
+        .last_error
+        .as_deref()
+        .unwrap_or("")
+        .contains("timed out"));
 }
 
 #[test]
@@ -570,11 +571,8 @@ fn execution_recovery_no_duplicate_dispatch() {
         max_attempts: 3,
         attempt_number: 0,
     };
-    lux::lux_io::atomic_write_json(
-        &ExecutionSession::path(temp.path(), run_id),
-        &session,
-    )
-    .expect("session should be written");
+    lux::lux_io::atomic_write_json(&ExecutionSession::path(temp.path(), run_id), &session)
+        .expect("session should be written");
 
     let mut state = run_state(temp.path(), run_id);
     state
@@ -585,7 +583,10 @@ fn execution_recovery_no_duplicate_dispatch() {
     let result = check_no_duplicate_dispatch(temp.path(), "ticket-001");
     assert!(result.is_err(), "duplicate dispatch must be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("already executing"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("already executing"),
         "error must mention already executing"
     );
 }
@@ -605,11 +606,8 @@ fn execution_timeout_blocks_or_retries() {
         max_attempts: 3,
         attempt_number: 0,
     };
-    lux::lux_io::atomic_write_json(
-        &ExecutionSession::path(temp.path(), run_id),
-        &session,
-    )
-    .expect("session should be written");
+    lux::lux_io::atomic_write_json(&ExecutionSession::path(temp.path(), run_id), &session)
+        .expect("session should be written");
 
     let mut state = run_state(temp.path(), run_id);
     state
@@ -618,7 +616,10 @@ fn execution_timeout_blocks_or_retries() {
     state.save(temp.path()).expect("save");
 
     let recovered = recover_stuck_executions(temp.path()).expect("recovery should succeed");
-    assert!(recovered.contains(&run_id.to_string()), "run-001 must be recovered");
+    assert!(
+        recovered.contains(&run_id.to_string()),
+        "run-001 must be recovered"
+    );
 
     let state_after = RunState::load(temp.path()).expect("state should load");
     assert_eq!(
@@ -637,11 +638,8 @@ fn execution_timeout_blocks_or_retries() {
         max_attempts: 3,
         attempt_number: 3,
     };
-    lux::lux_io::atomic_write_json(
-        &ExecutionSession::path(temp.path(), run_id),
-        &session_maxed,
-    )
-    .expect("session should be written");
+    lux::lux_io::atomic_write_json(&ExecutionSession::path(temp.path(), run_id), &session_maxed)
+        .expect("session should be written");
 
     let mut state2 = RunState::load(temp.path()).expect("load state");
     state2
@@ -650,7 +648,10 @@ fn execution_timeout_blocks_or_retries() {
     state2.save(temp.path()).expect("save");
 
     let recovered2 = recover_stuck_executions(temp.path()).expect("recovery should succeed");
-    assert!(recovered2.contains(&run_id.to_string()), "run-001 must be recovered again");
+    assert!(
+        recovered2.contains(&run_id.to_string()),
+        "run-001 must be recovered again"
+    );
 
     let state_blocked = RunState::load(temp.path()).expect("state should load");
     assert_eq!(
@@ -677,11 +678,8 @@ fn execution_max_concurrency_one() {
         max_attempts: 3,
         attempt_number: 0,
     };
-    lux::lux_io::atomic_write_json(
-        &ExecutionSession::path(temp.path(), run_id_a),
-        &session_a,
-    )
-    .expect("session A should be written");
+    lux::lux_io::atomic_write_json(&ExecutionSession::path(temp.path(), run_id_a), &session_a)
+        .expect("session A should be written");
 
     let mut state_a = run_state(temp.path(), run_id_a);
     state_a
@@ -695,7 +693,10 @@ fn execution_max_concurrency_one() {
         "second dispatch for same ticket must be rejected"
     );
     assert!(
-        result.unwrap_err().to_string().contains("already executing"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("already executing"),
         "error must mention already executing"
     );
 
@@ -717,7 +718,10 @@ fn autonomous_evidence_success_refs() {
         .expect("execute should succeed");
 
     assert_eq!(result.status, ExecutorStatus::Success);
-    assert!(!result.evidence_refs.is_empty(), "evidence_refs must be populated on success");
+    assert!(
+        !result.evidence_refs.is_empty(),
+        "evidence_refs must be populated on success"
+    );
     assert!(
         result.evidence_refs.iter().any(|r| r.contains(run_id)),
         "evidence_refs must reference the run_id directory"
@@ -739,6 +743,97 @@ fn autonomous_evidence_failure_event() {
         .expect("execute should not error");
 
     assert_eq!(result.status, ExecutorStatus::Failed);
-    assert_eq!(result.exit_code, Some(1), "exit_code must be recorded on failure");
-    assert!(!result.evidence_refs.is_empty(), "evidence_refs must be populated on failure");
+    assert_eq!(
+        result.exit_code,
+        Some(1),
+        "exit_code must be recorded on failure"
+    );
+    assert!(
+        !result.evidence_refs.is_empty(),
+        "evidence_refs must be populated on failure"
+    );
+}
+
+#[test]
+fn blocker_dedup_same_root_cause() {
+    use lux::lux_ticket_executor::NoopSink;
+
+    let temp = TestTempDir::new("blocker-dedup");
+    let run_id = "run-blocker-dedup";
+    let ticket = execution_grade_ticket("exec-blocker-dedup");
+    FileTicketStore::new(temp.path())
+        .create(ticket.clone())
+        .expect("execution ticket should be created");
+    let opts = executor_opts(temp.path(), run_id, &ticket.id);
+    let stable_key = stable_blocker_key("executor", "failed", None);
+    let mut state = run_state(temp.path(), run_id);
+    state.current_ticket_id = Some(ticket.id.clone());
+    state.ticket_id = Some(ticket.id.clone());
+
+    for _ in 0..2 {
+        let result = FakeExecutor::failed(run_id, 1)
+            .execute(&ticket, &opts, &NoopSink)
+            .expect("fake executor should return failure");
+        create_executor_blocker(temp.path(), run_id, &ticket.id, &result.status, &mut state)
+            .expect("executor blocker should be created or updated");
+    }
+
+    let tickets = FileTicketStore::new(temp.path())
+        .list(TicketFilter::default())
+        .expect("tickets should list");
+    let executor_blockers = tickets
+        .iter()
+        .filter(|ticket| ticket.tags.iter().any(|tag| tag == "executor"))
+        .collect::<Vec<_>>();
+    assert_eq!(executor_blockers.len(), 1);
+    assert_eq!(state.blocker_attempts.get(&stable_key), Some(&2));
+    assert_eq!(state.status, RunStatus::Blocked.to_string());
+
+    let retry =
+        schedule_retry_ready(temp.path(), run_id).expect("blocked run should become retry-ready");
+    assert_eq!(retry.status, RunStatus::RetryReady.to_string());
+    assert_eq!(retry.run_id, run_id);
+    assert_eq!(retry.ticket_id.as_deref(), Some(ticket.id.as_str()));
+    assert_eq!(retry.current_ticket_id.as_deref(), Some(ticket.id.as_str()));
+}
+
+#[test]
+fn blocker_cascade_quarantine_bound() {
+    use lux::lux_ticket_executor::NoopSink;
+
+    let temp = TestTempDir::new("blocker-bound");
+    let run_id = "run-blocker-bound";
+    let ticket = execution_grade_ticket("exec-blocker-bound");
+    FileTicketStore::new(temp.path())
+        .create(ticket.clone())
+        .expect("execution ticket should be created");
+    let opts = executor_opts(temp.path(), run_id, &ticket.id);
+    let stable_key = stable_blocker_key("executor", "failed", None);
+    let mut state = run_state(temp.path(), run_id);
+    state.current_ticket_id = Some(ticket.id.clone());
+    state.ticket_id = Some(ticket.id.clone());
+
+    for _ in 0..3 {
+        let result = FakeExecutor::failed(run_id, 1)
+            .execute(&ticket, &opts, &NoopSink)
+            .expect("fake executor should return failure");
+        create_executor_blocker(temp.path(), run_id, &ticket.id, &result.status, &mut state)
+            .expect("executor blocker should stay bounded");
+    }
+
+    assert_eq!(state.status, RunStatus::Quarantined.to_string());
+    assert_eq!(state.blocker_attempts.get(&stable_key), Some(&3));
+    assert!(temp
+        .path()
+        .join(".lux/evidence/blockers/quarantine-run-blocker-bound.json")
+        .is_file());
+
+    let tickets = FileTicketStore::new(temp.path())
+        .list(TicketFilter::default())
+        .expect("tickets should list");
+    let executor_blockers = tickets
+        .iter()
+        .filter(|ticket| ticket.tags.iter().any(|tag| tag == "executor"))
+        .collect::<Vec<_>>();
+    assert_eq!(executor_blockers.len(), 1);
 }

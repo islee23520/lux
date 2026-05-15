@@ -11,10 +11,11 @@ use crate::lux_build::{self, BuildManager, BuildTarget};
 use crate::lux_events::{EventRouter, LuxEvent};
 use crate::lux_io::atomic_write_json;
 use crate::lux_run_recover::ExecutionSession;
-use crate::lux_run_state::RunStatus;
+use crate::lux_run_state::{RunState, RunStatus, StopReason};
 use crate::lux_spec::{self, SpecProject};
 use crate::lux_ticket::{
-    FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus, TicketStore,
+    create_or_update_blocker, stable_blocker_key, FileTicketStore, Ticket, TicketFilter,
+    TicketPriority, TicketStatus, TicketStore,
 };
 use crate::lux_verification::{self, VerificationResult};
 
@@ -497,4 +498,95 @@ pub fn check_no_duplicate_dispatch(project_path: &Path, ticket_id: &str) -> Resu
         }
     }
     Ok(())
+}
+
+pub fn create_executor_blocker(
+    project_path: &Path,
+    run_id: &str,
+    ticket_id: &str,
+    executor_status: &impl std::fmt::Debug,
+    run_state: &mut RunState,
+) -> Result<String> {
+    let status_name = executor_status_name(executor_status);
+    let stable_key = stable_blocker_key("executor", status_name, None);
+
+    if run_state.status == RunStatus::Quarantined.to_string() {
+        return Ok(crate::lux_ticket::stable_blocker_ticket_id_from_key(
+            &stable_key,
+        ));
+    }
+
+    let store = FileTicketStore::new(project_path);
+    let upsert = create_or_update_blocker(
+        &store,
+        "executor",
+        status_name,
+        None,
+        format!("Executor failure: {status_name}"),
+        format!("Run {run_id} ticket {ticket_id} failed with executor status {status_name}."),
+        TicketPriority::High,
+        vec!["executor".to_string(), "autonomous".to_string()],
+    )?;
+
+    let next_attempt = run_state
+        .blocker_attempts
+        .get(&stable_key)
+        .copied()
+        .unwrap_or(0)
+        + 1;
+    run_state.blocker_attempts.insert(stable_key, next_attempt);
+    run_state.run_id = run_id.to_string();
+    run_state.ticket_id = Some(ticket_id.to_string());
+    run_state.current_ticket_id = Some(ticket_id.to_string());
+
+    if next_attempt >= lux_verification::BlockerConfig::default().max_blocker_attempts_per_ticket {
+        lux_verification::quarantine_run_state(
+            project_path,
+            run_state,
+            StopReason::BlockerEscalationRequired,
+            "blocker bound exceeded",
+        )?;
+        return Ok(upsert.ticket.id);
+    }
+
+    run_state.transition_to(RunStatus::Blocked, "executor blocker created")?;
+    run_state.last_error = Some(format!("executor status {status_name}"));
+    run_state.save(project_path)?;
+    Ok(upsert.ticket.id)
+}
+
+pub fn schedule_retry_ready(project_path: &Path, run_id: &str) -> Result<RunState> {
+    let state = RunState::load(project_path)?;
+    if state.run_id != run_id {
+        bail!(
+            "run id mismatch: requested {} but active run is {}",
+            run_id,
+            state.run_id
+        );
+    }
+    if state.status != RunStatus::Blocked.to_string() {
+        bail!(
+            "retry can only be scheduled from Blocked, found {}",
+            state.status
+        );
+    }
+    RunState::transition_with_seq_check(
+        project_path,
+        state.seq,
+        RunStatus::RetryReady,
+        "blocker resolved; retry ready",
+        |s| {
+            s.last_error = None;
+        },
+    )
+}
+
+fn executor_status_name(status: &impl std::fmt::Debug) -> &'static str {
+    match format!("{status:?}").as_str() {
+        "Success" => "success",
+        "Failed" => "failed",
+        "Timeout" => "timeout",
+        "MissingBinary" => "missing_binary",
+        _ => "unknown",
+    }
 }

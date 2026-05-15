@@ -470,10 +470,12 @@ pub fn execute_task(lifecycle: &mut RunLifecycle, task_id: &str) -> Result<()> {
         ));
     }
 
-    lifecycle.event_router.route(&LuxEvent::AutonomousDispatchRequested {
-        run_id: lifecycle.state.run_id.clone(),
-        ticket_id: task_id.to_string(),
-    });
+    lifecycle
+        .event_router
+        .route(&LuxEvent::AutonomousDispatchRequested {
+            run_id: lifecycle.state.run_id.clone(),
+            ticket_id: task_id.to_string(),
+        });
 
     save_manifest(lifecycle)?;
     lifecycle.save_metrics_best_effort();

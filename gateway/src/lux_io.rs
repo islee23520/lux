@@ -84,7 +84,11 @@ pub fn write_evidence_file(
     let tmp_path = abs_path.with_extension("txt.tmp");
     fs::write(&tmp_path, truncated)
         .with_context(|| format!("failed to write evidence tmp {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, &abs_path)
-        .with_context(|| format!("failed to atomically replace evidence file {}", abs_path.display()))?;
+    fs::rename(&tmp_path, &abs_path).with_context(|| {
+        format!(
+            "failed to atomically replace evidence file {}",
+            abs_path.display()
+        )
+    })?;
     Ok(relative_path.to_string())
 }
