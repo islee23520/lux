@@ -17,6 +17,7 @@ use crate::{
     lux_lock::{acquire_lux_lock, LuxLockGuard, DEFAULT_STALE_THRESHOLD_SECS},
     lux_metrics::RunMetrics,
     lux_roadmap::{RoadmapPhaseStatus, RoadmapReality},
+    lux_run_recover::ExecutionSession,
     lux_run_state::{ApprovalGateType, StopReason},
     lux_run_state::{RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNodeProjection, TaskStatus},
@@ -390,6 +391,18 @@ pub fn plan_phase(lifecycle: &mut RunLifecycle) -> Result<()> {
 
 pub fn execute_task(lifecycle: &mut RunLifecycle, task_id: &str) -> Result<()> {
     lifecycle.ensure_lock_held()?;
+
+    let project_path = &lifecycle.config.project_path;
+    let run_id = &lifecycle.state.run_id;
+    if let Some(existing) = ExecutionSession::load(project_path, run_id)? {
+        bail!(
+            "execution already in progress for run {} (ticket {}); \
+             call recover_stuck_executions first if the session is stale",
+            run_id,
+            existing.ticket_id
+        );
+    }
+
     let ready = lifecycle
         .dag
         .ready_nodes()
@@ -420,6 +433,14 @@ pub fn execute_task(lifecycle: &mut RunLifecycle, task_id: &str) -> Result<()> {
         "team-mode",
         &format!("{}:{task_id}", lifecycle.state.run_id),
         current_git_sha(&lifecycle.config.project_path),
+    )?;
+
+    ExecutionSession::begin(
+        &lifecycle.config.project_path,
+        &lifecycle.state.run_id,
+        task_id,
+        300,
+        3,
     )?;
 
     let session = AgentSession {

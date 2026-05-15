@@ -7,6 +7,7 @@ use chrono::Utc;
 use lux::{
     lux_lock::{acquire_lux_lock, DEFAULT_STALE_THRESHOLD_SECS},
     lux_run::{execute_task, RunConfig, RunLifecycle},
+    lux_run_recover::ExecutionSession,
     lux_run_state::{RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNode, TaskStatus},
     lux_team_profile::{TeamProfile, TeamSizePreset},
@@ -208,4 +209,91 @@ fn task_dag_rejects_explicit_cycle_without_fallback_ordering() {
         .topological_ids_checked()
         .expect_err("cycle must not fall back to arbitrary ordering");
     assert!(error.contains("dependency cycle detected"));
+}
+
+#[test]
+fn execute_task_writes_session_and_heartbeat_updates_timestamp() {
+    let temp = TestTempDir::new("session-heartbeat");
+    let task_id = "task-heartbeat";
+    let mut lifecycle = make_lifecycle_with_task(temp.path(), task_id);
+
+    execute_task(&mut lifecycle, task_id).expect("execute_task should succeed");
+
+    let run_id = &lifecycle.state.run_id;
+    let mut session = ExecutionSession::load(temp.path(), run_id)
+        .expect("load should succeed")
+        .expect("session should be present after execute_task");
+
+    assert_eq!(session.ticket_id, task_id);
+    let before = session.last_heartbeat_at.clone();
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    session
+        .heartbeat(temp.path())
+        .expect("heartbeat should succeed");
+
+    let reloaded = ExecutionSession::load(temp.path(), run_id)
+        .expect("reload should succeed")
+        .expect("session should still be present");
+
+    assert!(
+        reloaded.last_heartbeat_at > before,
+        "heartbeat must advance last_heartbeat_at"
+    );
+}
+
+#[test]
+fn execute_task_concurrency_guard_rejects_duplicate_dispatch() {
+    let temp = TestTempDir::new("concurrency-guard");
+    let task_id = "task-concurrent";
+    let mut lifecycle = make_lifecycle_with_task(temp.path(), task_id);
+
+    execute_task(&mut lifecycle, task_id).expect("first dispatch should succeed");
+
+    let mut dag2 = TaskDAG::default();
+    dag2.add_node(lux::lux_task_dag::TaskNode {
+        id: task_id.to_string(),
+        spec_clause_id: "test.clause".to_string(),
+        title: "Test task".to_string(),
+        status: TaskStatus::Pending,
+        dependencies: vec![],
+        assignee: None,
+        evidence_path: None,
+        created_at: Utc::now().to_rfc3339(),
+    });
+    let config2 = RunConfig {
+        project_path: temp.path().to_path_buf(),
+        team_preset: TeamSizePreset::Small,
+        dry_run: false,
+        goal: None,
+    };
+    let lux_dir = temp.path().join(".lux");
+    let lock2 = lux::lux_lock::acquire_lux_lock(
+        &lux_dir,
+        "test-agent-2",
+        "test",
+        DEFAULT_STALE_THRESHOLD_SECS,
+        true,
+    )
+    .expect("acquire second lock");
+    let mut state2 = RunState::idle(temp.path()).expect("idle state");
+    state2.run_id = lifecycle.state.run_id.clone();
+    state2
+        .transition_to(RunStatus::Planning, "test")
+        .expect("transition");
+    let mut lifecycle2 = RunLifecycle::from_recovered_parts(
+        config2,
+        dag2,
+        lux::lux_team_profile::TeamProfile::default(),
+        state2,
+        Default::default(),
+        Some(lock2),
+    );
+
+    let err = execute_task(&mut lifecycle2, task_id)
+        .expect_err("duplicate dispatch must be rejected");
+    assert!(
+        err.to_string().contains("execution already in progress"),
+        "error must mention concurrent execution: {err}"
+    );
 }
