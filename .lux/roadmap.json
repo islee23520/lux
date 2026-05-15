@@ -47,7 +47,7 @@
       "status": "pushed",
       "evidence_path": ".sisyphus/evidence/task-10-t3-unity-gate.txt",
       "pushed_at": "2026-05-15T12:38:31Z",
-      "push_git_sha": null,
+      "push_git_sha": "50a55f6713fe18449a04d94c11bbd0a3e2e29f8e",
       "push_evidence_path": ".sisyphus/evidence/task-10-t3-unity-gate.txt"
     }
   ],
