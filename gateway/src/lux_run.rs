@@ -21,6 +21,7 @@ use crate::{
     lux_run_state::{RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNodeProjection, TaskStatus},
     lux_team_profile::{RoleMapping, TeamProfile, TeamSizePreset},
+    lux_verification::{check_verification_gate, required_tier_for_action, TieredVerificationResult},
 };
 
 pub const MILESTONE_PUSH_TRANSITION: &str = "milestone_push";
@@ -411,15 +412,13 @@ pub fn execute_task(lifecycle: &mut RunLifecycle, task_id: &str) -> Result<()> {
         node.assignee = Some(role.role.clone());
     }
 
-    lifecycle.state.pre_task_git_sha = current_git_sha(&lifecycle.config.project_path);
-    lifecycle
-        .state
-        .transition_to(RunStatus::ExecutingTicket, "execute_task")?;
-    lifecycle.state.current_ticket_id = Some(task_id.to_string());
-    lifecycle.state.executor.kind = Some("team-mode".to_string());
-    lifecycle.state.executor.job_id = Some(format!("{}:{task_id}", lifecycle.state.run_id));
-    lifecycle.state.executor.heartbeat_at = Some(Utc::now().to_rfc3339());
-    lifecycle.state.save(&lifecycle.config.project_path)?;
+    lifecycle.state.begin_task_execution(
+        &lifecycle.config.project_path,
+        task_id,
+        "team-mode",
+        &format!("{}:{task_id}", lifecycle.state.run_id),
+        current_git_sha(&lifecycle.config.project_path),
+    )?;
 
     let session = AgentSession {
         role: role.role.clone(),
@@ -552,6 +551,12 @@ pub fn begin_milestone_push_approval(
             evidence_path.display()
         );
     }
+    let evidence_content = fs::read_to_string(evidence_path)
+        .with_context(|| format!("failed to read T3 evidence at {}", evidence_path.display()))?;
+    let tiered_result: TieredVerificationResult = serde_json::from_str(&evidence_content)
+        .with_context(|| format!("failed to parse T3 evidence at {}", evidence_path.display()))?;
+    let required = required_tier_for_action("milestone_push");
+    check_verification_gate(&tiered_result, required)?;
     let awaiting_since = Utc::now().to_rfc3339();
     run_state.transition_to(RunStatus::AwaitingApproval, "begin_milestone_push_approval")?;
     run_state.approval.gate = Some(ApprovalGateType::ApproveDiff.to_string());

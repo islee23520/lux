@@ -192,6 +192,8 @@ pub struct RunState {
     pub pre_task_git_sha: Option<String>,
     pub team_run_id: Option<String>,
     pub updated_at: String,
+    #[serde(default)]
+    pub continuation_status: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -243,6 +245,7 @@ impl RunState {
             pre_task_git_sha: None,
             team_run_id: None,
             updated_at: Utc::now().to_rfc3339(),
+            continuation_status: None,
         })
     }
 
@@ -299,12 +302,18 @@ impl RunState {
             Ok(_) => Ok(()),
             Err(error) => {
                 match previous_content {
-                    Some(content) => fs::write(&path, content).with_context(|| {
-                        format!(
-                            "failed to restore previous run-state file {}",
-                            path.display()
-                        )
-                    })?,
+                    Some(content) => {
+                        let tmp_path = path.with_extension("json.tmp");
+                        fs::write(&tmp_path, &content).with_context(|| {
+                            format!("failed to write temp rollback file {}", tmp_path.display())
+                        })?;
+                        fs::rename(&tmp_path, &path).with_context(|| {
+                            format!(
+                                "failed to atomically restore run-state file {}",
+                                path.display()
+                            )
+                        })?;
+                    }
                     None => {
                         if path.exists() {
                             fs::remove_file(&path).with_context(|| {
@@ -324,6 +333,23 @@ impl RunState {
     pub fn validate(&self) -> Result<()> {
         self.status.parse::<RunStatus>()?;
         Ok(())
+    }
+
+    pub fn begin_task_execution(
+        &mut self,
+        project_path: &std::path::Path,
+        task_id: &str,
+        executor_kind: &str,
+        job_id: &str,
+        pre_task_git_sha: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.pre_task_git_sha = pre_task_git_sha;
+        self.transition_to(RunStatus::ExecutingTicket, "begin_task_execution")?;
+        self.current_ticket_id = Some(task_id.to_string());
+        self.executor.kind = Some(executor_kind.to_string());
+        self.executor.job_id = Some(job_id.to_string());
+        self.executor.heartbeat_at = Some(Utc::now().to_rfc3339());
+        self.save(project_path)
     }
 
     /// Apply a partial continuation update with optimistic concurrency guard.
@@ -447,7 +473,13 @@ impl RunState {
         let deprecated_path = project_path
             .join(".lux")
             .join("continuation-state.json.deprecated");
-        let _ = fs::rename(&legacy_path, &deprecated_path);
+        if let Err(e) = fs::rename(&legacy_path, &deprecated_path) {
+            eprintln!(
+                "[lux] Warning: could not rename legacy continuation state to deprecated path ({}): {}",
+                deprecated_path.display(),
+                e
+            );
+        }
 
         eprintln!(
             "✅  [lux] Migration complete. Legacy state preserved at continuation-state.json.deprecated"

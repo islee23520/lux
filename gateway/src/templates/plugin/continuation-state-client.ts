@@ -1,6 +1,3 @@
-import * as fs from "node:fs"
-import * as path from "node:path"
-
 export type ContinuationStatus = "Idle" | "Active" | "Stopped" | "Error" | "Complete"
 
 export interface ContinuationState {
@@ -24,42 +21,21 @@ export interface ContinuationStateWriteOptions {
   expectedStatus?: string
 }
 
-const STATE_FILE = "continuation-state.json"
-
-function defaultState(): ContinuationState {
-  return {
-    session_id: null,
-    continuation_count: 0,
-    stagnation_count: 0,
-    consecutive_failures: 0,
-    last_ambiguity: null,
-    last_ticket_baseline: null,
-    current_ticket_id: null,
-    status: "Idle",
-    started_at: null,
-    updated_at: new Date().toISOString(),
-    stop_reason: null,
-  }
-}
-
 export async function readContinuationState(opts: { gatewayUrl: string; projectPath: string }): Promise<ContinuationState> {
   const url = new URL(
     `/api/lux/continuation/state?project_path=${encodeURIComponent(opts.projectPath)}`,
     opts.gatewayUrl,
   )
 
-  try {
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-    })
-    if (!response.ok) {
-      return defaultState()
-    }
-    return await response.json() as ContinuationState
-  } catch {
-    return defaultState()
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: { "Accept": "application/json" },
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => "")
+    throw new Error(`readContinuationState failed (HTTP ${response.status}): ${text}`)
   }
+  return await response.json() as ContinuationState
 }
 
 export interface ContinuationWriteResult {

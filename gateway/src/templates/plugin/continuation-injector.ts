@@ -1,5 +1,6 @@
 import type { LuxEvalResult, LuxPluginConfig } from "./types"
 import type { LuxSessionState } from "./session-state"
+import type { ContinuationState } from "./continuation-state-client"
 
 export interface OpenCodePromptContext {
   directory: string
@@ -51,13 +52,16 @@ export function resetSession(projectPath: string): void {
   sessionStates.delete(projectPath)
 }
 
-export function getContinuationCount(projectPath: string): number {
+export function getContinuationCount(projectPath: string, gatewayState?: ContinuationState): number {
+  if (gatewayState !== undefined) {
+    return gatewayState.continuation_count
+  }
   return getOrCreateState(projectPath).continuationCount
 }
 
-export function canContinue(projectPath: string, config: LuxPluginConfig): boolean {
-  const state = getOrCreateState(projectPath)
-  return state.continuationCount < resolveMaxContinuations(config)
+export function canContinue(projectPath: string, config: LuxPluginConfig, gatewayState?: ContinuationState): boolean {
+  const count = getContinuationCount(projectPath, gatewayState)
+  return count < resolveMaxContinuations(config)
 }
 
 export function formatNextAction(evalResult: LuxEvalResult): string {

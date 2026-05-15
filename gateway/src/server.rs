@@ -1654,8 +1654,21 @@ async fn get_continuation_state(
     Query(query): Query<LuxProjectQuery>,
 ) -> Result<Json<crate::lux_continuation_state::ContinuationState>, Response> {
     let project_path = Path::new(&query.project_path);
-    let state = crate::lux_continuation_state::ContinuationState::load(project_path)
+    let run_state = crate::lux_run_state::RunState::load(project_path)
         .map_err(internal_error)?;
+    let state = crate::lux_continuation_state::ContinuationState {
+        session_id: run_state.executor.job_id.clone(),
+        continuation_count: run_state.continuation_count,
+        stagnation_count: run_state.stagnation_count,
+        consecutive_failures: run_state.consecutive_failures,
+        last_ambiguity: None,
+        last_ticket_baseline: None,
+        current_ticket_id: run_state.current_ticket_id.clone(),
+        status: crate::lux_continuation_state::ContinuationStatus::from_run_status(&run_state.status),
+        started_at: run_state.resume.previous_status.clone(),
+        updated_at: run_state.updated_at.clone(),
+        stop_reason: run_state.stop_reason.clone(),
+    };
     Ok(Json(state))
 }
 
@@ -1667,8 +1680,6 @@ struct ContinuationStateUpdateRequest {
     continuation_count: Option<u32>,
     stagnation_count: Option<u32>,
     consecutive_failures: Option<u32>,
-    last_ambiguity: Option<String>,
-    last_ticket_baseline: Option<String>,
     current_ticket_id: Option<String>,
     status: Option<String>,
     started_at: Option<String>,
@@ -1709,7 +1720,7 @@ async fn update_continuation_state(
                 s.current_ticket_id = Some(v);
             }
             if let Some(v) = body.status.clone() {
-                s.status = v;
+                s.continuation_status = Some(v);
             }
             if let Some(v) = body.started_at.clone() {
                 s.resume.previous_status = Some(v);
