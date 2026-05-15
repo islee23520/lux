@@ -17,7 +17,7 @@ use crate::lux_spec::{self, DomainSpec, PillarStatus, SpecProject};
 use crate::lux_team_profile::{TeamProfile, VerificationTier};
 use crate::lux_ticket::{
     create_or_update_blocker, stable_blocker_key, stable_blocker_ticket_id_from_key,
-    FileTicketStore, TicketPriority, TicketStore,
+    FileTicketStore, Ticket, TicketPriority, TicketStore,
 };
 
 const VERIFICATION_BLOCKER_SPEC_REF: &str = ".lux/verification/latest.json";
@@ -28,6 +28,20 @@ pub const T3_SCENE_SMOKE_TIMEOUT_SECS: u64 = 300;
 const T3_BUILD_TARGET: &str = "WebGL";
 const T3_COMPILE_METHOD: &str = "Linalab.Lux.Editor.LuxBatchAutomation.Compile";
 const T3_SCENE_SMOKE_METHOD: &str = "Linalab.Lux.Editor.LuxSceneSmoke.Run";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerificationOpts {
+    pub run_id: String,
+    pub working_dir: PathBuf,
+    pub evidence_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationStatus {
+    Passed,
+    Failed,
+    Unsupported,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct T3UnityGateTimeouts {
@@ -54,6 +68,17 @@ pub struct VerificationResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RoutedVerificationResult {
+    pub status: VerificationStatus,
+    pub policy_used: String,
+    pub evidence_paths: Vec<String>,
+    pub passed: bool,
+    pub timestamp: String,
+    pub checks: Vec<CheckResult>,
+    pub overall_score: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CheckResult {
     pub name: String,
     pub category: CheckCategory,
@@ -76,6 +101,356 @@ pub enum CheckCategory {
 pub enum VerificationMode {
     Cached,
     Live,
+}
+
+pub fn route_verification(
+    ticket: &Ticket,
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let policy = ticket
+        .verification_policy
+        .as_deref()
+        .map(str::trim)
+        .filter(|policy| !policy.is_empty())
+        .context("verification_policy is required for execution-grade dispatch")?;
+
+    if policy == "unity_t3" {
+        return route_unity_t3(policy, opts);
+    }
+    if let Some(command_list) = policy.strip_prefix("command_suite:") {
+        let commands = parse_policy_commands(command_list);
+        if commands.is_empty() {
+            bail!("command_suite verification requires at least one command");
+        }
+        return run_declared_commands(policy, &commands, opts);
+    }
+    if policy == "doc_only" {
+        let commands = ticket.command_allowlist.clone().unwrap_or_default();
+        if commands.is_empty() {
+            bail!("doc_only verification requires at least one grep/schema validation command");
+        }
+        if !commands
+            .iter()
+            .any(|command| is_doc_validation_command(command))
+        {
+            bail!("doc_only verification requires at least one grep/schema validation command");
+        }
+        return run_declared_commands(policy, &commands, opts);
+    }
+    if policy == "live" {
+        bail!("VerificationMode::Live is not supported in M6");
+    }
+
+    Ok(policy_result(
+        VerificationStatus::Unsupported,
+        policy,
+        Vec::new(),
+        vec![check(
+            "Verification Policy Router",
+            CheckCategory::SpecCompleteness,
+            false,
+            0.0,
+            &format!("Unsupported verification_policy: {policy}"),
+            Some(json!({
+                "mode": "router",
+                "verification_basis": "verification_policy_dispatch",
+                "policy": policy,
+            })),
+        )],
+    ))
+}
+
+fn route_unity_t3(policy: &str, opts: &VerificationOpts) -> Result<RoutedVerificationResult> {
+    let checks = run_t3_unity_gate(
+        &opts.working_dir,
+        "autonomous",
+        &[check(
+            "T3 autonomous: Router Prerequisite",
+            CheckCategory::UnityCompilable,
+            true,
+            1.0,
+            "Verification policy router selected Unity T3",
+            Some(json!({
+                "mode": "router",
+                "verification_basis": "verification_policy_dispatch",
+                "policy": policy,
+            })),
+        )],
+    );
+    let evidence_text = verification_checks_evidence(policy, &checks);
+    let evidence_paths = vec![write_verification_evidence(opts, 1, &evidence_text)?];
+    let status = verification_status_for_passed(checks.iter().all(|check| check.passed));
+    Ok(policy_result(status, policy, evidence_paths, checks))
+}
+
+fn run_declared_commands(
+    policy: &str,
+    commands: &[String],
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let mut checks = Vec::new();
+    let mut evidence_paths = Vec::new();
+
+    for (index, command_text) in commands.iter().enumerate() {
+        let command_number = index + 1;
+        let argv = parse_command_argv(command_text)?;
+        let output = ProcessCommand::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(&opts.working_dir)
+            .stdin(Stdio::null())
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code();
+                let passed = output.status.success();
+                let evidence_text = command_evidence_text(
+                    policy,
+                    command_number,
+                    command_text,
+                    exit_code,
+                    &stdout,
+                    &stderr,
+                    None,
+                );
+                evidence_paths.push(write_verification_evidence(
+                    opts,
+                    command_number,
+                    &evidence_text,
+                )?);
+                checks.push(command_result_check(
+                    command_number,
+                    command_text,
+                    passed,
+                    exit_code,
+                    None,
+                ));
+                if !passed {
+                    return Ok(policy_result(
+                        VerificationStatus::Failed,
+                        policy,
+                        evidence_paths,
+                        checks,
+                    ));
+                }
+            }
+            Err(error) => {
+                let evidence_text = command_evidence_text(
+                    policy,
+                    command_number,
+                    command_text,
+                    None,
+                    "",
+                    "",
+                    Some(&error.to_string()),
+                );
+                evidence_paths.push(write_verification_evidence(
+                    opts,
+                    command_number,
+                    &evidence_text,
+                )?);
+                checks.push(command_result_check(
+                    command_number,
+                    command_text,
+                    false,
+                    None,
+                    Some(&error.to_string()),
+                ));
+                return Ok(policy_result(
+                    VerificationStatus::Failed,
+                    policy,
+                    evidence_paths,
+                    checks,
+                ));
+            }
+        }
+    }
+
+    Ok(policy_result(
+        VerificationStatus::Passed,
+        policy,
+        evidence_paths,
+        checks,
+    ))
+}
+
+fn parse_policy_commands(command_list: &str) -> Vec<String> {
+    command_list
+        .split(',')
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_command_argv(command_text: &str) -> Result<Vec<String>> {
+    let argv = command_text
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if argv.is_empty() {
+        bail!("verification command cannot be empty");
+    }
+    Ok(argv)
+}
+
+fn is_doc_validation_command(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower
+        .split_whitespace()
+        .next()
+        .is_some_and(|binary| binary == "grep" || binary == "rg")
+        || lower.contains("schema")
+}
+
+fn command_result_check(
+    command_number: usize,
+    command_text: &str,
+    passed: bool,
+    exit_code: Option<i32>,
+    launch_error: Option<&str>,
+) -> CheckResult {
+    check(
+        &format!("Verification Command {command_number}"),
+        CheckCategory::ImplementationExists,
+        passed,
+        if passed { 1.0 } else { 0.0 },
+        if passed {
+            "Verification command completed successfully"
+        } else if launch_error.is_some() {
+            "Verification command failed to launch"
+        } else {
+            "Verification command exited non-zero"
+        },
+        Some(json!({
+            "mode": "router",
+            "verification_basis": "command_suite",
+            "command": command_text,
+            "exit_code": exit_code,
+            "launch_error": launch_error,
+        })),
+    )
+}
+
+fn command_evidence_text(
+    policy: &str,
+    command_number: usize,
+    command_text: &str,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    launch_error: Option<&str>,
+) -> String {
+    let mut text = String::new();
+    text.push_str(&format!("policy={policy}\n"));
+    text.push_str(&format!("command_index={command_number}\n"));
+    text.push_str(&format!("command={command_text}\n"));
+    match exit_code {
+        Some(code) => text.push_str(&format!("exit_code={code}\n")),
+        None => text.push_str("exit_code=<unavailable>\n"),
+    }
+    if let Some(error) = launch_error {
+        text.push_str(&format!("launch_error={error}\n"));
+    }
+    text.push_str("\nstdout:\n");
+    text.push_str(stdout);
+    text.push_str("\n\nstderr:\n");
+    text.push_str(stderr);
+    text
+}
+
+fn verification_checks_evidence(policy: &str, checks: &[CheckResult]) -> String {
+    let mut text = String::new();
+    text.push_str(&format!("policy={policy}\n"));
+    for check in checks {
+        text.push_str(&format!(
+            "check={} passed={} score={:.2} message={}\n",
+            check.name, check.passed, check.score, check.message
+        ));
+    }
+    text
+}
+
+fn write_verification_evidence(
+    opts: &VerificationOpts,
+    command_number: usize,
+    text: &str,
+) -> Result<String> {
+    let relative_dir = relative_evidence_dir(opts);
+    let absolute_dir = if opts.evidence_dir.as_os_str().is_empty() {
+        opts.working_dir.join(&relative_dir)
+    } else if opts.evidence_dir.is_absolute() {
+        opts.evidence_dir.clone()
+    } else {
+        opts.working_dir.join(&opts.evidence_dir)
+    };
+    fs::create_dir_all(&absolute_dir).with_context(|| {
+        format!(
+            "failed to create evidence directory {}",
+            absolute_dir.display()
+        )
+    })?;
+    let file_name = format!("verify_{command_number}.txt");
+    let absolute_path = absolute_dir.join(&file_name);
+    let temp_path = absolute_path.with_extension("txt.tmp");
+    fs::write(&temp_path, text)
+        .with_context(|| format!("failed to write temp evidence {}", temp_path.display()))?;
+    fs::rename(&temp_path, &absolute_path).with_context(|| {
+        format!(
+            "failed to atomically replace verification evidence {}",
+            absolute_path.display()
+        )
+    })?;
+    Ok(format!("{}/{}", path_to_slash(&relative_dir), file_name))
+}
+
+fn relative_evidence_dir(opts: &VerificationOpts) -> PathBuf {
+    if opts.evidence_dir.as_os_str().is_empty() {
+        return PathBuf::from(format!(".lux/evidence/autonomous/{}", opts.run_id));
+    }
+    if opts.evidence_dir.is_absolute() {
+        opts.evidence_dir
+            .strip_prefix(&opts.working_dir)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| PathBuf::from(format!(".lux/evidence/autonomous/{}", opts.run_id)))
+    } else {
+        opts.evidence_dir.clone()
+    }
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn policy_result(
+    status: VerificationStatus,
+    policy_used: &str,
+    evidence_paths: Vec<String>,
+    checks: Vec<CheckResult>,
+) -> RoutedVerificationResult {
+    let passed = status == VerificationStatus::Passed;
+    RoutedVerificationResult {
+        status,
+        policy_used: policy_used.to_string(),
+        evidence_paths,
+        passed,
+        timestamp: Utc::now().to_rfc3339(),
+        overall_score: weighted_average_score(&checks),
+        checks,
+    }
+}
+
+fn verification_status_for_passed(passed: bool) -> VerificationStatus {
+    if passed {
+        VerificationStatus::Passed
+    } else {
+        VerificationStatus::Failed
+    }
 }
 
 /// Tier-aware verification result — extends VerificationResult with tier info.

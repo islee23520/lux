@@ -1,4 +1,6 @@
 use std::{
+    env,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
@@ -13,9 +15,10 @@ use lux::lux_ticket::{
 use lux::lux_verification::{
     check_feedback_integration, check_implementation_exists, check_spec_completeness,
     check_unity_compilable, check_webgl_playable, create_blocker_tickets, required_tier_for_action,
-    run_t3_unity_gate_with_target, run_t3_unity_gate_with_target_and_timeouts, verify_all,
-    weighted_average_score, CheckCategory, CheckResult, T3UnityGateTimeouts, VerificationMode,
-    VerificationResult, T3_COMPILE_TIMEOUT_SECS, T3_SCENE_SMOKE_TIMEOUT_SECS,
+    route_verification, run_t3_unity_gate_with_target, run_t3_unity_gate_with_target_and_timeouts,
+    verify_all, weighted_average_score, CheckCategory, CheckResult, T3UnityGateTimeouts,
+    VerificationMode, VerificationOpts, VerificationResult, VerificationStatus,
+    T3_COMPILE_TIMEOUT_SECS, T3_SCENE_SMOKE_TIMEOUT_SECS,
 };
 use lux::UnityLaunchTarget;
 use serde_json::{json, Value};
@@ -153,6 +156,14 @@ fn test_ticket(id: &str, status: TicketStatus, blockers: Vec<String>) -> Ticket 
         spec_ref: None,
         created_at: "2026-05-15T00:00:00Z".to_string(),
         updated_at: "2026-05-15T00:00:00Z".to_string(),
+        execution_objective: None,
+        allowed_executor: None,
+        dispatch_policy: None,
+        verification_policy: None,
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: None,
     }
 }
 
@@ -225,12 +236,148 @@ fn unity_target(executable: PathBuf) -> UnityLaunchTarget {
     }
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let previous = env::var_os(key);
+        unsafe {
+            env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_ref() {
+            unsafe {
+                env::set_var(self.key, previous);
+            }
+        } else {
+            unsafe {
+                env::remove_var(self.key);
+            }
+        }
+    }
+}
+
+fn verification_opts(project: &TestProject, run_id: &str) -> VerificationOpts {
+    VerificationOpts {
+        run_id: run_id.to_string(),
+        working_dir: project.path().to_path_buf(),
+        evidence_dir: PathBuf::from(format!(".lux/evidence/autonomous/{run_id}")),
+    }
+}
+
+fn verification_ticket(policy: Option<&str>) -> Ticket {
+    let mut ticket = test_ticket("ticket-verify", TicketStatus::InProgress, Vec::new());
+    ticket.verification_policy = policy.map(ToOwned::to_owned);
+    ticket
+}
+
 fn detail<'a>(check: &'a CheckResult, key: &str) -> &'a Value {
     check
         .details
         .as_ref()
         .and_then(|details| details.get(key))
         .expect("check detail should exist")
+}
+
+#[test]
+fn verification_policy_unity_selects_t3_path() {
+    let project = TestProject::new("policy-unity-t3");
+    let executable = fake_unity(&project, "pass");
+    let _guard = EnvVarGuard::set("LUX_UNITY_EDITOR", &executable);
+    let ticket = verification_ticket(Some("unity_t3"));
+    let opts = verification_opts(&project, "run-unity-t3");
+
+    let result = route_verification(&ticket, &opts).expect("unity_t3 policy should route");
+
+    assert_eq!(result.status, VerificationStatus::Passed);
+    assert_eq!(result.policy_used, "unity_t3");
+    assert!(result
+        .checks
+        .iter()
+        .any(|check| check.name.contains("Unity Batchmode Compile")));
+    assert!(result
+        .checks
+        .iter()
+        .any(|check| check.name.contains("Unity Scene Smoke")));
+    assert_eq!(
+        result.evidence_paths,
+        vec![".lux/evidence/autonomous/run-unity-t3/verify_1.txt"]
+    );
+    assert!(project.path().join(&result.evidence_paths[0]).is_file());
+}
+
+#[test]
+fn verification_policy_command_suite_runs_declared() {
+    let project = TestProject::new("policy-command-suite");
+    let ticket = verification_ticket(Some("command_suite:echo ok"));
+    let opts = verification_opts(&project, "run-command-suite");
+
+    let result = route_verification(&ticket, &opts).expect("command suite should route");
+
+    assert_eq!(result.status, VerificationStatus::Passed);
+    assert_eq!(result.policy_used, "command_suite:echo ok");
+    assert_eq!(
+        result.evidence_paths,
+        vec![".lux/evidence/autonomous/run-command-suite/verify_1.txt"]
+    );
+    let evidence = fs::read_to_string(project.path().join(&result.evidence_paths[0]))
+        .expect("command evidence should be readable");
+    assert!(evidence.contains("command=echo ok"));
+    assert!(evidence.contains("exit_code=0"));
+    assert!(evidence.contains("ok"));
+}
+
+#[test]
+fn verification_policy_doc_only_requires_command() {
+    let project = TestProject::new("policy-doc-only");
+    let ticket = verification_ticket(Some("doc_only"));
+    let opts = verification_opts(&project, "run-doc-only");
+
+    let error =
+        route_verification(&ticket, &opts).expect_err("doc_only without command should fail");
+
+    assert!(error
+        .to_string()
+        .contains("doc_only verification requires at least one grep/schema validation command"));
+}
+
+#[test]
+fn verification_live_unsupported() {
+    let project = TestProject::new("policy-live");
+    let ticket = verification_ticket(Some("live"));
+    let opts = verification_opts(&project, "run-live");
+
+    let error = route_verification(&ticket, &opts).expect_err("live policy should be unsupported");
+
+    assert!(error
+        .to_string()
+        .contains("VerificationMode::Live is not supported in M6"));
+    assert!(!project
+        .path()
+        .join(".lux/evidence/autonomous/run-live")
+        .exists());
+}
+
+#[test]
+fn verification_missing_policy_blocks_dispatch() {
+    let project = TestProject::new("policy-missing");
+    let ticket = verification_ticket(None);
+    let opts = verification_opts(&project, "run-missing");
+
+    let error =
+        route_verification(&ticket, &opts).expect_err("missing policy should block dispatch");
+
+    assert!(error
+        .to_string()
+        .contains("verification_policy is required for execution-grade dispatch"));
 }
 
 #[test]

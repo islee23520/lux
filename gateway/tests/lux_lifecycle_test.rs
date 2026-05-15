@@ -113,9 +113,6 @@ fn verification_failure_creates_blocker_and_blocks_push_without_evidence() {
     seed_ticket(temp.path(), "ticket-active");
 
     let result = VerificationResult {
-        status: lux::lux_verification::VerificationStatus::Failed,
-        policy_used: "cached".to_string(),
-        evidence_paths: Vec::new(),
         passed: false,
         timestamp: Utc::now().to_rfc3339(),
         checks: vec![CheckResult {
