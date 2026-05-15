@@ -129,14 +129,14 @@ describe('ContinuationOrchestrator Stop Conditions (T5.4)', () => {
   it('stops when max_continuations is reached', async () => {
     vi.mocked(evaluateStopConditions).mockReturnValueOnce({
       shouldStop: true,
-      reason: 'max_continations',
+        reason: 'max_continuations_reached',
     } as any)
 
     const result = await orchestrator.onTrigger('test')
-    expect(result.stopReason).toBe('max_continations')
+    expect(result.stopReason).toBe('max_continuations_reached')
     expect(mockDeps.stateClient.writeContinuationState).toHaveBeenCalledWith(
       expect.objectContaining({ projectPath: '/test/project' }),
-      expect.objectContaining({ status: 'Stopped', stop_reason: 'max_continations' })
+      expect.objectContaining({ status: 'Stopped', stop_reason: 'max_continuations_reached' })
     )
   })
 

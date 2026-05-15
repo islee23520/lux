@@ -55,8 +55,7 @@ describe('continuation-state-client', () => {
         stop_reason: null,
       }
       
-      // Mock fetch
-      global.fetch = vi.fn().mockResolvedValue({
+      mockFetch.mockResolvedValue({
         ok: true,
         json: async () => mockState,
       })
@@ -68,8 +67,7 @@ describe('continuation-state-client', () => {
     })
 
     it('returns default state when file is corrupt', async () => {
-      // Mock fetch
-      global.fetch = vi.fn().mockResolvedValue({
+      mockFetch.mockResolvedValue({
         ok: false,
       })
 
@@ -79,45 +77,7 @@ describe('continuation-state-client', () => {
     })
   })
 
-      const state = readContinuationState(projectPath)
 
-      expect(state.status).toBe('Idle')
-      expect(state.continuation_count).toBe(0)
-      expect(state.updated_at).toBe('2026-05-13T12:00:00.000Z')
-    })
-
-    it('returns parsed state when file exists and is valid JSON', () => {
-      const mockState: ContinuationState = {
-        session_id: 'test-session',
-        continuation_count: 5,
-        stagnation_count: 1,
-        consecutive_failures: 0,
-        last_ambiguity: 'high',
-        last_ticket_baseline: 'base',
-        current_ticket_id: 'T1',
-        status: 'Active',
-        started_at: '2026-05-13T10:00:00Z',
-        updated_at: '2026-05-13T11:00:00Z',
-        stop_reason: null,
-      }
-
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockState))
-
-      const state = readContinuationState(projectPath)
-
-      expect(state).toEqual(mockState)
-      expect(fs.readFileSync).toHaveBeenCalledWith(stateFilePath, 'utf-8')
-    })
-
-    it('returns default state when JSON is corrupt', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue('invalid-json')
-
-      const state = readContinuationState(projectPath)
-
-      expect(state.status).toBe('Idle')
-      expect(state.continuation_count).toBe(0)
-    })
-  })
 
   describe('writeContinuationState', () => {
     it('calls PUT /api/lux/continuation/state with correct payload', async () => {
@@ -155,13 +115,16 @@ describe('continuation-state-client', () => {
 
     it('throws on non-ok response', async () => {
       mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      })
+      const state = await readContinuationState({ gatewayUrl: 'http://localhost:18766', projectPath })
+
+      mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 409,
         text: async () => 'seq conflict',
       })
-
-      const state = readContinuationState(projectPath)
-      vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error() })
 
       await expect(writeContinuationState(opts, state)).rejects.toThrow('HTTP 409')
     })
@@ -170,11 +133,14 @@ describe('continuation-state-client', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({}),
+      })
+      const state = await readContinuationState({ gatewayUrl: 'http://localhost:18766', projectPath })
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
         text: async () => '',
       })
-
-      const state = readContinuationState(projectPath)
-      vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error() })
 
       const result = await writeContinuationState({ ...opts, expectedSeq: 3 }, state)
       expect(result.seq).toBe(4)
@@ -197,7 +163,10 @@ describe('continuation-state-client', () => {
         stop_reason: null,
       }
 
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(initialState))
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => initialState,
+      })
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ seq: 2 }),

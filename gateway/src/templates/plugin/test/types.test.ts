@@ -68,7 +68,7 @@ describe('Lux Plugin Types', () => {
   describe('StopReason', () => {
     it('should allow all valid stop reasons', () => {
       const reasons: StopReason[] = [
-        'max_continations',
+      'max_continuations_reached',
         'user_abort',
         'stagnation',
         'health_critical',
@@ -85,7 +85,7 @@ describe('Lux Plugin Types', () => {
     it('should allow valid CycleResult', () => {
       const result: CycleResult = {
         dispatched: true,
-        stopReason: 'max_continations',
+      stopReason: 'max_continuations_reached',
         selectedTicketId: 'T-123',
         message: 'Continuing with T-123'
       }

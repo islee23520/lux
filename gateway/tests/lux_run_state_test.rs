@@ -417,7 +417,9 @@ fn test_canonical_stop_reasons_and_numeric_defaults() {
 fn test_update_with_seq_check_success() {
     let temp_dir = TestTempDir::new("seq-check-success");
     let initial = RunState::idle(temp_dir.path()).expect("idle state should be created");
-    initial.save(temp_dir.path()).expect("initial save should succeed");
+    initial
+        .save(temp_dir.path())
+        .expect("initial save should succeed");
     assert_eq!(initial.seq, 0);
 
     let updated = RunState::update_with_seq_check(temp_dir.path(), 0, None, |state| {
@@ -433,7 +435,9 @@ fn test_update_with_seq_check_success() {
 fn test_update_with_seq_check_stale_seq_returns_error() {
     let temp_dir = TestTempDir::new("seq-check-stale");
     let initial = RunState::idle(temp_dir.path()).expect("idle state should be created");
-    initial.save(temp_dir.path()).expect("initial save should succeed");
+    initial
+        .save(temp_dir.path())
+        .expect("initial save should succeed");
 
     let err = RunState::update_with_seq_check(temp_dir.path(), 99, None, |_| {})
         .expect_err("stale seq should return error");
@@ -448,7 +452,9 @@ fn test_update_with_seq_check_stale_seq_returns_error() {
 fn test_update_with_seq_check_concurrent_writes_second_fails() {
     let temp_dir = TestTempDir::new("seq-check-concurrent");
     let initial = RunState::idle(temp_dir.path()).expect("idle state should be created");
-    initial.save(temp_dir.path()).expect("initial save should succeed");
+    initial
+        .save(temp_dir.path())
+        .expect("initial save should succeed");
 
     RunState::update_with_seq_check(temp_dir.path(), 0, None, |state| {
         state.status = "Planning".to_string();

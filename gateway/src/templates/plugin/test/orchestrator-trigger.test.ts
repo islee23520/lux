@@ -142,12 +142,15 @@ describe('ContinuationOrchestrator onTrigger (T5.2)', () => {
   it('returns stopped if continuation state is Stopped', async () => {
     mockDeps.stateClient.readContinuationState.mockResolvedValueOnce({
       status: 'Stopped',
-      stop_reason: 'max_continuations_reached',
+      stop_reason: 'max_continuations_reached' as string | null,
       continuation_count: 50,
       stagnation_count: 0,
       consecutive_failures: 0,
       current_ticket_id: null
     })
+    const result = await orchestrator.onTrigger('test')
+    expect(result.message).toBe('stopped')
+  })
 
   it('stops if evaluateStopConditions returns shouldStop', async () => {
     vi.mocked(evaluateStopConditions).mockReturnValueOnce({

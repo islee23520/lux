@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { createExternalSignalIntegrator } from "../external-signal-integrator"
+import { createExternalSignalIntegrator, readExecutionLogRecords } from "../external-signal-integrator"
 
 vi.mock("node:fs")
 vi.mock("node:path")
@@ -164,6 +164,21 @@ describe("external-signal-integrator", () => {
   })
 
   describe("history management", () => {
+    it("reports malformed JSONL records as observable errors", () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+      vi.mocked(fs.readFileSync).mockReturnValue('{"type":"tool","tool":"ok","success":true,"timestamp":1}\nnot-json\n')
+
+      const result = readExecutionLogRecords(mockLogPath)
+
+      expect(result.records).toHaveLength(1)
+      expect(result.errors).toHaveLength(1)
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining("malformed execution log record"),
+        expect.any(Error),
+      )
+      consoleError.mockRestore()
+    })
+
     it("should clear history", () => {
       const integrator = createExternalSignalIntegrator()
       integrator.reportToolExecution({ tool: "t", success: true })

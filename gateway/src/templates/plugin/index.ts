@@ -65,7 +65,7 @@ export interface OrchestratorDeps {
 }
 
 export type StopReason =
-  | "max_continations"
+  | "max_continuations_reached"
   | "user_abort"
   | "stagnation"
   | "health_critical"
@@ -240,6 +240,9 @@ export class ContinuationOrchestrator {
     if (now - this.lastDispatchTime < interval) return this.result(false, null, null, "rate_limited")
 
     let contState = await this.deps.stateClient.readContinuationState({ gatewayUrl: this.config.gatewayUrl, projectPath: this.config.projectPath })
+    this.state.continuationCount = contState.continuation_count
+    this.state.stagnationCount = contState.stagnation_count
+    this.state.consecutiveFailures = contState.consecutive_failures
     if (contState.status === "Stopped") return this.result(false, contState.stop_reason as StopReason, contState.current_ticket_id, "stopped")
 
     const ticketSummary = this.deps.ticketLoader.loadTickets(this.config.projectPath)
@@ -292,7 +295,7 @@ export class ContinuationOrchestrator {
         this.lastDispatchTime = now - this.config.minContinuationIntervalMs + getBackoffDelayMs("unknown", Math.max(1, stagnation.reasons.length))
       }
       contState = await this.persist(contState, { status: "Stopped", stop_reason: stopDecision.reason, stagnation_count: this.state.stagnationCount, consecutive_failures: this.state.consecutiveFailures }, this.lastKnownSeq)
-      return this.result(false, stopDecision.reason, contState.current_ticket_id, stopDecision.reason === "max_continations" ? "max_continuations" : stopDecision.reason)
+      return this.result(false, stopDecision.reason, contState.current_ticket_id, stopDecision.reason)
     }
     if (isCompactionGuardActive(this.state)) return this.result(false, null, contState.current_ticket_id, "compaction_guard")
     if (this.state.inFlight || this.state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return this.result(false, null, contState.current_ticket_id, "blocked")

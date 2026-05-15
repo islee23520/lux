@@ -12,7 +12,7 @@ export const ACTIVE_STATE = {
 export const STOPPED_STATE = {
   ...ACTIVE_STATE,
   status: 'Stopped' as const,
-  stop_reason: 'max_continations' as const,
+    stop_reason: 'max_continuations_reached' as const,
   continuation_count: 50,
 }
 

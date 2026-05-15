@@ -42,13 +42,13 @@ describe("stop-evaluator", () => {
       const state = { ...mockState, continuationCount: 50 }
       const result = evaluateMaxContinuationsStop(state, DEFAULT_STOP_CONFIG)
       expect(result?.shouldStop).toBe(true)
-      expect(result?.reason).toBe("max_continations")
+      expect(result?.reason).toBe("max_continuations_reached")
     })
 
     it("should respect custom max continuation config", () => {
       const state = { ...mockState, continuationCount: 2 }
       const result = evaluateMaxContinuationsStop(state, { ...DEFAULT_STOP_CONFIG, maxContinuations: 2 })
-      expect(result?.reason).toBe("max_continations")
+      expect(result?.reason).toBe("max_continuations_reached")
     })
 
     it("should not stop when below max", () => {
@@ -176,7 +176,7 @@ describe("stop-evaluator", () => {
       }
       const result = evaluateStopConditions(context)
       expect(result.shouldStop).toBe(true)
-      expect(result.reason).toBe("max_continations")
+      expect(result.reason).toBe("max_continuations_reached")
     })
 
     it("should fall through to ambiguity stop when earlier checks do not match", () => {
@@ -231,7 +231,7 @@ describe("stop-evaluator", () => {
         clarificationTicketInProgress: false,
       }
 
-      expect(getStopReasonMessage("max_continations", context)).toContain("max_continations")
+      expect(getStopReasonMessage("max_continuations_reached", context)).toContain("max_continuations_reached")
       expect(getStopReasonMessage("user_abort", context)).toContain("user_abort")
       expect(getStopReasonMessage("stagnation", context)).toContain("health_degraded")
       expect(getStopReasonMessage("health_critical", context)).toContain("health_critical")

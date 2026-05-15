@@ -47,8 +47,48 @@ export interface ExternalSignalIntegrator {
   destroy(): void
 }
 
+export interface ExecutionLogReadResult {
+  records: ExecutionRecord[]
+  errors: Error[]
+}
+
 const DEFAULT_WINDOW_SIZE = 10
 const DEFAULT_LOG_PATH = ".lux/execution-log.jsonl"
+
+function isExecutionRecord(value: unknown): value is ExecutionRecord {
+  if (typeof value !== "object" || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    (record.type === "build" || record.type === "test" || record.type === "tool") &&
+    typeof record.tool === "string" &&
+    typeof record.success === "boolean" &&
+    typeof record.timestamp === "number"
+  )
+}
+
+export function readExecutionLogRecords(logPath: string): ExecutionLogReadResult {
+  const content = fs.readFileSync(logPath, "utf-8")
+  const records: ExecutionRecord[] = []
+  const errors: Error[] = []
+
+  content.split(/\r?\n/).forEach((line, index) => {
+    if (line.trim().length === 0) return
+
+    try {
+      const parsed = JSON.parse(line) as unknown
+      if (!isExecutionRecord(parsed)) {
+        throw new Error(`invalid execution record shape at line ${index + 1}`)
+      }
+      records.push(parsed)
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      errors.push(error)
+      console.error(`[lux-external-signal] malformed execution log record at ${logPath}:${index + 1}`, error)
+    }
+  })
+
+  return { records, errors }
+}
 
 export function createExternalSignalIntegrator(projectPath?: string): ExternalSignalIntegrator {
   let history: ExecutionRecord[] = []
