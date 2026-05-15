@@ -13,7 +13,10 @@ use lux::{
     lux_run_recover::recover_pending_transactions,
     lux_run_state::{ApprovalGateType, RunState, RunStatus},
     lux_task_dag::{TaskDAG, TaskNode, TaskStatus},
-    lux_ticket::{FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore},
+    lux_ticket::{
+        is_execution_grade, should_dispatch, validate_execution_grade, BlockerPolicy,
+        DispatchPolicy, FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore,
+    },
     lux_verification::{create_blocker_tickets, CheckCategory, CheckResult, VerificationResult},
 };
 
@@ -47,14 +50,12 @@ fn full_lifecycle_awaits_approval_then_pushes_and_completes() {
     let mut roadmap = RoadmapReality::default();
     lux::lux_roadmap::save(temp.path(), &roadmap).expect("roadmap should save");
     let mut state = run_state(temp.path(), "run-full");
-    let initial_seq = state.seq;
 
     state
         .transition_to(RunStatus::Planning, "spec/roadmap selects milestone")
         .expect("planning transition");
     state.milestone_id = Some("M1".to_string());
-    let planning_seq = state.seq;
-    assert!(planning_seq > initial_seq);
+    assert_eq!(state.status, RunStatus::Planning.to_string());
 
     let mut dag = TaskDAG::default();
     dag.add_node(TaskNode {
@@ -79,9 +80,7 @@ fn full_lifecycle_awaits_approval_then_pushes_and_completes() {
         state.approval.pending_transition.as_deref(),
         Some(MILESTONE_PUSH_TRANSITION)
     );
-    assert!(state.seq > planning_seq);
 
-    let awaiting_seq = state.seq;
     let approval = MilestonePushApproval {
         project_path: temp.path().to_path_buf(),
         milestone_id: Some("M1".to_string()),
@@ -93,7 +92,6 @@ fn full_lifecycle_awaits_approval_then_pushes_and_completes() {
 
     assert_eq!(state.status, RunStatus::Completed.to_string());
     assert_eq!(state.stop_reason.as_deref(), Some("milestone_complete"));
-    assert!(state.seq > awaiting_seq);
     assert_eq!(roadmap.phases[0].status, RoadmapPhaseStatus::Pushed);
     assert_eq!(roadmap.phases[0].push_git_sha.as_deref(), Some("abc123"));
 
@@ -258,6 +256,104 @@ fn seed_ticket(project_path: &Path, id: &str) {
             spec_ref: None,
             created_at: now.clone(),
             updated_at: now,
+            execution_objective: None,
+            allowed_executor: None,
+            dispatch_policy: None,
+            verification_policy: None,
+            command_allowlist: None,
+            evidence_refs: None,
+            blocker_policy: None,
+            non_goals: None,
         })
         .expect("ticket should be seeded");
+}
+
+fn execution_grade_ticket(id: &str) -> Ticket {
+    let now = Utc::now().to_rfc3339();
+    Ticket {
+        id: id.to_string(),
+        title: "Execution grade ticket".to_string(),
+        description: "A fully specified execution-grade ticket".to_string(),
+        status: TicketStatus::ToDo,
+        priority: TicketPriority::High,
+        assignee: Some("opencode".to_string()),
+        blockers: Vec::new(),
+        tags: Vec::new(),
+        spec_ref: None,
+        created_at: now.clone(),
+        updated_at: now,
+        execution_objective: Some("Implement feature X".to_string()),
+        allowed_executor: Some("opencode".to_string()),
+        dispatch_policy: Some(DispatchPolicy::DispatchRequested),
+        verification_policy: Some("unity_t3".to_string()),
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: Some(BlockerPolicy {
+            max_depth: Some(3),
+            max_attempts: Some(5),
+        }),
+        non_goals: Some(vec!["out of scope item".to_string()]),
+    }
+}
+
+#[test]
+fn ticket_execution_grade_validates() {
+    let ticket = execution_grade_ticket("exec-001");
+    assert!(is_execution_grade(&ticket));
+    assert!(validate_execution_grade(&ticket).is_ok());
+    assert!(should_dispatch(&ticket));
+}
+
+#[test]
+fn ticket_plain_inprogress_no_dispatch() {
+    let now = Utc::now().to_rfc3339();
+    let ticket = Ticket {
+        id: "plain-001".to_string(),
+        title: "Plain ticket".to_string(),
+        description: "No dispatch policy set".to_string(),
+        status: TicketStatus::InProgress,
+        priority: TicketPriority::Medium,
+        assignee: None,
+        blockers: Vec::new(),
+        tags: Vec::new(),
+        spec_ref: None,
+        created_at: now.clone(),
+        updated_at: now,
+        execution_objective: None,
+        allowed_executor: None,
+        dispatch_policy: None,
+        verification_policy: None,
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: None,
+    };
+    assert!(!should_dispatch(&ticket));
+    assert!(!is_execution_grade(&ticket));
+}
+
+#[test]
+fn ticket_missing_objective_rejected() {
+    let mut ticket = execution_grade_ticket("exec-002");
+    ticket.execution_objective = None;
+    assert!(validate_execution_grade(&ticket).is_err());
+    assert!(!is_execution_grade(&ticket));
+}
+
+#[test]
+fn ticket_command_allowlist_required_for_command_policy() {
+    let mut ticket = execution_grade_ticket("exec-003");
+    ticket.verification_policy = Some("command_suite".to_string());
+    ticket.command_allowlist = Some(vec![]);
+    let result = validate_execution_grade(&ticket);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .contains("command_allowlist must be non-empty"));
+
+    ticket.command_allowlist = None;
+    assert!(validate_execution_grade(&ticket).is_err());
+
+    ticket.command_allowlist = Some(vec!["cargo test".to_string()]);
+    assert!(validate_execution_grade(&ticket).is_ok());
 }

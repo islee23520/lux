@@ -76,7 +76,10 @@ pub struct RunStateResponse {
     pub status: String,
     pub goal_id: Option<String>,
     pub milestone_id: Option<String>,
+    pub ticket_id: Option<String>,
     pub current_ticket_id: Option<String>,
+    pub executor: Option<String>,
+    pub verification_policy: Option<String>,
     pub last_error: Option<String>,
     pub pre_task_git_sha: Option<String>,
     pub team_run_id: Option<String>,
@@ -92,7 +95,10 @@ impl From<RunState> for RunStateResponse {
             status: s.status,
             goal_id: s.goal_id,
             milestone_id: s.milestone_id,
+            ticket_id: s.ticket_id,
             current_ticket_id: s.current_ticket_id,
+            executor: s.executor.kind,
+            verification_policy: s.verification_policy,
             last_error: s.last_error,
             pre_task_git_sha: s.pre_task_git_sha,
             team_run_id: s.team_run_id,
@@ -104,12 +110,16 @@ impl From<RunState> for RunStateResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransitionRunStateRequest {
+    pub expected_seq: Option<u64>,
     pub status: String,
     pub reason: Option<String>,
+    pub ticket_id: Option<String>,
     pub current_ticket_id: Option<String>,
     pub goal_id: Option<String>,
     pub last_error: Option<String>,
     pub team_run_id: Option<String>,
+    pub executor: Option<String>,
+    pub verification_policy: Option<String>,
     pub force: Option<bool>,
 }
 
@@ -118,7 +128,10 @@ pub struct TransitionRunStateRequest {
 pub struct StartRunRequest {
     pub goal_id: Option<String>,
     pub milestone_id: Option<String>,
+    pub ticket_id: Option<String>,
     pub agent_id: Option<String>,
+    pub executor: Option<String>,
+    pub verification_policy: Option<String>,
     pub force: Option<bool>,
 }
 
@@ -234,6 +247,9 @@ fn parse_run_status(s: &str) -> anyhow::Result<RunStatus> {
     match s {
         "Idle" => Ok(RunStatus::Idle),
         "Planning" => Ok(RunStatus::Planning),
+        "planned" | "Planned" => Ok(RunStatus::Planned),
+        "dispatch_ready" | "DispatchReady" => Ok(RunStatus::DispatchReady),
+        "executing" | "Executing" => Ok(RunStatus::Executing),
         "AwaitingApproval" => Ok(RunStatus::AwaitingApproval),
         "ExecutingTicket" => Ok(RunStatus::ExecutingTicket),
         "Verifying" => Ok(RunStatus::Verifying),
@@ -241,6 +257,8 @@ fn parse_run_status(s: &str) -> anyhow::Result<RunStatus> {
         "AwaitingFeedback" => Ok(RunStatus::AwaitingFeedback),
         "Paused" => Ok(RunStatus::Paused),
         "Blocked" => Ok(RunStatus::Blocked),
+        "retry_ready" | "RetryReady" => Ok(RunStatus::RetryReady),
+        "resumed" | "Resumed" => Ok(RunStatus::Resumed),
         "Completed" => Ok(RunStatus::Completed),
         "Failed" => Ok(RunStatus::Failed),
         "Interrupted" => Ok(RunStatus::Interrupted),
@@ -293,6 +311,9 @@ async fn start_run(
     run_state.run_id = Uuid::new_v4().to_string();
     run_state.goal_id = req.goal_id;
     run_state.milestone_id = req.milestone_id;
+    run_state.ticket_id = req.ticket_id;
+    run_state.executor.kind = req.executor;
+    run_state.verification_policy = req.verification_policy;
     run_state.save(&project_root).map_err(internal_error)?;
 
     Ok(Json(StartRunResponse {
@@ -324,26 +345,55 @@ async fn transition_run(
     )
     .map_err(bad_request)?;
 
-    let mut run_state = RunState::load(&project_root).map_err(internal_error)?;
     let reason = req.reason.as_deref().unwrap_or("api_transition");
-    run_state
-        .transition_to(new_status, reason)
-        .map_err(bad_request)?;
+    let apply_request = |run_state: &mut RunState| {
+        if let Some(ticket_id) = req.ticket_id.clone() {
+            run_state.ticket_id = Some(ticket_id);
+        }
+        if let Some(ticket_id) = req.current_ticket_id.clone() {
+            run_state.current_ticket_id = Some(ticket_id);
+        }
+        if let Some(goal_id) = req.goal_id.clone() {
+            run_state.goal_id = Some(goal_id);
+        }
+        if let Some(last_error) = req.last_error.clone() {
+            run_state.last_error = Some(last_error);
+        }
+        if let Some(team_run_id) = req.team_run_id.clone() {
+            run_state.team_run_id = Some(team_run_id);
+        }
+        if let Some(executor) = req.executor.clone() {
+            run_state.executor.kind = Some(executor);
+        }
+        if let Some(policy) = req.verification_policy.clone() {
+            run_state.verification_policy = Some(policy);
+        }
+    };
 
-    if let Some(ticket_id) = req.current_ticket_id {
-        run_state.current_ticket_id = Some(ticket_id);
-    }
-    if let Some(goal_id) = req.goal_id {
-        run_state.goal_id = Some(goal_id);
-    }
-    if let Some(last_error) = req.last_error {
-        run_state.last_error = Some(last_error);
-    }
-    if let Some(team_run_id) = req.team_run_id {
-        run_state.team_run_id = Some(team_run_id);
-    }
-
-    run_state.save(&project_root).map_err(internal_error)?;
+    let run_state = if let Some(expected_seq) = req.expected_seq {
+        RunState::transition_with_seq_check(
+            &project_root,
+            expected_seq,
+            new_status,
+            reason,
+            apply_request,
+        )
+        .map_err(|error| {
+            if error.to_string().contains("stale seq") {
+                bad_request(error)
+            } else {
+                internal_error(error)
+            }
+        })?
+    } else {
+        let mut run_state = RunState::load(&project_root).map_err(internal_error)?;
+        run_state
+            .transition_to(new_status, reason)
+            .map_err(bad_request)?;
+        apply_request(&mut run_state);
+        run_state.save(&project_root).map_err(internal_error)?;
+        run_state
+    };
     Ok(Json(RunStateResponse::from(run_state)))
 }
 
@@ -432,6 +482,14 @@ async fn create_run_ticket(
         spec_ref: req.spec_ref,
         created_at: now.clone(),
         updated_at: now,
+        execution_objective: None,
+        allowed_executor: None,
+        dispatch_policy: None,
+        verification_policy: None,
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: None,
     };
 
     let store = FileTicketStore::new(&project_root);

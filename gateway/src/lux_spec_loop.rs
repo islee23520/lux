@@ -375,6 +375,14 @@ fn apply_proposal(project_path: &Path, proposal: &SpecProposal) -> Result<()> {
                 spec_ref: proposal.spec_refs.first().cloned(),
                 created_at: now.clone(),
                 updated_at: now,
+                execution_objective: None,
+                allowed_executor: None,
+                dispatch_policy: None,
+                verification_policy: None,
+                command_allowlist: None,
+                evidence_refs: None,
+                blocker_policy: None,
+                non_goals: None,
             })?;
         }
     }

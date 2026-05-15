@@ -359,6 +359,14 @@ impl LoopOrchestrator {
                 spec_ref: spec_ref.map(str::to_string),
                 created_at: now.clone(),
                 updated_at: now.clone(),
+                execution_objective: None,
+                allowed_executor: None,
+                dispatch_policy: None,
+                verification_policy: None,
+                command_allowlist: None,
+                evidence_refs: None,
+                blocker_policy: None,
+                non_goals: None,
             };
             created.push(store.create(ticket)?);
         }

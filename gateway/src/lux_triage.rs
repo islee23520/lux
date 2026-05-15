@@ -521,6 +521,14 @@ pub fn create_ticket_from_classification(
         spec_ref: Some(classification.domain.clone()),
         created_at: now.clone(),
         updated_at: now,
+        execution_objective: None,
+        allowed_executor: None,
+        dispatch_policy: None,
+        verification_policy: None,
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: None,
     };
     let created = store.create(ticket)?;
     let mut updated_event = event.clone();

@@ -25,6 +25,20 @@ fn ticket_atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> anyh
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchPolicy {
+    Manual,
+    DispatchRequested,
+    AutoDispatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlockerPolicy {
+    pub max_depth: Option<u32>,
+    pub max_attempts: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     pub id: String,
     pub title: String,
@@ -37,6 +51,22 @@ pub struct Ticket {
     pub spec_ref: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_objective: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_executor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_policy: Option<DispatchPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_allowlist: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_refs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker_policy: Option<BlockerPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub non_goals: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -362,6 +392,14 @@ pub fn create_or_update_blocker(
         spec_ref: spec_ref.map(ToOwned::to_owned),
         created_at: now.clone(),
         updated_at: now,
+        execution_objective: None,
+        allowed_executor: None,
+        dispatch_policy: None,
+        verification_policy: None,
+        command_allowlist: None,
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: None,
     };
     let created_ticket = store.create(ticket)?;
     Ok(BlockerTicketUpsert {
@@ -379,6 +417,63 @@ fn merge_tags(mut existing: Vec<String>, incoming: Vec<String>, stable_tag: Stri
         }
     }
     existing
+}
+
+/// Returns true only if the ticket has all required execution-grade fields set
+/// and the dispatch policy is not Manual.
+pub fn is_execution_grade(ticket: &Ticket) -> bool {
+    ticket.execution_objective.is_some()
+        && ticket.allowed_executor.is_some()
+        && ticket.verification_policy.is_some()
+        && matches!(
+            ticket.dispatch_policy,
+            Some(DispatchPolicy::DispatchRequested) | Some(DispatchPolicy::AutoDispatch)
+        )
+}
+
+/// Validates that a ticket is ready for execution dispatch.
+/// Returns Err with a descriptive message if any required field is missing or invalid.
+pub fn validate_execution_grade(ticket: &Ticket) -> Result<(), String> {
+    if ticket.execution_objective.is_none() {
+        return Err("execution_objective is required for execution-grade dispatch".to_string());
+    }
+    if ticket.allowed_executor.is_none() {
+        return Err("allowed_executor is required for execution-grade dispatch".to_string());
+    }
+    if ticket.verification_policy.is_none() {
+        return Err("verification_policy is required for execution-grade dispatch".to_string());
+    }
+    match &ticket.dispatch_policy {
+        None | Some(DispatchPolicy::Manual) => {
+            return Err(
+                "dispatch_policy must be DispatchRequested or AutoDispatch for execution-grade dispatch"
+                    .to_string(),
+            );
+        }
+        Some(DispatchPolicy::DispatchRequested) | Some(DispatchPolicy::AutoDispatch) => {}
+    }
+    if ticket.verification_policy.as_deref() == Some("command_suite") {
+        let allowlist_empty = ticket
+            .command_allowlist
+            .as_ref()
+            .map_or(true, |v| v.is_empty());
+        if allowlist_empty {
+            return Err(
+                "command_allowlist must be non-empty when verification_policy is command_suite"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Returns true ONLY if the ticket's dispatch_policy is DispatchRequested or AutoDispatch.
+/// Moving a ticket to InProgress status alone NEVER triggers dispatch.
+pub fn should_dispatch(ticket: &Ticket) -> bool {
+    matches!(
+        ticket.dispatch_policy,
+        Some(DispatchPolicy::DispatchRequested) | Some(DispatchPolicy::AutoDispatch)
+    )
 }
 
 impl Ticket {
