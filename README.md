@@ -462,7 +462,7 @@ Lux/
 ## 로드맵
 
 > [!IMPORTANT]
-> 로드맵의 정식 상태(SSoT)는 `.lux/roadmap.json` 파일에서 관리됩니다. 본 문서는 가독성을 위한 투영(Projection)입니다. 마일스톤 푸시(Milestone Push)는 **T3 Unity 검증**(배치 모드 컴파일 600초 + 씬 스모크 300초)을 통과해야 하며, Unity 환경을 사용할 수 없는 경우 푸시가 차단됩니다.
+> LUX 제품 로드맵/마일스톤 상태의 정식 상태(SSoT)는 `.lux/roadmap.json` 파일에서 관리됩니다. 사용자/게임 요구사항, 실행 티켓, 활성 실행 상태는 각각 ADR-003의 도메인 파일(`.lux/spec.json`, `.lux/tickets/*.json`, `.lux/run-state.json`)이 정식 소스입니다. 본 문서는 가독성을 위한 투영(Projection)입니다. 마일스톤 푸시(Milestone Push)는 **T3 Unity 검증**(배치 모드 컴파일 600초 + 씬 스모크 300초)을 통과해야 하며, Unity 환경을 사용할 수 없는 경우 푸시가 차단됩니다.
 
 > [!WARNING]
 > 레거시 `.lux/continuation-state.json`은 더 이상 사용되지 않으며(Deprecated), 새로운 버전의 게이트웨이 실행 시 자동으로 마이그레이션됩니다.
