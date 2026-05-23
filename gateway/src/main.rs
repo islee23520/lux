@@ -21,6 +21,7 @@ pub mod lux_lock;
 pub mod lux_loop;
 pub mod lux_mcp;
 pub mod lux_metrics;
+pub mod lux_mcp;
 pub mod lux_roadmap;
 pub mod lux_run;
 pub mod lux_run_recover;
@@ -117,6 +118,8 @@ enum Command {
     Verify(LuxProjectArgs),
     /// Start or manage a spec-driven automated dev run
     Run(lux_run::RunArgs),
+    /// Run the Lux JSON-RPC MCP stdio server
+    Mcp(LuxProjectArgs),
     /// Interactive REPL shell
     Tui(TuiArgs),
     /// Run the Lux stdio MCP server
@@ -1272,6 +1275,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         }
         Command::Verify(args) => run_lux_verify_command(args),
         Command::Run(args) => lux_run::run_command(&args),
+        Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path.as_deref()),
         Command::Tui(_) => Ok(()),
         Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path),
         Command::Serve(args) => serve(args, &config).await,

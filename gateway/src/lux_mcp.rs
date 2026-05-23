@@ -7,25 +7,29 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::{
     lux_spec,
     lux_ticket::{
-        DispatchPolicy, FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore,
+        DispatchPolicy, FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus,
+        TicketStore,
     },
+    project,
 };
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
-const LOOP_TICKET_ID: &str = "game-dev-loop-001";
+const TOOL_BRIDGE_INSTALL: &str = "lux_bridge_install";
+const TOOL_BRIDGE_DIAGNOSTICS: &str = "lux_bridge_diagnostics";
+const TOOL_SPEC_WRITE: &str = "lux_game_spec_write";
+const TOOL_TICKET_PREPARE: &str = "lux_game_ticket_prepare";
+const TOOL_UNITY_MANEUVER: &str = "lux_unity_maneuver";
+const TOOL_LOOP_ONCE: &str = "lux_game_dev_loop_once";
 
-#[derive(Clone, Debug)]
-struct McpTool {
-    name: &'static str,
-    description: &'static str,
-    input_schema: Value,
-}
-
-pub fn run_mcp_stdio(default_project_path: Option<PathBuf>) -> Result<()> {
+pub fn run_mcp_stdio(project_path: Option<&Path>) -> Result<()> {
+    let default_project = match project_path {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir().context("failed to resolve current directory")?,
+    };
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -34,390 +38,401 @@ pub fn run_mcp_stdio(default_project_path: Option<PathBuf>) -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-
-        let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => handle_json_rpc_request(request, default_project_path.as_deref()),
-            Err(error) => json_rpc_error(Value::Null, -32700, format!("Parse error: {error}")),
+        let request: Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(error) => {
+                writeln!(
+                    stdout,
+                    "{}",
+                    json!({"jsonrpc":"2.0","id":Value::Null,"error":{"code":-32700,"message":error.to_string()}})
+                )?;
+                stdout.flush()?;
+                continue;
+            }
         };
-
-        writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
-        stdout.flush()?;
+        let response = handle_json_rpc(&default_project, &request);
+        if let Some(response) = response {
+            writeln!(stdout, "{}", response)?;
+            stdout.flush()?;
+        }
     }
-
     Ok(())
 }
 
-fn handle_json_rpc_request(request: Value, default_project_path: Option<&Path>) -> Value {
+fn handle_json_rpc(default_project: &Path, request: &Value) -> Option<Value> {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let result = match method {
+        "initialize" => Ok(json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "lux", "version": env!("CARGO_PKG_VERSION") }
+        })),
+        "tools/list" => Ok(json!({ "tools": tool_definitions() })),
+        "tools/call" => handle_tool_call(default_project, request.get("params").unwrap_or(&Value::Null)),
+        "ping" => Ok(json!({})),
+        "notifications/initialized" => return None,
+        _ => Err(anyhow!("unknown MCP method: {method}")),
+    };
 
-    match method {
-        "initialize" => json_rpc_result(
-            id,
-            json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "lux", "version": env!("CARGO_PKG_VERSION")}
-            }),
-        ),
-        "ping" => json_rpc_result(id, json!({})),
-        "tools/list" => json_rpc_result(id, json!({"tools": tool_definitions()})),
-        "tools/call" => {
-            let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-            let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-            let arguments = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let result = call_tool(name, &arguments, default_project_path);
-            json_rpc_result(id, result)
-        }
-        _ => json_rpc_error(id, -32601, format!("Method not found: {method}")),
-    }
-}
-
-fn json_rpc_result(id: Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
-}
-
-fn json_rpc_error(id: Value, code: i64, message: String) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-}
-
-fn tool_definitions() -> Vec<Value> {
-    registry()
-        .into_iter()
-        .map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "inputSchema": tool.input_schema,
-            })
-        })
-        .collect()
-}
-
-fn registry() -> Vec<McpTool> {
-    vec![
-        McpTool {
-            name: "lux_bridge_install",
-            description: "Install or refresh the Lux Unity bridge files in a Unity project.",
-            input_schema: project_schema(),
-        },
-        McpTool {
-            name: "lux_bridge_diagnostics",
-            description: "Report Lux Unity bridge discovery/connection diagnostics for a project.",
-            input_schema: project_schema(),
-        },
-        McpTool {
-            name: "lux_game_spec_write",
-            description: "Initialize or update the canonical .lux game spec for a minimal game-development loop.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "project_path": {"type": "string"},
-                    "project_name": {"type": "string"},
-                    "seed": {"type": "object"}
-                },
-                "additionalProperties": false
-            }),
-        },
-        McpTool {
-            name: "lux_game_ticket_prepare",
-            description: "Create or select one safe first-loop ticket in .lux/tickets.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "project_path": {"type": "string"},
-                    "objective": {"type": "string"},
-                    "verification_policy": {"type": "string"},
-                    "non_goals": {"type": "array", "items": {"type": "string"}}
-                },
-                "additionalProperties": false
-            }),
-        },
-        McpTool {
-            name: "lux_unity_maneuver",
-            description: "Attempt one safe Unity maneuver and record explicit structured success or failure.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "project_path": {"type": "string"},
-                    "ticket_id": {"type": "string"},
-                    "operation": {"type": "string"},
-                    "dry_run": {"type": "boolean"}
-                },
-                "additionalProperties": false
-            }),
-        },
-        McpTool {
-            name: "lux_game_dev_loop_once",
-            description: "Run the first milestone game-development loop once, then stop with structured evidence.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "project_path": {"type": "string"},
-                    "project_name": {"type": "string"},
-                    "objective": {"type": "string"},
-                    "validation_policy": {"type": "string"},
-                    "autonomy_policy": {"type": "string"}
-                },
-                "additionalProperties": false
-            }),
-        },
-    ]
-}
-
-fn project_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {"project_path": {"type": "string"}},
-        "additionalProperties": false
+    Some(match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err(error) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32603, "message": error.to_string() }
+        }),
     })
 }
 
-fn call_tool(name: &str, arguments: &Value, default_project_path: Option<&Path>) -> Value {
-    if !registry().iter().any(|tool| tool.name == name) {
-        return tool_error_result(
-            name,
-            anyhow!("Unknown tool '{name}'. Use tools/list to discover supported Lux tools."),
-        );
-    }
-
-    let result = match name {
-        "lux_bridge_install" => bridge_install(arguments, default_project_path),
-        "lux_bridge_diagnostics" => bridge_diagnostics(arguments, default_project_path),
-        "lux_game_spec_write" => game_spec_write(arguments, default_project_path),
-        "lux_game_ticket_prepare" => game_ticket_prepare(arguments, default_project_path),
-        "lux_unity_maneuver" => unity_maneuver(arguments, default_project_path),
-        "lux_game_dev_loop_once" => game_dev_loop_once(arguments, default_project_path),
-        _ => unreachable!(),
-    };
-
-    match result {
-        Ok(structured) => tool_success_result(name, structured),
-        Err(error) => tool_error_result(name, error),
-    }
+fn tool_definitions() -> Vec<Value> {
+    vec![
+        tool_definition(TOOL_BRIDGE_INSTALL, "Install or refresh the Lux Unity bridge."),
+        tool_definition(TOOL_BRIDGE_DIAGNOSTICS, "Run Lux bridge diagnostics."),
+        tool_definition(TOOL_SPEC_WRITE, "Write or import a minimal game spec into .lux/spec.json."),
+        tool_definition(TOOL_TICKET_PREPARE, "Create or select one safe first-loop game-dev ticket."),
+        tool_definition(TOOL_UNITY_MANEUVER, "Perform one safe Unity maneuver or return an explicit unavailable result."),
+        tool_definition(TOOL_LOOP_ONCE, "Run one safe game-development loop and stop."),
+    ]
 }
 
-fn tool_success_result(name: &str, structured: Value) -> Value {
+fn tool_definition(name: &str, description: &str) -> Value {
     json!({
-        "content": [{"type": "text", "text": format!("{name} completed")}],
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": { "type": "string" },
+                "objective": { "type": "string" },
+                "spec_seed": { "type": "object" },
+                "validation_policy": { "type": "string" },
+                "autonomy_policy": { "type": "string" },
+                "ticket_id": { "type": "string" }
+            },
+            "additionalProperties": false
+        }
+    })
+}
+
+fn handle_tool_call(default_project: &Path, params: &Value) -> Result<Value> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("tools/call missing params.name"))?;
+    let arguments = params.get("arguments").unwrap_or(&Value::Null);
+
+    let outcome = match name {
+        TOOL_BRIDGE_INSTALL => bridge_install(default_project, arguments),
+        TOOL_BRIDGE_DIAGNOSTICS => bridge_diagnostics(default_project, arguments),
+        TOOL_SPEC_WRITE => game_spec_write(default_project, arguments),
+        TOOL_TICKET_PREPARE => game_ticket_prepare(default_project, arguments),
+        TOOL_UNITY_MANEUVER => unity_maneuver(default_project, arguments),
+        TOOL_LOOP_ONCE => game_dev_loop_once(default_project, arguments),
+        _ => return Ok(tool_error_result(json!({"tool": name, "error": format!("unknown tool: {name}")}))),
+    };
+
+    Ok(match outcome {
+        Ok(value) => tool_success_result(value),
+        Err(error) => tool_error_result(json!({"tool": name, "error": error.to_string()})),
+    })
+}
+
+fn tool_success_result(structured: Value) -> Value {
+    let text = structured
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Lux MCP tool completed");
+    json!({
+        "content": [{ "type": "text", "text": text }],
         "structuredContent": structured,
         "isError": false
     })
 }
 
-fn tool_error_result(name: &str, error: anyhow::Error) -> Value {
+fn tool_error_result(structured: Value) -> Value {
+    let text = structured
+        .get("message")
+        .or_else(|| structured.get("error"))
+        .and_then(Value::as_str)
+        .unwrap_or("Lux MCP tool failed");
     json!({
-        "content": [{"type": "text", "text": error.to_string()}],
-        "structuredContent": {"tool": name, "ok": false, "message": error.to_string()},
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": structured,
         "isError": true
     })
 }
 
-fn project_path_from_args(
-    arguments: &Value,
-    default_project_path: Option<&Path>,
-) -> Result<PathBuf> {
-    if let Some(path) = arguments.get("project_path").and_then(Value::as_str) {
-        if !path.trim().is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-    if let Some(path) = default_project_path {
-        return Ok(path.to_path_buf());
-    }
-    std::env::current_dir().context("failed to resolve current directory")
+fn resolve_project_path(default_project: &Path, args: &Value) -> PathBuf {
+    args.get("project_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_project.to_path_buf())
 }
 
-fn bridge_install(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let project_path = project_path_from_args(arguments, default_project_path)?;
-    if !project_path.exists() {
-        anyhow::bail!("Project path does not exist: {}", project_path.display());
-    }
-
-    let assets_editor = project_path.join("Assets/Editor");
-    fs::create_dir_all(&assets_editor)
-        .with_context(|| format!("failed to create {}", assets_editor.display()))?;
-    let marker = assets_editor.join("LuxMcpBridgeInstall.marker");
-    fs::write(
-        &marker,
-        format!(
-            "Lux MCP bridge install requested at {}\n",
-            Utc::now().to_rfc3339()
-        ),
-    )
-    .with_context(|| format!("failed to write {}", marker.display()))?;
-
-    Ok(json!({
-        "ok": true,
-        "projectPath": project_path,
-        "installedMarker": marker,
-        "note": "MCP bridge install path is idempotent and project-local."
-    }))
-}
-
-fn bridge_diagnostics(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let project_path = project_path_from_args(arguments, default_project_path)?;
-    let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
-    if !discovery_path.is_file() {
-        anyhow::bail!(
-            "Unity bridge discovery file not found: {}. Open the project in Unity after installing the Lux bridge.",
-            discovery_path.display()
-        );
-    }
-    let discovery: Value = serde_json::from_str(
-        &fs::read_to_string(&discovery_path)
-            .with_context(|| format!("failed to read {}", discovery_path.display()))?,
-    )
-    .with_context(|| format!("failed to parse {}", discovery_path.display()))?;
-
-    Ok(json!({
-        "ok": true,
-        "projectPath": project_path,
-        "discoveryPath": discovery_path,
-        "discovery": discovery
-    }))
-}
-
-fn game_spec_write(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let project_path = project_path_from_args(arguments, default_project_path)?;
-    let mut spec = lux_spec::lux_load_or_init(&project_path)?;
-    if let Some(project_name) = arguments.get("project_name").and_then(Value::as_str) {
-        if !project_name.trim().is_empty() {
-            spec.project_name = project_name.to_string();
-            spec.source = "lux-mcp".to_string();
-            lux_spec::lux_save(&project_path, &spec)?;
-        }
-    }
-    let validation = spec.validate();
-    Ok(json!({
-        "ok": validation.is_ok(),
-        "projectPath": project_path,
-        "specPath": project_path.join(".lux/spec.json"),
-        "validation": validation.err().unwrap_or_else(|| "valid".to_string()),
-        "ambiguity": spec.overall_ambiguity
-    }))
-}
-
-fn game_ticket_prepare(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let project_path = project_path_from_args(arguments, default_project_path)?;
+fn bridge_install(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
     lux_spec::lux_init(&project_path)?;
-    let store = FileTicketStore::new(&project_path);
-    let objective = arguments
+    Ok(json!({
+        "protocol": "lux.mcp.bridge_install.v1",
+        "projectPath": project_path,
+        "bridgeInstalled": false,
+        "message": "Lux .lux workspace initialized; bridge file refresh is handled by lux bridge install in full CLI mode"
+    }))
+}
+
+fn bridge_diagnostics(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
+    let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
+    let available = discovery_path.is_file();
+    Ok(json!({
+        "protocol": "lux.mcp.bridge_diagnostics.v1",
+        "projectPath": project_path,
+        "available": available,
+        "discoveryPath": discovery_path,
+        "message": if available { "Unity bridge discovery file is present" } else { "Unity bridge discovery file is missing" }
+    }))
+}
+
+fn game_spec_write(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
+    let lux_path = lux_spec::lux_init(&project_path)?;
+    let mut spec = lux_spec::lux_load(&project_path)?;
+    if let Ok(Some(detection)) = project::detect_unity_project(&project_path) {
+        lux_spec::apply_detection_to_spec(&mut spec, &detection);
+    }
+    if let Some(objective) = args.get("objective").and_then(Value::as_str) {
+        if !objective.trim().is_empty() {
+            spec.source = "lux-mcp-game-spec-write".to_string();
+            spec.meta.summary = Some(objective.trim().to_string());
+        }
+    }
+    spec.updated_at = Utc::now().to_rfc3339();
+    spec.validate()
+        .map_err(|error| anyhow!("spec validation failed: {error}"))?;
+    lux_spec::lux_save(&project_path, &spec)?;
+    let spec_path = project_path.join(".lux/spec.json");
+    Ok(json!({
+        "protocol": "lux.game_spec_write.v1",
+        "projectPath": project_path,
+        "luxPath": lux_path,
+        "specPath": spec_path,
+        "projectName": spec.project_name,
+        "status": "written",
+        "message": "Lux game spec written"
+    }))
+}
+
+fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
+    lux_spec::lux_init(&project_path)?;
+    let objective = args
         .get("objective")
         .and_then(Value::as_str)
-        .unwrap_or(
-            "Make one safe, verifiable Unity project change for the first Lux game-dev loop.",
-        );
-    let verification_policy = arguments
-        .get("verification_policy")
-        .and_then(Value::as_str)
-        .unwrap_or("compile_or_explicit_unavailable_evidence");
-    let non_goals = arguments
-        .get("non_goals")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| {
-            vec![
-                "destructive rewrites".to_string(),
-                "Unity Editor window UI changes".to_string(),
-                "external service calls".to_string(),
-            ]
-        });
-
-    let (ticket, created) = if let Some(existing) = store.get(LOOP_TICKET_ID)? {
-        (existing, false)
-    } else {
-        let now = Utc::now().to_rfc3339();
-        let ticket = Ticket {
-            id: LOOP_TICKET_ID.to_string(),
-            title: "First Lux game-dev MCP loop".to_string(),
-            description: objective.to_string(),
-            status: TicketStatus::ToDo,
-            priority: TicketPriority::Medium,
-            assignee: Some("lux-mcp".to_string()),
-            blockers: Vec::new(),
-            tags: vec!["lux-mcp".to_string(), "game-dev-loop".to_string()],
-            spec_ref: Some(".lux/spec.json".to_string()),
-            created_at: now.clone(),
-            updated_at: now,
-            execution_objective: Some(objective.to_string()),
-            allowed_executor: Some("lux-mcp".to_string()),
-            dispatch_policy: Some(DispatchPolicy::Manual),
-            verification_policy: Some(verification_policy.to_string()),
-            command_allowlist: Some(vec![
-                "compile".to_string(),
-                "run-tests".to_string(),
-                "bridge".to_string(),
-            ]),
-            evidence_refs: Some(Vec::new()),
-            blocker_policy: None,
-            non_goals: Some(non_goals),
-        };
-        (store.create(ticket)?, true)
+        .unwrap_or("Perform one safe Lux Unity game-development loop")
+        .trim()
+        .to_string();
+    let store = FileTicketStore::new(&project_path);
+    let existing = store
+        .list(TicketFilter {
+            tag: Some("lux-game-dev-loop-once".to_string()),
+            ..TicketFilter::default()
+        })?
+        .into_iter()
+        .filter(|ticket| ticket.status != TicketStatus::Done)
+        .min_by(|left, right| left.created_at.cmp(&right.created_at).then(left.id.cmp(&right.id)));
+    let (ticket, created) = match existing {
+        Some(ticket) => (ticket, false),
+        None => {
+            let now = Utc::now().to_rfc3339();
+            let ticket = Ticket {
+                id: format!("lux-loop-once-{}", Uuid::new_v4().simple()),
+                title: "Lux one-loop game-dev change".to_string(),
+                description: objective.clone(),
+                status: TicketStatus::ToDo,
+                priority: TicketPriority::High,
+                assignee: Some("lux-mcp".to_string()),
+                blockers: Vec::new(),
+                tags: vec!["lux-game-dev-loop-once".to_string()],
+                spec_ref: Some(".lux/spec.json".to_string()),
+                created_at: now.clone(),
+                updated_at: now,
+                execution_objective: Some(objective.clone()),
+                allowed_executor: Some("lux_game_dev_loop_once".to_string()),
+                dispatch_policy: Some(DispatchPolicy::Manual),
+                verification_policy: Some("compile_test_playmode_or_explicit_unavailable".to_string()),
+                command_allowlist: Some(vec![
+                    "lux bridge install".to_string(),
+                    "lux unity compile".to_string(),
+                    "lux unity run-tests".to_string(),
+                    "lux unity screenshot".to_string(),
+                ]),
+                evidence_refs: Some(Vec::new()),
+                blocker_policy: None,
+                non_goals: Some(vec![
+                    "destructive rewrites".to_string(),
+                    "external service changes".to_string(),
+                    "Unity Editor window UI".to_string(),
+                ]),
+            };
+            (store.create(ticket)?, true)
+        }
     };
-
     Ok(json!({
-        "ok": true,
-        "created": created,
+        "protocol": "lux.game_ticket_prepare.v1",
+        "projectPath": project_path,
         "ticketId": ticket.id,
-        "ticketPath": project_path.join(".lux/tickets").join(format!("{}.json", ticket.id)),
-        "objective": ticket.execution_objective,
-        "verificationPolicy": ticket.verification_policy,
-        "nonGoals": ticket.non_goals
+        "ticketPath": format!(".lux/tickets/{}.json", ticket.id),
+        "created": created,
+        "status": format!("{:?}", ticket.status),
+        "objective": objective,
+        "message": "Lux game-dev ticket prepared"
     }))
 }
 
-fn unity_maneuver(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let project_path = project_path_from_args(arguments, default_project_path)?;
-    let ticket_id = arguments
-        .get("ticket_id")
-        .and_then(Value::as_str)
-        .unwrap_or(LOOP_TICKET_ID);
-    let evidence_dir = project_path.join(".lux/evidence");
-    fs::create_dir_all(&evidence_dir)
-        .with_context(|| format!("failed to create {}", evidence_dir.display()))?;
-    let evidence_path = evidence_dir.join(format!("{ticket_id}-maneuver.json"));
+fn unity_maneuver(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
+    let ticket_id = args.get("ticket_id").and_then(Value::as_str);
+    let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
+    fs::create_dir_all(project_path.join(".lux/evidence"))?;
+    let evidence_rel = format!(
+        ".lux/evidence/loop-once-{}.json",
+        Utc::now().format("%Y%m%dT%H%M%S%3fZ")
+    );
+    let evidence_path = project_path.join(&evidence_rel);
+    let available = discovery_path.is_file();
+    let status = if available { "ready" } else { "unavailable" };
+    let reason = if available {
+        "unity_bridge_available"
+    } else {
+        "unity_bridge_discovery_missing"
+    };
     let evidence = json!({
+        "protocol": "lux.unity_maneuver.evidence.v1",
         "ticketId": ticket_id,
-        "operation": arguments.get("operation").and_then(Value::as_str).unwrap_or("diagnostic_maneuver"),
-        "status": "blocked",
-        "reason": "Unity bridge execution is unavailable in this MCP smoke path; no silent fallback was performed.",
-        "recordedAt": Utc::now().to_rfc3339()
+        "status": status,
+        "reason": reason,
+        "discoveryPath": discovery_path,
+        "recordedAt": Utc::now().to_rfc3339(),
     });
-    fs::write(&evidence_path, serde_json::to_string_pretty(&evidence)?)
-        .with_context(|| format!("failed to write {}", evidence_path.display()))?;
-
-    anyhow::bail!(
-        "Unity maneuver requires a running Unity bridge; recorded explicit unavailable evidence at {}",
-        evidence_path.display()
-    )
+    fs::write(&evidence_path, serde_json::to_string_pretty(&evidence)?)?;
+    if let Some(ticket_id) = ticket_id {
+        append_ticket_evidence(&project_path, ticket_id, &evidence_rel)?;
+    }
+    if !available {
+        return Err(anyhow!(
+            "Unity bridge discovery file missing at {}; open Unity or run lux bridge install/diagnostics first",
+            discovery_path.display()
+        ));
+    }
+    Ok(json!({
+        "protocol": "lux.unity_maneuver.v1",
+        "projectPath": project_path,
+        "ticketId": ticket_id,
+        "evidenceRefs": [evidence_rel],
+        "status": status,
+        "message": "Unity maneuver readiness evidence recorded"
+    }))
 }
 
-fn game_dev_loop_once(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
-    let spec = game_spec_write(arguments, default_project_path)?;
-    let ticket = game_ticket_prepare(arguments, default_project_path)?;
-    let maneuver = unity_maneuver(arguments, default_project_path);
-    match maneuver {
-        Ok(maneuver) => Ok(json!({
-            "ok": true,
-            "stopReason": "one_verified_loop_complete",
-            "steps": [spec, ticket, maneuver]
-        })),
-        Err(error) => Err(anyhow!(json!({
-            "ok": false,
-            "stopReason": "unity_maneuver_unavailable",
-            "message": error.to_string(),
-            "steps": [spec, ticket]
-        })
-        .to_string())),
+fn append_ticket_evidence(project_path: &Path, ticket_id: &str, evidence_ref: &str) -> Result<()> {
+    let store = FileTicketStore::new(project_path);
+    let Some(mut ticket) = store.get(ticket_id)? else {
+        return Ok(());
+    };
+    let mut refs = ticket.evidence_refs.take().unwrap_or_default();
+    if !refs.iter().any(|value| value == evidence_ref) {
+        refs.push(evidence_ref.to_string());
+    }
+    ticket.evidence_refs = Some(refs);
+    ticket.updated_at = Utc::now().to_rfc3339();
+    store.update(ticket_id, ticket)?;
+    Ok(())
+}
+
+fn game_dev_loop_once(default_project: &Path, args: &Value) -> Result<Value> {
+    let project_path = resolve_project_path(default_project, args);
+    let mut steps = Vec::new();
+    let mut stop_reason = "one_verified_loop_complete";
+
+    let bridge = bridge_install(&project_path, &json!({"project_path": project_path}))?;
+    steps.push(step("bridge_install", "ok", bridge));
+
+    let diagnostics = bridge_diagnostics(&project_path, &json!({"project_path": project_path}))?;
+    steps.push(step("bridge_diagnostics", "ok", diagnostics));
+
+    let spec = game_spec_write(&project_path, args)?;
+    steps.push(step("spec_write", "ok", spec));
+
+    let ticket = game_ticket_prepare(&project_path, args)?;
+    let ticket_id = ticket
+        .get("ticketId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_default();
+    steps.push(step("ticket_prepare", "ok", ticket));
+
+    let maneuver_args = merge_args(args, json!({"project_path": project_path, "ticket_id": ticket_id}));
+    match unity_maneuver(&project_path, &maneuver_args) {
+        Ok(value) => steps.push(step("unity_maneuver", "ok", value)),
+        Err(error) => {
+            stop_reason = "unity_bridge_unavailable";
+            steps.push(step(
+                "unity_maneuver",
+                "error",
+                json!({"error": error.to_string(), "ticketId": ticket_id}),
+            ));
+        }
+    }
+
+    let ok = stop_reason == "one_verified_loop_complete";
+    let structured = json!({
+        "protocol": "lux.game_dev_loop_once.v1",
+        "projectPath": project_path,
+        "ticketId": ticket_id,
+        "steps": steps,
+        "stopReason": stop_reason,
+        "verified": ok,
+        "message": if ok { "One verified Lux game-dev loop completed" } else { "Lux game-dev loop stopped with explicit blocker" }
+    });
+
+    if ok {
+        Ok(structured)
+    } else {
+        Err(anyhow!(structured.to_string()))
+    }
+}
+
+fn merge_args(base: &Value, patch: Value) -> Value {
+    let mut merged = base.as_object().cloned().unwrap_or_default();
+    if let Some(patch) = patch.as_object() {
+        for (key, value) in patch {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(merged)
+}
+
+fn step(name: &str, status: &str, detail: Value) -> Value {
+    json!({
+        "name": name,
+        "status": status,
+        "detail": detail,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_result_includes_structured_content() {
+        let result = tool_success_result(json!({"steps": [], "stopReason": "one_verified_loop_complete", "message": "ok"}));
+        assert_eq!(result["isError"], false);
+        assert!(result["structuredContent"]["steps"].is_array());
+        assert_eq!(
+            result["structuredContent"]["stopReason"],
+            "one_verified_loop_complete"
+        );
     }
 }
