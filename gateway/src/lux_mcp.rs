@@ -181,14 +181,13 @@ fn tool_success_result(structured: Value) -> Value {
     })
 }
 
-fn tool_error_result(structured: Value) -> Value {
-    let text = structured
-        .get("message")
-        .or_else(|| structured.get("error"))
-        .and_then(Value::as_str)
-        .unwrap_or("Lux MCP tool failed");
+fn tool_error_result(name: &str, error: anyhow::Error) -> Value {
+    let message = error.to_string();
+    let structured = serde_json::from_str::<Value>(&message).unwrap_or_else(|_| {
+        json!({"tool": name, "ok": false, "message": message})
+    });
     json!({
-        "content": [{ "type": "text", "text": text }],
+        "content": [{"type": "text", "text": message}],
         "structuredContent": structured,
         "isError": true
     })
@@ -201,8 +200,117 @@ fn resolve_project_path(default_project: &Path, args: &Value) -> PathBuf {
         .unwrap_or_else(|| default_project.to_path_buf())
 }
 
-fn bridge_install(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
+fn bridge_install(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
+    if !project_path.exists() {
+        anyhow::bail!("Project path does not exist: {}", project_path.display());
+    }
+
+    let assets_editor = project_path.join("Assets/Editor");
+    fs::create_dir_all(&assets_editor)
+        .with_context(|| format!("failed to create {}", assets_editor.display()))?;
+    let marker = assets_editor.join("LuxMcpBridgeInstall.marker");
+    fs::write(
+        &marker,
+        format!(
+            "Lux MCP bridge install requested at {}\n",
+            Utc::now().to_rfc3339()
+        ),
+    )
+    .with_context(|| format!("failed to write {}", marker.display()))?;
+
+    Ok(json!({
+        "ok": true,
+        "projectPath": project_path,
+        "installedMarker": marker,
+        "note": "MCP bridge install path is idempotent and project-local."
+    }))
+}
+
+fn bridge_diagnostics(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
+    let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
+    if !discovery_path.is_file() {
+        anyhow::bail!(
+            "Unity bridge discovery file not found: {}. Open the project in Unity after installing the Lux bridge.",
+            discovery_path.display()
+        );
+    }
+    let discovery: Value = serde_json::from_str(
+        &fs::read_to_string(&discovery_path)
+            .with_context(|| format!("failed to read {}", discovery_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", discovery_path.display()))?;
+
+    Ok(json!({
+        "ok": true,
+        "projectPath": project_path,
+        "discoveryPath": discovery_path,
+        "discovery": discovery
+    }))
+}
+
+fn game_spec_write(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
+    let mut spec = lux_spec::lux_load_or_init(&project_path)?;
+    let mut changed = false;
+
+    if let Some(project_name) = arguments.get("project_name").and_then(Value::as_str) {
+        let project_name = project_name.trim();
+        if !project_name.is_empty() && spec.project_name != project_name {
+            spec.project_name = project_name.to_string();
+            changed = true;
+        }
+        if !project_name.is_empty() && spec.source != "lux-mcp" {
+            spec.source = "lux-mcp".to_string();
+            changed = true;
+        }
+    }
+
+    if let Some(seed) = arguments.get("seed").and_then(Value::as_object) {
+        if let Some(value) = seed.get("game_title").and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() && spec.meta.game_title.as_deref() != Some(value) {
+                spec.meta.game_title = Some(value.to_string());
+                changed = true;
+            }
+        }
+        if let Some(value) = seed.get("genre").and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() && spec.meta.genre.as_deref() != Some(value) {
+                spec.meta.genre = Some(value.to_string());
+                changed = true;
+            }
+        }
+        if let Some(value) = seed.get("elevator_pitch").and_then(Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() && spec.meta.elevator_pitch.as_deref() != Some(value) {
+                spec.meta.elevator_pitch = Some(value.to_string());
+                changed = true;
+            }
+        }
+    }
+
+    if changed {
+        lux_spec::lux_save(&project_path, &spec)?;
+        spec = lux_spec::lux_load(&project_path)?;
+    }
+
+    let validation = spec.validate();
+    Ok(json!({
+        "ok": validation.is_ok(),
+        "changed": changed,
+        "projectPath": project_path,
+        "specPath": project_path.join(".lux/spec.json"),
+        "validation": validation.err().unwrap_or_else(|| "valid".to_string()),
+        "ambiguity": spec.overall_ambiguity,
+        "projectName": spec.project_name,
+        "source": spec.source
+    }))
+}
+
+fn game_ticket_prepare(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
     lux_spec::lux_init(&project_path)?;
     Ok(json!({
         "protocol": "lux.mcp.bridge_install.v1",
