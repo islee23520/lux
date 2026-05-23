@@ -22,6 +22,7 @@ pub mod lux_loop;
 pub mod lux_mcp;
 pub mod lux_metrics;
 pub mod lux_mcp;
+pub mod lux_metrics;
 pub mod lux_roadmap;
 pub mod lux_run;
 pub mod lux_run_recover;
