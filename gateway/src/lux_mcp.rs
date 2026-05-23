@@ -11,8 +11,7 @@ use serde_json::{json, Value};
 use crate::{
     lux_spec,
     lux_ticket::{
-        DispatchPolicy, FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus,
-        TicketStore,
+        DispatchPolicy, FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore,
     },
 };
 
@@ -486,7 +485,7 @@ fn unity_maneuver(arguments: &Value, default_project_path: Option<&Path>) -> Res
         "evidenceRefs": [evidence_rel],
         "stopReason": stop_reason,
         "status": status,
-        "message": if available { "Unity maneuver readiness evidence recorded" } else { format!("Unity maneuver unavailable; evidence recorded at {evidence_rel}") }
+        "message": if available { "Unity maneuver readiness evidence recorded".to_string() } else { format!("Unity maneuver unavailable; evidence recorded at {evidence_rel}") }
     }))
 }
 
