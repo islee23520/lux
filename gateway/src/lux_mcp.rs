@@ -128,7 +128,16 @@ fn handle_tool_call(default_project: &Path, params: &Value) -> Result<Value> {
         TOOL_SPEC_WRITE => game_spec_write(default_project, arguments),
         TOOL_TICKET_PREPARE => game_ticket_prepare(default_project, arguments),
         TOOL_UNITY_MANEUVER => unity_maneuver(default_project, arguments),
-        TOOL_LOOP_ONCE => game_dev_loop_once(default_project, arguments),
+        TOOL_LOOP_ONCE => {
+            let structured = game_dev_loop_once(default_project, arguments);
+            return Ok(match structured {
+                Ok(value) if value.get("verified").and_then(Value::as_bool) == Some(false) => {
+                    tool_error_result(value)
+                }
+                Ok(value) => tool_success_result(value),
+                Err(error) => tool_error_result(json!({"tool": name, "error": error.to_string()})),
+            });
+        }
         _ => return Ok(tool_error_result(json!({"tool": name, "error": format!("unknown tool: {name}")}))),
     };
 
@@ -204,7 +213,7 @@ fn game_spec_write(default_project: &Path, args: &Value) -> Result<Value> {
     if let Some(objective) = args.get("objective").and_then(Value::as_str) {
         if !objective.trim().is_empty() {
             spec.source = "lux-mcp-game-spec-write".to_string();
-            spec.meta.summary = Some(objective.trim().to_string());
+            spec.meta.elevator_pitch = Some(objective.trim().to_string());
         }
     }
     spec.updated_at = Utc::now().to_rfc3339();
@@ -396,11 +405,7 @@ fn game_dev_loop_once(default_project: &Path, args: &Value) -> Result<Value> {
         "message": if ok { "One verified Lux game-dev loop completed" } else { "Lux game-dev loop stopped with explicit blocker" }
     });
 
-    if ok {
-        Ok(structured)
-    } else {
-        Err(anyhow!(structured.to_string()))
-    }
+    Ok(structured)
 }
 
 fn merge_args(base: &Value, patch: Value) -> Value {
