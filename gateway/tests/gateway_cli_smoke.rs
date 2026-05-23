@@ -3307,3 +3307,88 @@ fn temp_lux_project(name: &str) -> std::path::PathBuf {
     fs::create_dir_all(root.join(".lux")).unwrap();
     root
 }
+
+fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["mcp", "--project-path", project.to_str().expect("project path UTF-8")])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn lux mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("mcp stdin");
+        for request in requests {
+            writeln!(stdin, "{}", serde_json::to_string(request).expect("request JSON"))
+                .expect("write MCP request");
+        }
+    }
+
+    let output = child.wait_with_output().expect("wait for lux mcp");
+    assert_command_success(&output, "lux mcp jsonl");
+    String::from_utf8(output.stdout)
+        .expect("mcp stdout UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("mcp response JSON"))
+        .collect()
+}
+
+#[test]
+fn mcp_stdio_initializes_and_lists_bridge_and_game_dev_tools_without_unity() {
+    let project = create_test_unity_project("lux-mcp-list", false);
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        ],
+    );
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "lux");
+    let tools = responses[1]["result"]["tools"]
+        .as_array()
+        .expect("tools array");
+    let tool_names = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect::<std::collections::HashSet<_>>();
+    for expected in [
+        "lux_bridge_install",
+        "lux_bridge_diagnostics",
+        "lux_game_spec_write",
+        "lux_game_ticket_prepare",
+        "lux_unity_maneuver",
+        "lux_game_dev_loop_once",
+    ] {
+        assert!(tool_names.contains(expected), "missing MCP tool {expected}");
+    }
+    for tool in tools {
+        assert!(tool["description"].as_str().is_some_and(|text| !text.is_empty()));
+        assert_eq!(tool["inputSchema"]["type"], "object");
+        assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+    }
+}
+
+#[test]
+fn mcp_tool_error_result_preserves_json_rpc_connection_for_following_ping() {
+    let project = create_test_unity_project("lux-mcp-error", false);
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lux_nope","arguments":{}}}),
+            json!({"jsonrpc":"2.0","id":3,"method":"ping","params":{}}),
+        ],
+    );
+
+    assert_eq!(responses.len(), 3);
+    let tool_result = &responses[1]["result"];
+    assert_eq!(tool_result["isError"], true);
+    assert!(tool_result["content"][0]["text"]
+        .as_str()
+        .expect("error text")
+        .contains("Unknown tool"));
+    assert_eq!(responses[2]["result"], json!({}));
+}
