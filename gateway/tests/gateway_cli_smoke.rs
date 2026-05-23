@@ -3504,6 +3504,102 @@ fn mcp_stdio_initializes_and_lists_bridge_and_game_dev_tools_without_unity() {
     }
 }
 
+
+#[test]
+fn mcp_spec_and_ticket_tools_are_idempotent_and_persist_lux_state() {
+    let project = create_test_unity_project("lux-mcp-idempotent", false);
+    let spec_args = json!({
+        "project_name": "MCP Idempotent Game",
+        "seed": {
+            "game_title": "MCP Idempotent Game",
+            "genre": "puzzle",
+            "elevator_pitch": "One deterministic MCP loop smoke."
+        }
+    });
+    let ticket_args = json!({
+        "objective": "Create one safe deterministic MCP smoke ticket.",
+        "verification_policy": "cargo_or_explicit_unavailable",
+        "non_goals": ["destructive rewrites", "Unity Editor window UI"]
+    });
+
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lux_game_spec_write","arguments":spec_args.clone()}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lux_game_spec_write","arguments":spec_args}}),
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"lux_game_ticket_prepare","arguments":ticket_args.clone()}}),
+            json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"lux_game_ticket_prepare","arguments":ticket_args}}),
+        ],
+    );
+
+    assert_eq!(responses.len(), 4);
+    let first_spec = &responses[0]["result"]["structuredContent"];
+    let second_spec = &responses[1]["result"]["structuredContent"];
+    assert_eq!(first_spec["ok"], true);
+    assert_eq!(second_spec["ok"], true);
+    assert_eq!(first_spec["changed"], true);
+    assert_eq!(second_spec["changed"], false);
+    assert_eq!(second_spec["projectName"], "MCP Idempotent Game");
+    assert_eq!(second_spec["source"], "lux-mcp");
+
+    let first_ticket = &responses[2]["result"]["structuredContent"];
+    let second_ticket = &responses[3]["result"]["structuredContent"];
+    assert_eq!(first_ticket["ok"], true);
+    assert_eq!(second_ticket["ok"], true);
+    assert_eq!(first_ticket["created"], true);
+    assert_eq!(second_ticket["created"], false);
+    assert_eq!(first_ticket["ticketId"], second_ticket["ticketId"]);
+
+    let spec_path = project.join(".lux/spec.json");
+    let spec: Value = serde_json::from_str(&fs::read_to_string(&spec_path).expect("spec file"))
+        .expect("spec JSON");
+    assert_eq!(spec["project_name"], "MCP Idempotent Game");
+    assert_eq!(spec["source"], "lux-mcp");
+    assert_eq!(spec["meta"]["genre"], "puzzle");
+
+    let ticket_path = project.join(".lux/tickets/game-dev-loop-001.json");
+    let ticket: Value = serde_json::from_str(&fs::read_to_string(&ticket_path).expect("ticket file"))
+        .expect("ticket JSON");
+    assert_eq!(ticket["id"], "game-dev-loop-001");
+    assert_eq!(ticket["spec_ref"], ".lux/spec.json");
+    assert_eq!(ticket["verification_policy"], "cargo_or_explicit_unavailable");
+    assert_eq!(ticket["dispatch_policy"], "manual");
+}
+
+#[test]
+fn mcp_loop_once_failure_returns_structured_steps_evidence_and_keeps_ping_alive() {
+    let project = create_test_unity_project("lux-mcp-loop-failure", false);
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lux_game_dev_loop_once","arguments":{"project_name":"Loop Failure Game","objective":"Try one unavailable Unity maneuver."}}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"ping","params":{}}),
+        ],
+    );
+
+    assert_eq!(responses.len(), 2);
+    let loop_result = &responses[0]["result"];
+    assert_eq!(loop_result["isError"], true);
+    let structured = &loop_result["structuredContent"];
+    assert_eq!(structured["ok"], false);
+    assert_eq!(structured["stopReason"], "unity_maneuver_unavailable");
+    assert_eq!(structured["steps"].as_array().map(Vec::len), Some(2));
+    assert_eq!(structured["steps"][0]["ok"], true);
+    assert_eq!(structured["steps"][1]["ok"], true);
+    assert!(structured["message"]
+        .as_str()
+        .is_some_and(|text| text.contains(".lux/evidence/game-dev-loop-001-maneuver.json")));
+    assert_eq!(responses[1]["result"], json!({}));
+
+    let evidence_path = project.join(".lux/evidence/game-dev-loop-001-maneuver.json");
+    let evidence: Value = serde_json::from_str(
+        &fs::read_to_string(&evidence_path).expect("unavailable maneuver evidence"),
+    )
+    .expect("evidence JSON");
+    assert_eq!(evidence["ticketId"], "game-dev-loop-001");
+    assert_eq!(evidence["status"], "blocked");
+}
+
 #[test]
 fn mcp_tool_error_result_preserves_json_rpc_connection_for_following_ping() {
     let project = create_test_unity_project("lux-mcp-error", false);
