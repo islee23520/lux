@@ -69,7 +69,10 @@ fn handle_json_rpc(default_project: &Path, request: &Value) -> Option<Value> {
             "serverInfo": { "name": "lux", "version": env!("CARGO_PKG_VERSION") }
         })),
         "tools/list" => Ok(json!({ "tools": tool_definitions() })),
-        "tools/call" => handle_tool_call(default_project, request.get("params").unwrap_or(&Value::Null)),
+        "tools/call" => handle_tool_call(
+            default_project,
+            request.get("params").unwrap_or(&Value::Null),
+        ),
         "ping" => Ok(json!({})),
         "notifications/initialized" => return None,
         _ => Err(anyhow!("unknown MCP method: {method}")),
@@ -87,12 +90,27 @@ fn handle_json_rpc(default_project: &Path, request: &Value) -> Option<Value> {
 
 fn tool_definitions() -> Vec<Value> {
     vec![
-        tool_definition(TOOL_BRIDGE_INSTALL, "Install or refresh the Lux Unity bridge."),
+        tool_definition(
+            TOOL_BRIDGE_INSTALL,
+            "Install or refresh the Lux Unity bridge.",
+        ),
         tool_definition(TOOL_BRIDGE_DIAGNOSTICS, "Run Lux bridge diagnostics."),
-        tool_definition(TOOL_SPEC_WRITE, "Write or import a minimal game spec into .lux/spec.json."),
-        tool_definition(TOOL_TICKET_PREPARE, "Create or select one safe first-loop game-dev ticket."),
-        tool_definition(TOOL_UNITY_MANEUVER, "Perform one safe Unity maneuver or return an explicit unavailable result."),
-        tool_definition(TOOL_LOOP_ONCE, "Run one safe game-development loop and stop."),
+        tool_definition(
+            TOOL_SPEC_WRITE,
+            "Write or import a minimal game spec into .lux/spec.json.",
+        ),
+        tool_definition(
+            TOOL_TICKET_PREPARE,
+            "Create or select one safe first-loop game-dev ticket.",
+        ),
+        tool_definition(
+            TOOL_UNITY_MANEUVER,
+            "Perform one safe Unity maneuver or return an explicit unavailable result.",
+        ),
+        tool_definition(
+            TOOL_LOOP_ONCE,
+            "Run one safe game-development loop and stop.",
+        ),
     ]
 }
 
@@ -138,7 +156,11 @@ fn handle_tool_call(default_project: &Path, params: &Value) -> Result<Value> {
                 Err(error) => tool_error_result(json!({"tool": name, "error": error.to_string()})),
             });
         }
-        _ => return Ok(tool_error_result(json!({"tool": name, "error": format!("unknown tool: {name}")}))),
+        _ => {
+            return Ok(tool_error_result(
+                json!({"tool": name, "error": format!("unknown tool: {name}")}),
+            ))
+        }
     };
 
     Ok(match outcome {
@@ -249,7 +271,11 @@ fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
         })?
         .into_iter()
         .filter(|ticket| ticket.status != TicketStatus::Done)
-        .min_by(|left, right| left.created_at.cmp(&right.created_at).then(left.id.cmp(&right.id)));
+        .min_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then(left.id.cmp(&right.id))
+        });
     let (ticket, created) = match existing {
         Some(ticket) => (ticket, false),
         None => {
@@ -269,7 +295,9 @@ fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
                 execution_objective: Some(objective.clone()),
                 allowed_executor: Some("lux_game_dev_loop_once".to_string()),
                 dispatch_policy: Some(DispatchPolicy::Manual),
-                verification_policy: Some("compile_test_playmode_or_explicit_unavailable".to_string()),
+                verification_policy: Some(
+                    "compile_test_playmode_or_explicit_unavailable".to_string(),
+                ),
                 command_allowlist: Some(vec![
                     "lux bridge install".to_string(),
                     "lux unity compile".to_string(),
@@ -381,7 +409,10 @@ fn game_dev_loop_once(default_project: &Path, args: &Value) -> Result<Value> {
         .unwrap_or_default();
     steps.push(step("ticket_prepare", "ok", ticket));
 
-    let maneuver_args = merge_args(args, json!({"project_path": project_path, "ticket_id": ticket_id}));
+    let maneuver_args = merge_args(
+        args,
+        json!({"project_path": project_path, "ticket_id": ticket_id}),
+    );
     match unity_maneuver(&project_path, &maneuver_args) {
         Ok(value) => steps.push(step("unity_maneuver", "ok", value)),
         Err(error) => {
@@ -432,7 +463,9 @@ mod tests {
 
     #[test]
     fn tool_result_includes_structured_content() {
-        let result = tool_success_result(json!({"steps": [], "stopReason": "one_verified_loop_complete", "message": "ok"}));
+        let result = tool_success_result(
+            json!({"steps": [], "stopReason": "one_verified_loop_complete", "message": "ok"}),
+        );
         assert_eq!(result["isError"], false);
         assert!(result["structuredContent"]["steps"].is_array());
         assert_eq!(

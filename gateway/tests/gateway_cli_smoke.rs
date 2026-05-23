@@ -3299,7 +3299,11 @@ fn session_full_replay_cycle() {
 
 fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lux"))
-        .args(["mcp", "--project-path", project.to_str().expect("project path")])
+        .args([
+            "mcp",
+            "--project-path",
+            project.to_str().expect("project path"),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -3349,7 +3353,10 @@ fn mcp_lists_game_dev_loop_tools_with_structured_contract() {
         "lux_unity_maneuver",
         "lux_game_dev_loop_once",
     ] {
-        assert!(names.contains(&expected), "missing {expected}; got {names:?}");
+        assert!(
+            names.contains(&expected),
+            "missing {expected}; got {names:?}"
+        );
     }
     let loop_tool = tools
         .iter()
@@ -3391,15 +3398,21 @@ fn mcp_loop_once_returns_steps_stop_reason_and_preserves_ping_after_blocker() {
     assert_eq!(structured["stopReason"], "unity_bridge_unavailable");
     let steps = structured["steps"].as_array().expect("steps");
     assert!(
-        steps.iter().any(|step| step["name"] == "spec_write" && step["status"] == "ok"),
+        steps
+            .iter()
+            .any(|step| step["name"] == "spec_write" && step["status"] == "ok"),
         "spec write step missing: {steps:?}"
     );
     assert!(
-        steps.iter().any(|step| step["name"] == "ticket_prepare" && step["status"] == "ok"),
+        steps
+            .iter()
+            .any(|step| step["name"] == "ticket_prepare" && step["status"] == "ok"),
         "ticket prepare step missing: {steps:?}"
     );
     assert!(
-        steps.iter().any(|step| step["name"] == "unity_maneuver" && step["status"] == "error"),
+        steps
+            .iter()
+            .any(|step| step["name"] == "unity_maneuver" && step["status"] == "error"),
         "unity maneuver blocker step missing: {steps:?}"
     );
     assert!(project.join(".lux/spec.json").is_file());
