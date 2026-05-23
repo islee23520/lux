@@ -3,7 +3,7 @@
 The Lux Rust Gateway is the central orchestration layer for `com.linalab.lux`. It provides the CLI and HTTP/WebSocket API.
 
 > [!NOTE]
-> The canonical roadmap and implementation status are maintained in `.lux/roadmap.json`. This document provides a high-level overview of the gateway's role and current capabilities.
+> The canonical LUX implementation roadmap/status is maintained in `.lux/roadmap.json`. User/game requirements, tickets, and active run lifecycle live in their ADR-defined domain files (`.lux/spec.json`, `.lux/tickets/*.json`, and `.lux/run-state.json`). This document provides a high-level overview of the gateway's role and current capabilities.
 
 ## Run
 
@@ -60,8 +60,9 @@ Autonomous spec-to-ticket execution is planned but not yet implemented.
 - `GET /schema` returns an example event envelope.
 - `GET /events?role=<role>&client_id=<id>` upgrades to a WebSocket.
 
-The local shared token must be passed as `x-lux-token` during the WebSocket
-upgrade. Query-string tokens are intentionally not accepted.
+The local shared token should be passed as `x-lux-token` during the WebSocket
+upgrade. The gateway also accepts a `token=` query parameter for local CLI and
+smoke-test clients; prefer the header form for long-running integrations.
 
 ## Event Envelope
 
@@ -97,10 +98,13 @@ header.
 ./Scripts/run-lux-rust-gateway-tests.sh
 ```
 
-The integration test starts the compiled Rust `lux serve` binary on an
+The integration smoke path starts the compiled Rust `lux serve` binary on an
 ephemeral local port, verifies `/health`, and checks WebSocket authentication
 and Origin rejection behavior. It does not require a separate Unity automation
-server to be running.
+server to be running. Capture-path integration tests provision their own local
+Unity bridge discovery file (`Library/UnityAiBridge/server.json`) and TCP stub;
+`lux unity status` still reads the Lux-owned `UserSettings/LuxBridgeSettings.json`
+settings file.
 
 For Unity-side compile verification, use the repo's direct Unity batchmode or
 solution build entry points when needed. The Rust gateway smoke path above is
