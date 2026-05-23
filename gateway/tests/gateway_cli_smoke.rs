@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
@@ -3310,7 +3310,11 @@ fn temp_lux_project(name: &str) -> std::path::PathBuf {
 
 fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lux"))
-        .args(["mcp", "--project-path", project.to_str().expect("project path UTF-8")])
+        .args([
+            "mcp",
+            "--project-path",
+            project.to_str().expect("project path UTF-8"),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -3320,8 +3324,12 @@ fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
     {
         let stdin = child.stdin.as_mut().expect("mcp stdin");
         for request in requests {
-            writeln!(stdin, "{}", serde_json::to_string(request).expect("request JSON"))
-                .expect("write MCP request");
+            writeln!(
+                stdin,
+                "{}",
+                serde_json::to_string(request).expect("request JSON")
+            )
+            .expect("write MCP request");
         }
     }
 
@@ -3365,7 +3373,9 @@ fn mcp_stdio_initializes_and_lists_bridge_and_game_dev_tools_without_unity() {
         assert!(tool_names.contains(expected), "missing MCP tool {expected}");
     }
     for tool in tools {
-        assert!(tool["description"].as_str().is_some_and(|text| !text.is_empty()));
+        assert!(tool["description"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()));
         assert_eq!(tool["inputSchema"]["type"], "object");
         assert_eq!(tool["inputSchema"]["additionalProperties"], false);
     }
