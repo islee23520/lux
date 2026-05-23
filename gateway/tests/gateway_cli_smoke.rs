@@ -3297,6 +3297,116 @@ fn session_full_replay_cycle() {
     assert_eq!(replay["errors"].as_array().map(|a| a.len()), Some(0));
 }
 
+fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["mcp", "--project-path", project.to_str().expect("project path")])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn lux mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("mcp stdin");
+        for request in requests {
+            writeln!(stdin, "{}", request).expect("write MCP request");
+        }
+    }
+
+    let output = child.wait_with_output().expect("wait lux mcp");
+    assert!(
+        output.status.success(),
+        "lux mcp failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("MCP response JSON"))
+        .collect()
+}
+
+#[test]
+fn mcp_lists_game_dev_loop_tools_with_structured_contract() {
+    let project = create_session_project("lux-mcp-list-game-dev");
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        ],
+    );
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "lux");
+    let tools = responses[1]["result"]["tools"].as_array().expect("tools");
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for expected in [
+        "lux_bridge_install",
+        "lux_bridge_diagnostics",
+        "lux_game_spec_write",
+        "lux_game_ticket_prepare",
+        "lux_unity_maneuver",
+        "lux_game_dev_loop_once",
+    ] {
+        assert!(names.contains(&expected), "missing {expected}; got {names:?}");
+    }
+    let loop_tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "lux_game_dev_loop_once")
+        .expect("loop tool");
+    assert_eq!(
+        loop_tool["inputSchema"]["additionalProperties"],
+        serde_json::json!(false)
+    );
+}
+
+#[test]
+fn mcp_loop_once_returns_steps_stop_reason_and_preserves_ping_after_blocker() {
+    let project = create_session_project("lux-mcp-loop-once");
+    let responses = run_mcp_jsonl(
+        &project,
+        &[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            serde_json::json!({
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"tools/call",
+                "params":{
+                    "name":"lux_game_dev_loop_once",
+                    "arguments":{
+                        "project_path": project,
+                        "objective":"Create one safe smoke-test game-dev change"
+                    }
+                }
+            }),
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"ping","params":{}}),
+        ],
+    );
+
+    let call = &responses[1]["result"];
+    assert_eq!(call["isError"], true);
+    let structured = &call["structuredContent"];
+    assert_eq!(structured["protocol"], "lux.game_dev_loop_once.v1");
+    assert_eq!(structured["stopReason"], "unity_bridge_unavailable");
+    let steps = structured["steps"].as_array().expect("steps");
+    assert!(
+        steps.iter().any(|step| step["name"] == "spec_write" && step["status"] == "ok"),
+        "spec write step missing: {steps:?}"
+    );
+    assert!(
+        steps.iter().any(|step| step["name"] == "ticket_prepare" && step["status"] == "ok"),
+        "ticket prepare step missing: {steps:?}"
+    );
+    assert!(
+        steps.iter().any(|step| step["name"] == "unity_maneuver" && step["status"] == "error"),
+        "unity maneuver blocker step missing: {steps:?}"
+    );
+    assert!(project.join(".lux/spec.json").is_file());
+    assert!(project.join(".lux/evidence").is_dir());
+    assert_eq!(responses[2]["result"], serde_json::json!({}));
+}
+
 fn temp_lux_project(name: &str) -> std::path::PathBuf {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
