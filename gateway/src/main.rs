@@ -2113,12 +2113,7 @@ fn run_autonomous_command(args: AutonomousArgs) -> anyhow::Result<()> {
             let dispatchable: Vec<_> = tickets
                 .iter()
                 .filter(|t| lux_ticket::is_execution_grade(t))
-                .filter(|t| {
-                    dry_run_args
-                        .ticket
-                        .as_deref()
-                        .map_or(true, |id| t.id == id)
-                })
+                .filter(|t| dry_run_args.ticket.as_deref().map_or(true, |id| t.id == id))
                 .collect();
             println!("dry-run: seq={} status={}", state.seq, state.status);
             println!("dispatchable tickets: {}", dispatchable.len());
