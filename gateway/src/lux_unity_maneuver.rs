@@ -213,9 +213,27 @@ fn finalize_result(
         evidence_refs: Vec::new(),
         steps,
     };
-    if let Ok(evidence_ref) = write_maneuver_evidence(&result) {
-        evidence_refs.push(evidence_ref);
+
+    match write_maneuver_evidence(&result) {
+        Ok(evidence_ref) => evidence_refs.push(evidence_ref),
+        Err(error) => {
+            result.status = UnityManeuverStatus::Failed;
+            result.is_error = true;
+            result.stop_reason = "evidence_write_failed".to_string();
+            result.steps.push(UnityManeuverStep {
+                name: "evidence_write".to_string(),
+                status: UnityManeuverStepStatus::Failed,
+                error: Some(format_error_chain(&error)),
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                details: json!({
+                    "guidance": ".lux evidence writes are mandatory; fix project path or filesystem permissions and retry."
+                }),
+            });
+        }
     }
+
     result.evidence_refs = evidence_refs.clone();
     result
 }
@@ -284,6 +302,37 @@ mod tests {
         let evidence = fs::read_to_string(evidence_path).unwrap();
         assert!(evidence.contains("unity_bridge_unavailable"));
         assert!(evidence.contains("TICKET-1"));
+    }
+
+    #[test]
+    fn evidence_write_failure_is_reported_not_silently_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_project_path = temp.path().join("not-a-directory");
+        fs::write(&file_project_path, "file blocks evidence directory").unwrap();
+
+        let mut evidence_refs = Vec::new();
+        let result = finalize_result(
+            UnityManeuverRequest {
+                project_path: file_project_path,
+                ticket_id: None,
+                uloop_args: default_uloop_args(),
+                skip_uloop: true,
+            },
+            UnityManeuverStatus::Success,
+            false,
+            "unity_maneuver_complete",
+            Vec::new(),
+            &mut evidence_refs,
+        );
+
+        assert!(result.is_error);
+        assert_eq!(result.status, UnityManeuverStatus::Failed);
+        assert_eq!(result.stop_reason, "evidence_write_failed");
+        assert!(result.evidence_refs.is_empty());
+        assert_eq!(
+            result.steps.last().map(|step| step.name.as_str()),
+            Some("evidence_write")
+        );
     }
 
     #[test]
