@@ -19,6 +19,7 @@ pub mod lux_events;
 pub mod lux_io;
 pub mod lux_lock;
 pub mod lux_loop;
+pub mod lux_mcp;
 pub mod lux_metrics;
 pub mod lux_roadmap;
 pub mod lux_run;
@@ -118,6 +119,8 @@ enum Command {
     Run(lux_run::RunArgs),
     /// Interactive REPL shell
     Tui(TuiArgs),
+    /// Run the Lux stdio MCP server
+    Mcp(McpArgs),
     Serve(ServeArgs),
     Unity(UnityArgs),
     Skill(SkillArgs),
@@ -1111,6 +1114,13 @@ struct ServeArgs {
 }
 
 #[derive(Parser, Debug)]
+struct McpArgs {
+    /// Default Unity project root for project-bound MCP tool calls
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
 struct CompileArgs {
     #[arg(long)]
     project_path: Option<PathBuf>,
@@ -1263,6 +1273,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Verify(args) => run_lux_verify_command(args),
         Command::Run(args) => lux_run::run_command(&args),
         Command::Tui(_) => Ok(()),
+        Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Skill(args) => run_skill_command(args),
