@@ -183,9 +183,8 @@ fn tool_success_result(structured: Value) -> Value {
 
 fn tool_error_result(name: &str, error: anyhow::Error) -> Value {
     let message = error.to_string();
-    let structured = serde_json::from_str::<Value>(&message).unwrap_or_else(|_| {
-        json!({"tool": name, "ok": false, "message": message})
-    });
+    let structured = serde_json::from_str::<Value>(&message)
+        .unwrap_or_else(|_| json!({"tool": name, "ok": false, "message": message}));
     json!({
         "content": [{"type": "text", "text": message}],
         "structuredContent": structured,

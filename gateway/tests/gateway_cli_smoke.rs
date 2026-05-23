@@ -3504,7 +3504,6 @@ fn mcp_stdio_initializes_and_lists_bridge_and_game_dev_tools_without_unity() {
     }
 }
 
-
 #[test]
 fn mcp_spec_and_ticket_tools_are_idempotent_and_persist_lux_state() {
     let project = create_test_unity_project("lux-mcp-idempotent", false);
@@ -3558,11 +3557,15 @@ fn mcp_spec_and_ticket_tools_are_idempotent_and_persist_lux_state() {
     assert_eq!(spec["meta"]["genre"], "puzzle");
 
     let ticket_path = project.join(".lux/tickets/game-dev-loop-001.json");
-    let ticket: Value = serde_json::from_str(&fs::read_to_string(&ticket_path).expect("ticket file"))
-        .expect("ticket JSON");
+    let ticket: Value =
+        serde_json::from_str(&fs::read_to_string(&ticket_path).expect("ticket file"))
+            .expect("ticket JSON");
     assert_eq!(ticket["id"], "game-dev-loop-001");
     assert_eq!(ticket["spec_ref"], ".lux/spec.json");
-    assert_eq!(ticket["verification_policy"], "cargo_or_explicit_unavailable");
+    assert_eq!(
+        ticket["verification_policy"],
+        "cargo_or_explicit_unavailable"
+    );
     assert_eq!(ticket["dispatch_policy"], "manual");
 }
 
