@@ -7,7 +7,6 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::{
     lux_spec,
@@ -15,7 +14,6 @@ use crate::{
         DispatchPolicy, FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus,
         TicketStore,
     },
-    project,
 };
 
 const TOOL_BRIDGE_INSTALL: &str = "lux_bridge_install";
@@ -24,6 +22,7 @@ const TOOL_SPEC_WRITE: &str = "lux_game_spec_write";
 const TOOL_TICKET_PREPARE: &str = "lux_game_ticket_prepare";
 const TOOL_UNITY_MANEUVER: &str = "lux_unity_maneuver";
 const TOOL_LOOP_ONCE: &str = "lux_game_dev_loop_once";
+const FIRST_LOOP_TICKET_ID: &str = "game-dev-loop-001";
 
 pub fn run_mcp_stdio(project_path: Option<&Path>) -> Result<()> {
     let default_project = match project_path {
@@ -122,11 +121,15 @@ fn tool_definition(name: &str, description: &str) -> Value {
             "type": "object",
             "properties": {
                 "project_path": { "type": "string" },
+                "project_name": { "type": "string" },
                 "objective": { "type": "string" },
+                "seed": { "type": "object" },
                 "spec_seed": { "type": "object" },
                 "validation_policy": { "type": "string" },
                 "autonomy_policy": { "type": "string" },
-                "ticket_id": { "type": "string" }
+                "ticket_id": { "type": "string" },
+                "verification_policy": { "type": "string" },
+                "non_goals": { "type": "array", "items": { "type": "string" } }
             },
             "additionalProperties": false
         }
@@ -140,32 +143,49 @@ fn handle_tool_call(default_project: &Path, params: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("tools/call missing params.name"))?;
     let arguments = params.get("arguments").unwrap_or(&Value::Null);
 
-    let outcome = match name {
-        TOOL_BRIDGE_INSTALL => bridge_install(default_project, arguments),
-        TOOL_BRIDGE_DIAGNOSTICS => bridge_diagnostics(default_project, arguments),
-        TOOL_SPEC_WRITE => game_spec_write(default_project, arguments),
-        TOOL_TICKET_PREPARE => game_ticket_prepare(default_project, arguments),
-        TOOL_UNITY_MANEUVER => unity_maneuver(default_project, arguments),
+    match name {
+        TOOL_BRIDGE_INSTALL => {
+            wrap_tool_result(name, bridge_install(arguments, Some(default_project)))
+        }
+        TOOL_BRIDGE_DIAGNOSTICS => {
+            wrap_tool_result(name, bridge_diagnostics(arguments, Some(default_project)))
+        }
+        TOOL_SPEC_WRITE => {
+            wrap_tool_result(name, game_spec_write(arguments, Some(default_project)))
+        }
+        TOOL_TICKET_PREPARE => {
+            wrap_tool_result(name, game_ticket_prepare(arguments, Some(default_project)))
+        }
+        TOOL_UNITY_MANEUVER => {
+            wrap_tool_result(name, unity_maneuver(arguments, Some(default_project)))
+        }
         TOOL_LOOP_ONCE => {
-            let structured = game_dev_loop_once(default_project, arguments);
-            return Ok(match structured {
-                Ok(value) if value.get("verified").and_then(Value::as_bool) == Some(false) => {
-                    tool_error_result(value)
-                }
-                Ok(value) => tool_success_result(value),
-                Err(error) => tool_error_result(json!({"tool": name, "error": error.to_string()})),
-            });
+            let value = game_dev_loop_once(arguments, Some(default_project))?;
+            if value.get("ok").and_then(Value::as_bool) == Some(false) {
+                Ok(tool_error_result(value))
+            } else {
+                Ok(tool_success_result(value))
+            }
         }
-        _ => {
-            return Ok(tool_error_result(
-                json!({"tool": name, "error": format!("unknown tool: {name}")}),
-            ))
-        }
-    };
+        _ => Ok(tool_error_result(json!({
+            "tool": name,
+            "ok": false,
+            "message": format!("Unknown tool: {name}")
+        }))),
+    }
+}
 
-    Ok(match outcome {
+fn wrap_tool_result(name: &str, result: Result<Value>) -> Result<Value> {
+    Ok(match result {
+        Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(false) => {
+            tool_error_result(value)
+        }
         Ok(value) => tool_success_result(value),
-        Err(error) => tool_error_result(json!({"tool": name, "error": error.to_string()})),
+        Err(error) => tool_error_result(json!({
+            "tool": name,
+            "ok": false,
+            "message": error.to_string()
+        })),
     })
 }
 
@@ -181,22 +201,29 @@ fn tool_success_result(structured: Value) -> Value {
     })
 }
 
-fn tool_error_result(name: &str, error: anyhow::Error) -> Value {
-    let message = error.to_string();
-    let structured = serde_json::from_str::<Value>(&message)
-        .unwrap_or_else(|_| json!({"tool": name, "ok": false, "message": message}));
+fn tool_error_result(structured: Value) -> Value {
+    let text = structured
+        .get("message")
+        .or_else(|| structured.get("error"))
+        .and_then(Value::as_str)
+        .unwrap_or("Lux MCP tool failed");
     json!({
-        "content": [{"type": "text", "text": message}],
+        "content": [{ "type": "text", "text": text }],
         "structuredContent": structured,
         "isError": true
     })
 }
 
-fn resolve_project_path(default_project: &Path, args: &Value) -> PathBuf {
-    args.get("project_path")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_project.to_path_buf())
+fn project_path_from_args(
+    arguments: &Value,
+    default_project_path: Option<&Path>,
+) -> Result<PathBuf> {
+    if let Some(path) = arguments.get("project_path").and_then(Value::as_str) {
+        return Ok(PathBuf::from(path));
+    }
+    default_project_path
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow!("project_path is required"))
 }
 
 fn bridge_install(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
@@ -220,9 +247,10 @@ fn bridge_install(arguments: &Value, default_project_path: Option<&Path>) -> Res
 
     Ok(json!({
         "ok": true,
+        "protocol": "lux.mcp.bridge_install.v1",
         "projectPath": project_path,
         "installedMarker": marker,
-        "note": "MCP bridge install path is idempotent and project-local."
+        "message": "MCP bridge install marker written idempotently"
     }))
 }
 
@@ -230,10 +258,17 @@ fn bridge_diagnostics(arguments: &Value, default_project_path: Option<&Path>) ->
     let project_path = project_path_from_args(arguments, default_project_path)?;
     let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
     if !discovery_path.is_file() {
-        anyhow::bail!(
-            "Unity bridge discovery file not found: {}. Open the project in Unity after installing the Lux bridge.",
-            discovery_path.display()
-        );
+        return Ok(json!({
+            "ok": false,
+            "protocol": "lux.mcp.bridge_diagnostics.v1",
+            "projectPath": project_path,
+            "discoveryPath": discovery_path,
+            "stopReason": "unity_bridge_unavailable",
+            "message": format!(
+                "Unity bridge discovery file not found: {}. Open the project in Unity after installing the Lux bridge.",
+                discovery_path.display()
+            )
+        }));
     }
     let discovery: Value = serde_json::from_str(
         &fs::read_to_string(&discovery_path)
@@ -243,9 +278,11 @@ fn bridge_diagnostics(arguments: &Value, default_project_path: Option<&Path>) ->
 
     Ok(json!({
         "ok": true,
+        "protocol": "lux.mcp.bridge_diagnostics.v1",
         "projectPath": project_path,
         "discoveryPath": discovery_path,
-        "discovery": discovery
+        "discovery": discovery,
+        "message": "Unity bridge discovery file is present"
     }))
 }
 
@@ -266,7 +303,11 @@ fn game_spec_write(arguments: &Value, default_project_path: Option<&Path>) -> Re
         }
     }
 
-    if let Some(seed) = arguments.get("seed").and_then(Value::as_object) {
+    let seed = arguments
+        .get("seed")
+        .or_else(|| arguments.get("spec_seed"))
+        .and_then(Value::as_object);
+    if let Some(seed) = seed {
         if let Some(value) = seed.get("game_title").and_then(Value::as_str) {
             let value = value.trim();
             if !value.is_empty() && spec.meta.game_title.as_deref() != Some(value) {
@@ -290,6 +331,14 @@ fn game_spec_write(arguments: &Value, default_project_path: Option<&Path>) -> Re
         }
     }
 
+    if let Some(objective) = arguments.get("objective").and_then(Value::as_str) {
+        let objective = objective.trim();
+        if !objective.is_empty() && spec.meta.elevator_pitch.as_deref() != Some(objective) {
+            spec.meta.elevator_pitch = Some(objective.to_string());
+            changed = true;
+        }
+    }
+
     if changed {
         lux_spec::lux_save(&project_path, &spec)?;
         spec = lux_spec::lux_load(&project_path)?;
@@ -304,91 +353,55 @@ fn game_spec_write(arguments: &Value, default_project_path: Option<&Path>) -> Re
         "validation": validation.err().unwrap_or_else(|| "valid".to_string()),
         "ambiguity": spec.overall_ambiguity,
         "projectName": spec.project_name,
-        "source": spec.source
+        "source": spec.source,
+        "message": "Lux game spec written"
     }))
 }
 
 fn game_ticket_prepare(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
     let project_path = project_path_from_args(arguments, default_project_path)?;
     lux_spec::lux_init(&project_path)?;
-    Ok(json!({
-        "protocol": "lux.mcp.bridge_install.v1",
-        "projectPath": project_path,
-        "bridgeInstalled": false,
-        "message": "Lux .lux workspace initialized; bridge file refresh is handled by lux bridge install in full CLI mode"
-    }))
-}
-
-fn bridge_diagnostics(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
-    let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
-    let available = discovery_path.is_file();
-    Ok(json!({
-        "protocol": "lux.mcp.bridge_diagnostics.v1",
-        "projectPath": project_path,
-        "available": available,
-        "discoveryPath": discovery_path,
-        "message": if available { "Unity bridge discovery file is present" } else { "Unity bridge discovery file is missing" }
-    }))
-}
-
-fn game_spec_write(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
-    let lux_path = lux_spec::lux_init(&project_path)?;
-    let mut spec = lux_spec::lux_load(&project_path)?;
-    if let Ok(Some(detection)) = project::detect_unity_project(&project_path) {
-        lux_spec::apply_detection_to_spec(&mut spec, &detection);
-    }
-    if let Some(objective) = args.get("objective").and_then(Value::as_str) {
-        if !objective.trim().is_empty() {
-            spec.source = "lux-mcp-game-spec-write".to_string();
-            spec.meta.elevator_pitch = Some(objective.trim().to_string());
-        }
-    }
-    spec.updated_at = Utc::now().to_rfc3339();
-    spec.validate()
-        .map_err(|error| anyhow!("spec validation failed: {error}"))?;
-    lux_spec::lux_save(&project_path, &spec)?;
-    let spec_path = project_path.join(".lux/spec.json");
-    Ok(json!({
-        "protocol": "lux.game_spec_write.v1",
-        "projectPath": project_path,
-        "luxPath": lux_path,
-        "specPath": spec_path,
-        "projectName": spec.project_name,
-        "status": "written",
-        "message": "Lux game spec written"
-    }))
-}
-
-fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
-    lux_spec::lux_init(&project_path)?;
-    let objective = args
+    let objective = arguments
         .get("objective")
         .and_then(Value::as_str)
         .unwrap_or("Perform one safe Lux Unity game-development loop")
         .trim()
         .to_string();
-    let store = FileTicketStore::new(&project_path);
-    let existing = store
-        .list(TicketFilter {
-            tag: Some("lux-game-dev-loop-once".to_string()),
-            ..TicketFilter::default()
-        })?
-        .into_iter()
-        .filter(|ticket| ticket.status != TicketStatus::Done)
-        .min_by(|left, right| {
-            left.created_at
-                .cmp(&right.created_at)
-                .then(left.id.cmp(&right.id))
+    let verification_policy = arguments
+        .get("verification_policy")
+        .and_then(Value::as_str)
+        .unwrap_or("compile_test_playmode_or_explicit_unavailable")
+        .trim()
+        .to_string();
+    let non_goals = arguments
+        .get("non_goals")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "destructive rewrites".to_string(),
+                "external service changes".to_string(),
+                "Unity Editor window UI".to_string(),
+            ]
         });
+
+    let store = FileTicketStore::new(&project_path);
+    let existing = store.get(FIRST_LOOP_TICKET_ID)?;
     let (ticket, created) = match existing {
         Some(ticket) => (ticket, false),
         None => {
             let now = Utc::now().to_rfc3339();
             let ticket = Ticket {
-                id: format!("lux-loop-once-{}", Uuid::new_v4().simple()),
+                id: FIRST_LOOP_TICKET_ID.to_string(),
                 title: "Lux one-loop game-dev change".to_string(),
                 description: objective.clone(),
                 status: TicketStatus::ToDo,
@@ -400,11 +413,9 @@ fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
                 created_at: now.clone(),
                 updated_at: now,
                 execution_objective: Some(objective.clone()),
-                allowed_executor: Some("lux_game_dev_loop_once".to_string()),
+                allowed_executor: Some(TOOL_LOOP_ONCE.to_string()),
                 dispatch_policy: Some(DispatchPolicy::Manual),
-                verification_policy: Some(
-                    "compile_test_playmode_or_explicit_unavailable".to_string(),
-                ),
+                verification_policy: Some(verification_policy.clone()),
                 command_allowlist: Some(vec![
                     "lux bridge install".to_string(),
                     "lux unity compile".to_string(),
@@ -413,69 +424,69 @@ fn game_ticket_prepare(default_project: &Path, args: &Value) -> Result<Value> {
                 ]),
                 evidence_refs: Some(Vec::new()),
                 blocker_policy: None,
-                non_goals: Some(vec![
-                    "destructive rewrites".to_string(),
-                    "external service changes".to_string(),
-                    "Unity Editor window UI".to_string(),
-                ]),
+                non_goals: Some(non_goals.clone()),
             };
             (store.create(ticket)?, true)
         }
     };
+
     Ok(json!({
+        "ok": true,
         "protocol": "lux.game_ticket_prepare.v1",
         "projectPath": project_path,
         "ticketId": ticket.id,
         "ticketPath": format!(".lux/tickets/{}.json", ticket.id),
         "created": created,
         "status": format!("{:?}", ticket.status),
-        "objective": objective,
+        "objective": ticket.execution_objective.unwrap_or(objective),
         "message": "Lux game-dev ticket prepared"
     }))
 }
 
-fn unity_maneuver(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
-    let ticket_id = args.get("ticket_id").and_then(Value::as_str);
+fn unity_maneuver(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
+    let ticket_id = arguments
+        .get("ticket_id")
+        .and_then(Value::as_str)
+        .unwrap_or(FIRST_LOOP_TICKET_ID);
     let discovery_path = project_path.join("Library/UnityAiBridge/server.json");
-    fs::create_dir_all(project_path.join(".lux/evidence"))?;
-    let evidence_rel = format!(
-        ".lux/evidence/loop-once-{}.json",
-        Utc::now().format("%Y%m%dT%H%M%S%3fZ")
-    );
+    let evidence_rel = format!(".lux/evidence/{ticket_id}-maneuver.json");
     let evidence_path = project_path.join(&evidence_rel);
+    fs::create_dir_all(
+        evidence_path
+            .parent()
+            .ok_or_else(|| anyhow!("invalid evidence path"))?,
+    )?;
+
     let available = discovery_path.is_file();
-    let status = if available { "ready" } else { "unavailable" };
-    let reason = if available {
-        "unity_bridge_available"
+    let status = if available { "ready" } else { "blocked" };
+    let stop_reason = if available {
+        "unity_maneuver_complete"
     } else {
-        "unity_bridge_discovery_missing"
+        "unity_maneuver_unavailable"
     };
     let evidence = json!({
-        "protocol": "lux.unity_maneuver.evidence.v1",
+        "schemaVersion": 1,
+        "kind": "unity_maneuver_evidence",
+        "capturedAtUtc": Utc::now().to_rfc3339(),
         "ticketId": ticket_id,
         "status": status,
-        "reason": reason,
+        "stopReason": stop_reason,
         "discoveryPath": discovery_path,
-        "recordedAt": Utc::now().to_rfc3339(),
+        "message": if available { "Unity bridge discovery is available" } else { "Unity bridge discovery file is missing; unavailable is explicit, not a silent fallback" },
     });
     fs::write(&evidence_path, serde_json::to_string_pretty(&evidence)?)?;
-    if let Some(ticket_id) = ticket_id {
-        append_ticket_evidence(&project_path, ticket_id, &evidence_rel)?;
-    }
-    if !available {
-        return Err(anyhow!(
-            "Unity bridge discovery file missing at {}; open Unity or run lux bridge install/diagnostics first",
-            discovery_path.display()
-        ));
-    }
+    append_ticket_evidence(&project_path, ticket_id, &evidence_rel)?;
+
     Ok(json!({
+        "ok": available,
         "protocol": "lux.unity_maneuver.v1",
         "projectPath": project_path,
         "ticketId": ticket_id,
         "evidenceRefs": [evidence_rel],
+        "stopReason": stop_reason,
         "status": status,
-        "message": "Unity maneuver readiness evidence recorded"
+        "message": if available { "Unity maneuver readiness evidence recorded" } else { format!("Unity maneuver unavailable; evidence recorded at {evidence_rel}") }
     }))
 }
 
@@ -494,56 +505,59 @@ fn append_ticket_evidence(project_path: &Path, ticket_id: &str, evidence_ref: &s
     Ok(())
 }
 
-fn game_dev_loop_once(default_project: &Path, args: &Value) -> Result<Value> {
-    let project_path = resolve_project_path(default_project, args);
+fn game_dev_loop_once(arguments: &Value, default_project_path: Option<&Path>) -> Result<Value> {
+    let project_path = project_path_from_args(arguments, default_project_path)?;
     let mut steps = Vec::new();
-    let mut stop_reason = "one_verified_loop_complete";
 
-    let bridge = bridge_install(&project_path, &json!({"project_path": project_path}))?;
-    steps.push(step("bridge_install", "ok", bridge));
+    let spec = game_spec_write(arguments, Some(&project_path))?;
+    steps.push(step("spec_write", true, spec));
 
-    let diagnostics = bridge_diagnostics(&project_path, &json!({"project_path": project_path}))?;
-    steps.push(step("bridge_diagnostics", "ok", diagnostics));
-
-    let spec = game_spec_write(&project_path, args)?;
-    steps.push(step("spec_write", "ok", spec));
-
-    let ticket = game_ticket_prepare(&project_path, args)?;
+    let ticket = game_ticket_prepare(arguments, Some(&project_path))?;
     let ticket_id = ticket
         .get("ticketId")
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_default();
-    steps.push(step("ticket_prepare", "ok", ticket));
+        .unwrap_or(FIRST_LOOP_TICKET_ID)
+        .to_string();
+    steps.push(step("ticket_prepare", true, ticket));
 
     let maneuver_args = merge_args(
-        args,
+        arguments,
         json!({"project_path": project_path, "ticket_id": ticket_id}),
     );
-    match unity_maneuver(&project_path, &maneuver_args) {
-        Ok(value) => steps.push(step("unity_maneuver", "ok", value)),
-        Err(error) => {
-            stop_reason = "unity_bridge_unavailable";
-            steps.push(step(
-                "unity_maneuver",
-                "error",
-                json!({"error": error.to_string(), "ticketId": ticket_id}),
-            ));
-        }
-    }
+    let maneuver = unity_maneuver(&maneuver_args, Some(&project_path))?;
+    let ok = maneuver.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let stop_reason = if ok {
+        "one_verified_loop_complete"
+    } else {
+        maneuver
+            .get("stopReason")
+            .and_then(Value::as_str)
+            .unwrap_or("unity_maneuver_unavailable")
+    };
 
-    let ok = stop_reason == "one_verified_loop_complete";
-    let structured = json!({
+    Ok(json!({
+        "ok": ok,
         "protocol": "lux.game_dev_loop_once.v1",
         "projectPath": project_path,
         "ticketId": ticket_id,
         "steps": steps,
+        "maneuver": maneuver,
         "stopReason": stop_reason,
         "verified": ok,
-        "message": if ok { "One verified Lux game-dev loop completed" } else { "Lux game-dev loop stopped with explicit blocker" }
-    });
-
-    Ok(structured)
+        "message": if ok {
+            "One verified Lux game-dev loop completed".to_string()
+        } else {
+            format!(
+                "Lux game-dev loop stopped with explicit blocker; evidence: {}",
+                maneuver
+                    .get("evidenceRefs")
+                    .and_then(Value::as_array)
+                    .and_then(|refs| refs.first())
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing evidence>")
+            )
+        }
+    }))
 }
 
 fn merge_args(base: &Value, patch: Value) -> Value {
@@ -556,10 +570,11 @@ fn merge_args(base: &Value, patch: Value) -> Value {
     Value::Object(merged)
 }
 
-fn step(name: &str, status: &str, detail: Value) -> Value {
+fn step(name: &str, ok: bool, detail: Value) -> Value {
     json!({
         "name": name,
-        "status": status,
+        "ok": ok,
+        "status": if ok { "ok" } else { "error" },
         "detail": detail,
     })
 }
@@ -578,6 +593,22 @@ mod tests {
         assert_eq!(
             result["structuredContent"]["stopReason"],
             "one_verified_loop_complete"
+        );
+    }
+
+    #[test]
+    fn error_result_preserves_structured_content() {
+        let result = tool_error_result(json!({
+            "ok": false,
+            "steps": [],
+            "stopReason": "unity_maneuver_unavailable",
+            "message": "blocked"
+        }));
+        assert_eq!(result["isError"], true);
+        assert!(result["structuredContent"]["steps"].is_array());
+        assert_eq!(
+            result["structuredContent"]["stopReason"],
+            "unity_maneuver_unavailable"
         );
     }
 }
