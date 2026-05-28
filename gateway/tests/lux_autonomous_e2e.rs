@@ -22,8 +22,10 @@ struct TestTempDir {
 
 impl TestTempDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir()
-            .join(format!("lux-autonomous-e2e-{name}-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "lux-autonomous-e2e-{name}-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(path.join(".lux")).expect(".lux should be created");
         Self { path }
     }
@@ -112,7 +114,10 @@ fn autonomous_mvp_happy_path() {
         .create(ticket.clone())
         .expect("execution-grade ticket should be created");
 
-    assert!(is_execution_grade(&ticket), "ticket must be execution-grade");
+    assert!(
+        is_execution_grade(&ticket),
+        "ticket must be execution-grade"
+    );
     assert!(
         validate_execution_grade(&ticket).is_ok(),
         "ticket must pass validation"
@@ -150,22 +155,24 @@ fn autonomous_mvp_happy_path() {
         "verification must produce evidence paths"
     );
     assert!(
-        temp.path()
-            .join(&v_result.evidence_paths[0])
-            .is_file(),
+        temp.path().join(&v_result.evidence_paths[0]).is_file(),
         "evidence file must exist on disk"
     );
 
     state
         .transition_to(RunStatus::Verifying, "executor succeeded")
         .expect("transition to Verifying");
-    state.save(temp.path()).expect("run-state should save after verifying");
+    state
+        .save(temp.path())
+        .expect("run-state should save after verifying");
 
     state
         .transition_to(RunStatus::Completed, "verification passed")
         .expect("transition to Completed");
     state.stop_reason = Some("milestone_complete".to_string());
-    state.save(temp.path()).expect("run-state should save after completion");
+    state
+        .save(temp.path())
+        .expect("run-state should save after completion");
 
     let loaded = RunState::load(temp.path()).expect("run-state should load from disk");
     assert_eq!(loaded.status, RunStatus::Completed.to_string());
@@ -188,8 +195,7 @@ fn autonomous_mvp_happy_path() {
         run_id,
         &format!(
             "run_id={run_id}\nstatus=completed\nevidence_refs={:?}\nverification_policy={}\n",
-            result.evidence_refs,
-            v_result.policy_used
+            result.evidence_refs, v_result.policy_used
         ),
     );
     assert!(evidence_path.is_file(), "evidence file must be written");
@@ -230,7 +236,10 @@ fn autonomous_mvp_failure_path() {
         create_executor_blocker(temp.path(), run_id, &ticket.id, &result.status, &mut state)
             .expect("executor blocker should be created on first failure");
 
-    assert!(!blocker_id.is_empty(), "blocker ticket id must be non-empty");
+    assert!(
+        !blocker_id.is_empty(),
+        "blocker ticket id must be non-empty"
+    );
     assert_eq!(
         state.status,
         RunStatus::Blocked.to_string(),
@@ -273,5 +282,8 @@ fn autonomous_mvp_failure_path() {
             result.exit_code
         ),
     );
-    assert!(evidence_path.is_file(), "failure evidence file must be written");
+    assert!(
+        evidence_path.is_file(),
+        "failure evidence file must be written"
+    );
 }

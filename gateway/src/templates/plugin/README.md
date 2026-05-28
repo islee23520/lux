@@ -21,7 +21,7 @@ Default configuration:
 - `glossaryPath`: `.lux/glossary.md`
 
 > [!NOTE]
-> Legacy `.lux/continuation-state.json` is deprecated. The plugin now uses the internal gateway state for tracking.
+> Legacy `.lux/continuation-state.json` is deprecated. The gateway owns active run lifecycle state in `.lux/run-state.json`; plugin reads/writes must go through gateway APIs rather than maintaining a second state file.
 
 ## How It Works
 

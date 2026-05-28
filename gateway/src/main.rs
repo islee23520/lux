@@ -19,6 +19,7 @@ pub mod lux_events;
 pub mod lux_io;
 pub mod lux_lock;
 pub mod lux_loop;
+pub mod lux_mcp;
 pub mod lux_metrics;
 pub mod lux_roadmap;
 pub mod lux_run;
@@ -116,6 +117,8 @@ enum Command {
     Verify(LuxProjectArgs),
     /// Start or manage a spec-driven automated dev run
     Run(lux_run::RunArgs),
+    /// Run the Lux stdio MCP server
+    Mcp(McpArgs),
     /// Interactive REPL shell
     Tui(TuiArgs),
     Serve(ServeArgs),
@@ -1111,6 +1114,13 @@ struct ServeArgs {
 }
 
 #[derive(Parser, Debug)]
+struct McpArgs {
+    /// Default Unity project root for project-bound MCP tool calls
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
 struct CompileArgs {
     #[arg(long)]
     project_path: Option<PathBuf>,
@@ -1262,6 +1272,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         }
         Command::Verify(args) => run_lux_verify_command(args),
         Command::Run(args) => lux_run::run_command(&args),
+        Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path.as_deref()),
         Command::Tui(_) => Ok(()),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
@@ -2113,12 +2124,7 @@ fn run_autonomous_command(args: AutonomousArgs) -> anyhow::Result<()> {
             let dispatchable: Vec<_> = tickets
                 .iter()
                 .filter(|t| lux_ticket::is_execution_grade(t))
-                .filter(|t| {
-                    dry_run_args
-                        .ticket
-                        .as_deref()
-                        .map_or(true, |id| t.id == id)
-                })
+                .filter(|t| dry_run_args.ticket.as_deref().map_or(true, |id| t.id == id))
                 .collect();
             println!("dry-run: seq={} status={}", state.seq, state.status);
             println!("dispatchable tickets: {}", dispatchable.len());
