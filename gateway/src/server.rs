@@ -3970,7 +3970,8 @@ fn skill_scope_roots(project_root: Option<&Path>) -> Vec<(&'static str, PathBuf)
         "core",
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("Skills"),
+            .join("Skills")
+            .join("skills"),
     )];
     if let Some(project_root) = project_root {
         roots.push(("project", project_root.join(".lux").join("skills")));
@@ -4093,6 +4094,7 @@ async fn get_skill_adaptation(
         let core_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("Skills")
+            .join("skills")
             .join(&skill_name);
         let project_dir = project_root.join(".agents/skills").join(&skill_name);
         let global_dir = std::env::var("HOME")

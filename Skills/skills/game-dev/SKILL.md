@@ -1,6 +1,8 @@
 ---
 name: game-dev
 description: "Lazy-load only when this workflow is explicitly needed. Use for compact game planning in LUX. Validate concept, core loop, mechanics, progression, technical feasibility, QA plan, and ethics. Check the player promise, target audience, prototype scope, Unity risks, telemetry/privacy, accessibility, non-exploitative retention, and measurable playtest criteria."
+category: workflow
+source: lux
 ---
 
 # Game Development

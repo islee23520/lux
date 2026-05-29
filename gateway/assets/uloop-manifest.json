@@ -1,0 +1,66 @@
+{
+  "version": "2026.05.29",
+  "updated_at": "2026-05-29T00:00:00Z",
+  "commands": [
+    {
+      "name": "get-project-info",
+      "description": "Read Unity project metadata.",
+      "args": []
+    },
+    {
+      "name": "get-version",
+      "description": "Read the installed uloop CLI version.",
+      "args": []
+    },
+    {
+      "name": "sync",
+      "description": "Synchronize uloop project state.",
+      "args": []
+    },
+    {
+      "name": "fix",
+      "description": "Repair supported uloop project wiring.",
+      "args": []
+    },
+    {
+      "name": "list",
+      "description": "List supported uloop commands.",
+      "args": []
+    },
+    {
+      "name": "package",
+      "description": "Manage Unity packages.",
+      "args": []
+    },
+    {
+      "name": "scene",
+      "description": "Inspect or manage Unity scenes.",
+      "args": []
+    },
+    {
+      "name": "asset",
+      "description": "Inspect or manage Unity assets.",
+      "args": []
+    },
+    {
+      "name": "init",
+      "description": "Initialize uloop support.",
+      "args": []
+    },
+    {
+      "name": "build",
+      "description": "Run a Unity build through uloop.",
+      "args": []
+    },
+    {
+      "name": "test",
+      "description": "Run Unity tests through uloop.",
+      "args": []
+    },
+    {
+      "name": "run",
+      "description": "Run a Unity project through uloop.",
+      "args": []
+    }
+  ]
+}

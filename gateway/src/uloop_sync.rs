@@ -18,10 +18,10 @@ pub const ULOOP_SYNC_INTERVAL: u64 = 7 * 24 * 60 * 60;
 
 /// URL for the Lux-maintained uloop command manifest
 pub const ULOOP_MANIFEST_URL: &str =
-    "https://raw.githubusercontent.com/islee23520/Lux/main/seeds/uloop-manifest.json";
+    "https://raw.githubusercontent.com/islee23520/Lux/main/gateway/assets/uloop-manifest.json";
 
-/// Fallback: local bundled manifest path (for offline/offline mode)
-pub const BUNDLED_MANIFEST_PATH: &str = "seeds/uloop-manifest.json";
+pub const BUNDLED_MANIFEST_PATH: &str = "gateway/assets/uloop-manifest.json";
+const BUNDLED_MANIFEST_JSON: &str = include_str!("../assets/uloop-manifest.json");
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct UloopSyncState {
@@ -206,10 +206,28 @@ async fn fetch_uloop_manifest() -> anyhow::Result<UloopManifest> {
             .context("failed to parse uloop manifest"),
         _ => {
             eprintln!("ℹ️  Remote uloop manifest unavailable, using bundled fallback");
-            let bundled = fs::read_to_string(BUNDLED_MANIFEST_PATH)
-                .context("bundled uloop manifest not found")?;
-            serde_json::from_str(&bundled).context("failed to parse bundled uloop manifest")
+            serde_json::from_str(BUNDLED_MANIFEST_JSON).with_context(|| {
+                format!("failed to parse bundled uloop manifest at {BUNDLED_MANIFEST_PATH}")
+            })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UloopManifest, BUNDLED_MANIFEST_JSON, BUNDLED_MANIFEST_PATH};
+
+    #[test]
+    fn bundled_manifest_parses_when_remote_manifest_is_unavailable() {
+        // Given: the gateway ships an embedded fallback manifest.
+        assert_eq!(BUNDLED_MANIFEST_PATH, "gateway/assets/uloop-manifest.json");
+
+        // When: the embedded JSON is parsed through the production manifest type.
+        let manifest = serde_json::from_str::<UloopManifest>(BUNDLED_MANIFEST_JSON)
+            .expect("bundled uloop manifest should parse");
+
+        // Then: fallback coverage has a concrete command set.
+        assert!(!manifest.commands.is_empty());
     }
 }
 

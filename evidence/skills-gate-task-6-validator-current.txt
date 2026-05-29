@@ -1,0 +1,371 @@
+PASS: architecture-decision - SKILL.md exists
+PASS: architecture-decision - valid frontmatter delimiters
+PASS: architecture-decision - frontmatter contains name
+PASS: architecture-decision - frontmatter contains description
+PASS: architecture-decision - frontmatter contains category
+PASS: architecture-decision - frontmatter contains source
+PASS: architecture-decision - name matches directory
+PASS: architecture-decision - line count 28 within limit
+PASS: architecture-review - SKILL.md exists
+PASS: architecture-review - valid frontmatter delimiters
+PASS: architecture-review - frontmatter contains name
+PASS: architecture-review - frontmatter contains description
+PASS: architecture-review - frontmatter contains category
+PASS: architecture-review - frontmatter contains source
+PASS: architecture-review - name matches directory
+PASS: architecture-review - line count 28 within limit
+PASS: bug-report - SKILL.md exists
+PASS: bug-report - valid frontmatter delimiters
+PASS: bug-report - frontmatter contains name
+PASS: bug-report - frontmatter contains description
+PASS: bug-report - frontmatter contains category
+PASS: bug-report - frontmatter contains source
+PASS: bug-report - name matches directory
+PASS: bug-report - line count 28 within limit
+PASS: bug-triage - SKILL.md exists
+PASS: bug-triage - valid frontmatter delimiters
+PASS: bug-triage - frontmatter contains name
+PASS: bug-triage - frontmatter contains description
+PASS: bug-triage - frontmatter contains category
+PASS: bug-triage - frontmatter contains source
+PASS: bug-triage - name matches directory
+PASS: bug-triage - line count 28 within limit
+PASS: changelog - SKILL.md exists
+PASS: changelog - valid frontmatter delimiters
+PASS: changelog - frontmatter contains name
+PASS: changelog - frontmatter contains description
+PASS: changelog - frontmatter contains category
+PASS: changelog - frontmatter contains source
+PASS: changelog - name matches directory
+PASS: changelog - line count 28 within limit
+PASS: code-review - SKILL.md exists
+PASS: code-review - valid frontmatter delimiters
+PASS: code-review - frontmatter contains name
+PASS: code-review - frontmatter contains description
+PASS: code-review - frontmatter contains category
+PASS: code-review - frontmatter contains source
+PASS: code-review - name matches directory
+PASS: code-review - line count 28 within limit
+PASS: core-invariants - SKILL.md exists
+PASS: core-invariants - valid frontmatter delimiters
+PASS: core-invariants - frontmatter contains name
+PASS: core-invariants - frontmatter contains description
+PASS: core-invariants - frontmatter contains category
+PASS: core-invariants - frontmatter contains source
+PASS: core-invariants - name matches directory
+PASS: core-invariants - line count 28 within limit
+PASS: game-dev - SKILL.md exists
+PASS: game-dev - valid frontmatter delimiters
+PASS: game-dev - frontmatter contains name
+PASS: game-dev - frontmatter contains description
+PASS: game-dev - frontmatter contains category
+PASS: game-dev - frontmatter contains source
+PASS: game-dev - name matches directory
+PASS: game-dev - line count 28 within limit
+PASS: ldp-decision-protocol - SKILL.md exists
+PASS: ldp-decision-protocol - valid frontmatter delimiters
+PASS: ldp-decision-protocol - frontmatter contains name
+PASS: ldp-decision-protocol - frontmatter contains description
+PASS: ldp-decision-protocol - frontmatter contains category
+PASS: ldp-decision-protocol - frontmatter contains source
+PASS: ldp-decision-protocol - name matches directory
+PASS: ldp-decision-protocol - line count 36 within limit
+PASS: lux-unity - SKILL.md exists
+PASS: lux-unity - valid frontmatter delimiters
+PASS: lux-unity - frontmatter contains name
+PASS: lux-unity - frontmatter contains description
+PASS: lux-unity - frontmatter contains category
+PASS: lux-unity - frontmatter contains source
+PASS: lux-unity - name matches directory
+PASS: lux-unity - line count 49 within limit
+PASS: perf-profile - SKILL.md exists
+PASS: perf-profile - valid frontmatter delimiters
+PASS: perf-profile - frontmatter contains name
+PASS: perf-profile - frontmatter contains description
+PASS: perf-profile - frontmatter contains category
+PASS: perf-profile - frontmatter contains source
+PASS: perf-profile - name matches directory
+PASS: perf-profile - line count 28 within limit
+PASS: regression-suite - SKILL.md exists
+PASS: regression-suite - valid frontmatter delimiters
+PASS: regression-suite - frontmatter contains name
+PASS: regression-suite - frontmatter contains description
+PASS: regression-suite - frontmatter contains category
+PASS: regression-suite - frontmatter contains source
+PASS: regression-suite - name matches directory
+PASS: regression-suite - line count 28 within limit
+PASS: release-checklist - SKILL.md exists
+PASS: release-checklist - valid frontmatter delimiters
+PASS: release-checklist - frontmatter contains name
+PASS: release-checklist - frontmatter contains description
+PASS: release-checklist - frontmatter contains category
+PASS: release-checklist - frontmatter contains source
+PASS: release-checklist - name matches directory
+PASS: release-checklist - line count 28 within limit
+PASS: retrospective - SKILL.md exists
+PASS: retrospective - valid frontmatter delimiters
+PASS: retrospective - frontmatter contains name
+PASS: retrospective - frontmatter contains description
+PASS: retrospective - frontmatter contains category
+PASS: retrospective - frontmatter contains source
+PASS: retrospective - name matches directory
+PASS: retrospective - line count 28 within limit
+PASS: security-audit - SKILL.md exists
+PASS: security-audit - valid frontmatter delimiters
+PASS: security-audit - frontmatter contains name
+PASS: security-audit - frontmatter contains description
+PASS: security-audit - frontmatter contains category
+PASS: security-audit - frontmatter contains source
+PASS: security-audit - name matches directory
+PASS: security-audit - line count 28 within limit
+PASS: smoke-check - SKILL.md exists
+PASS: smoke-check - valid frontmatter delimiters
+PASS: smoke-check - frontmatter contains name
+PASS: smoke-check - frontmatter contains description
+PASS: smoke-check - frontmatter contains category
+PASS: smoke-check - frontmatter contains source
+PASS: smoke-check - name matches directory
+PASS: smoke-check - line count 28 within limit
+PASS: studio-brainstorm - SKILL.md exists
+PASS: studio-brainstorm - valid frontmatter delimiters
+PASS: studio-brainstorm - frontmatter contains name
+PASS: studio-brainstorm - frontmatter contains description
+PASS: studio-brainstorm - frontmatter contains category
+PASS: studio-brainstorm - frontmatter contains source
+PASS: studio-brainstorm - name matches directory
+PASS: studio-brainstorm - line count 242 within limit
+PASS: studio-code-review - SKILL.md exists
+PASS: studio-code-review - valid frontmatter delimiters
+PASS: studio-code-review - frontmatter contains name
+PASS: studio-code-review - frontmatter contains description
+PASS: studio-code-review - frontmatter contains category
+PASS: studio-code-review - frontmatter contains source
+PASS: studio-code-review - name matches directory
+PASS: studio-code-review - line count 165 within limit
+PASS: studio-gate-check - SKILL.md exists
+PASS: studio-gate-check - valid frontmatter delimiters
+PASS: studio-gate-check - frontmatter contains name
+PASS: studio-gate-check - frontmatter contains description
+PASS: studio-gate-check - frontmatter contains category
+PASS: studio-gate-check - frontmatter contains source
+PASS: studio-gate-check - name matches directory
+PASS: studio-gate-check - line count 223 within limit
+PASS: studio-help - SKILL.md exists
+PASS: studio-help - valid frontmatter delimiters
+PASS: studio-help - frontmatter contains name
+PASS: studio-help - frontmatter contains description
+PASS: studio-help - frontmatter contains category
+PASS: studio-help - frontmatter contains source
+PASS: studio-help - name matches directory
+PASS: studio-help - line count 129 within limit
+PASS: studio-sprint-plan - SKILL.md exists
+PASS: studio-sprint-plan - valid frontmatter delimiters
+PASS: studio-sprint-plan - frontmatter contains name
+PASS: studio-sprint-plan - frontmatter contains description
+PASS: studio-sprint-plan - frontmatter contains category
+PASS: studio-sprint-plan - frontmatter contains source
+PASS: studio-sprint-plan - name matches directory
+PASS: studio-sprint-plan - line count 161 within limit
+PASS: tech-debt - SKILL.md exists
+PASS: tech-debt - valid frontmatter delimiters
+PASS: tech-debt - frontmatter contains name
+PASS: tech-debt - frontmatter contains description
+PASS: tech-debt - frontmatter contains category
+PASS: tech-debt - frontmatter contains source
+PASS: tech-debt - name matches directory
+PASS: tech-debt - line count 28 within limit
+PASS: test-helpers - SKILL.md exists
+PASS: test-helpers - valid frontmatter delimiters
+PASS: test-helpers - frontmatter contains name
+PASS: test-helpers - frontmatter contains description
+PASS: test-helpers - frontmatter contains category
+PASS: test-helpers - frontmatter contains source
+PASS: test-helpers - name matches directory
+PASS: test-helpers - line count 28 within limit
+PASS: test-setup - SKILL.md exists
+PASS: test-setup - valid frontmatter delimiters
+PASS: test-setup - frontmatter contains name
+PASS: test-setup - frontmatter contains description
+PASS: test-setup - frontmatter contains category
+PASS: test-setup - frontmatter contains source
+PASS: test-setup - name matches directory
+PASS: test-setup - line count 28 within limit
+PASS: unity-cs-reference - SKILL.md exists
+PASS: unity-cs-reference - valid frontmatter delimiters
+PASS: unity-cs-reference - frontmatter contains name
+PASS: unity-cs-reference - frontmatter contains description
+PASS: unity-cs-reference - frontmatter contains category
+PASS: unity-cs-reference - frontmatter contains source
+PASS: unity-cs-reference - name matches directory
+PASS: unity-cs-reference - line count 34 within limit
+PASS: unity-pattern-adapter - SKILL.md exists
+PASS: unity-pattern-adapter - valid frontmatter delimiters
+PASS: unity-pattern-adapter - frontmatter contains name
+PASS: unity-pattern-adapter - frontmatter contains description
+PASS: unity-pattern-adapter - frontmatter contains category
+PASS: unity-pattern-adapter - frontmatter contains source
+PASS: unity-pattern-adapter - name matches directory
+PASS: unity-pattern-adapter - line count 57 within limit
+PASS: unity-pattern-builder - SKILL.md exists
+PASS: unity-pattern-builder - valid frontmatter delimiters
+PASS: unity-pattern-builder - frontmatter contains name
+PASS: unity-pattern-builder - frontmatter contains description
+PASS: unity-pattern-builder - frontmatter contains category
+PASS: unity-pattern-builder - frontmatter contains source
+PASS: unity-pattern-builder - name matches directory
+PASS: unity-pattern-builder - line count 53 within limit
+PASS: unity-pattern-command - SKILL.md exists
+PASS: unity-pattern-command - valid frontmatter delimiters
+PASS: unity-pattern-command - frontmatter contains name
+PASS: unity-pattern-command - frontmatter contains description
+PASS: unity-pattern-command - frontmatter contains category
+PASS: unity-pattern-command - frontmatter contains source
+PASS: unity-pattern-command - name matches directory
+PASS: unity-pattern-command - line count 52 within limit
+PASS: unity-pattern-composite - SKILL.md exists
+PASS: unity-pattern-composite - valid frontmatter delimiters
+PASS: unity-pattern-composite - frontmatter contains name
+PASS: unity-pattern-composite - frontmatter contains description
+PASS: unity-pattern-composite - frontmatter contains category
+PASS: unity-pattern-composite - frontmatter contains source
+PASS: unity-pattern-composite - name matches directory
+PASS: unity-pattern-composite - line count 55 within limit
+PASS: unity-pattern-decorator - SKILL.md exists
+PASS: unity-pattern-decorator - valid frontmatter delimiters
+PASS: unity-pattern-decorator - frontmatter contains name
+PASS: unity-pattern-decorator - frontmatter contains description
+PASS: unity-pattern-decorator - frontmatter contains category
+PASS: unity-pattern-decorator - frontmatter contains source
+PASS: unity-pattern-decorator - name matches directory
+PASS: unity-pattern-decorator - line count 52 within limit
+PASS: unity-pattern-dependency-injection - SKILL.md exists
+PASS: unity-pattern-dependency-injection - valid frontmatter delimiters
+PASS: unity-pattern-dependency-injection - frontmatter contains name
+PASS: unity-pattern-dependency-injection - frontmatter contains description
+PASS: unity-pattern-dependency-injection - frontmatter contains category
+PASS: unity-pattern-dependency-injection - frontmatter contains source
+PASS: unity-pattern-dependency-injection - name matches directory
+PASS: unity-pattern-dependency-injection - line count 52 within limit
+PASS: unity-pattern-dirty-flag - SKILL.md exists
+PASS: unity-pattern-dirty-flag - valid frontmatter delimiters
+PASS: unity-pattern-dirty-flag - frontmatter contains name
+PASS: unity-pattern-dirty-flag - frontmatter contains description
+PASS: unity-pattern-dirty-flag - frontmatter contains category
+PASS: unity-pattern-dirty-flag - frontmatter contains source
+PASS: unity-pattern-dirty-flag - name matches directory
+PASS: unity-pattern-dirty-flag - line count 58 within limit
+PASS: unity-pattern-facade - SKILL.md exists
+PASS: unity-pattern-facade - valid frontmatter delimiters
+PASS: unity-pattern-facade - frontmatter contains name
+PASS: unity-pattern-facade - frontmatter contains description
+PASS: unity-pattern-facade - frontmatter contains category
+PASS: unity-pattern-facade - frontmatter contains source
+PASS: unity-pattern-facade - name matches directory
+PASS: unity-pattern-facade - line count 58 within limit
+PASS: unity-pattern-factory-method - SKILL.md exists
+PASS: unity-pattern-factory-method - valid frontmatter delimiters
+PASS: unity-pattern-factory-method - frontmatter contains name
+PASS: unity-pattern-factory-method - frontmatter contains description
+PASS: unity-pattern-factory-method - frontmatter contains category
+PASS: unity-pattern-factory-method - frontmatter contains source
+PASS: unity-pattern-factory-method - name matches directory
+PASS: unity-pattern-factory-method - line count 55 within limit
+PASS: unity-pattern-mediator - SKILL.md exists
+PASS: unity-pattern-mediator - valid frontmatter delimiters
+PASS: unity-pattern-mediator - frontmatter contains name
+PASS: unity-pattern-mediator - frontmatter contains description
+PASS: unity-pattern-mediator - frontmatter contains category
+PASS: unity-pattern-mediator - frontmatter contains source
+PASS: unity-pattern-mediator - name matches directory
+PASS: unity-pattern-mediator - line count 49 within limit
+PASS: unity-pattern-memento - SKILL.md exists
+PASS: unity-pattern-memento - valid frontmatter delimiters
+PASS: unity-pattern-memento - frontmatter contains name
+PASS: unity-pattern-memento - frontmatter contains description
+PASS: unity-pattern-memento - frontmatter contains category
+PASS: unity-pattern-memento - frontmatter contains source
+PASS: unity-pattern-memento - name matches directory
+PASS: unity-pattern-memento - line count 55 within limit
+PASS: unity-pattern-mvp - SKILL.md exists
+PASS: unity-pattern-mvp - valid frontmatter delimiters
+PASS: unity-pattern-mvp - frontmatter contains name
+PASS: unity-pattern-mvp - frontmatter contains description
+PASS: unity-pattern-mvp - frontmatter contains category
+PASS: unity-pattern-mvp - frontmatter contains source
+PASS: unity-pattern-mvp - name matches directory
+PASS: unity-pattern-mvp - line count 52 within limit
+PASS: unity-pattern-object-pooling - SKILL.md exists
+PASS: unity-pattern-object-pooling - valid frontmatter delimiters
+PASS: unity-pattern-object-pooling - frontmatter contains name
+PASS: unity-pattern-object-pooling - frontmatter contains description
+PASS: unity-pattern-object-pooling - frontmatter contains category
+PASS: unity-pattern-object-pooling - frontmatter contains source
+PASS: unity-pattern-object-pooling - name matches directory
+PASS: unity-pattern-object-pooling - line count 53 within limit
+PASS: unity-pattern-observer - SKILL.md exists
+PASS: unity-pattern-observer - valid frontmatter delimiters
+PASS: unity-pattern-observer - frontmatter contains name
+PASS: unity-pattern-observer - frontmatter contains description
+PASS: unity-pattern-observer - frontmatter contains category
+PASS: unity-pattern-observer - frontmatter contains source
+PASS: unity-pattern-observer - name matches directory
+PASS: unity-pattern-observer - line count 53 within limit
+PASS: unity-pattern-prototype - SKILL.md exists
+PASS: unity-pattern-prototype - valid frontmatter delimiters
+PASS: unity-pattern-prototype - frontmatter contains name
+PASS: unity-pattern-prototype - frontmatter contains description
+PASS: unity-pattern-prototype - frontmatter contains category
+PASS: unity-pattern-prototype - frontmatter contains source
+PASS: unity-pattern-prototype - name matches directory
+PASS: unity-pattern-prototype - line count 52 within limit
+PASS: unity-pattern-proxy - SKILL.md exists
+PASS: unity-pattern-proxy - valid frontmatter delimiters
+PASS: unity-pattern-proxy - frontmatter contains name
+PASS: unity-pattern-proxy - frontmatter contains description
+PASS: unity-pattern-proxy - frontmatter contains category
+PASS: unity-pattern-proxy - frontmatter contains source
+PASS: unity-pattern-proxy - name matches directory
+PASS: unity-pattern-proxy - line count 50 within limit
+PASS: unity-pattern-service-locator - SKILL.md exists
+PASS: unity-pattern-service-locator - valid frontmatter delimiters
+PASS: unity-pattern-service-locator - frontmatter contains name
+PASS: unity-pattern-service-locator - frontmatter contains description
+PASS: unity-pattern-service-locator - frontmatter contains category
+PASS: unity-pattern-service-locator - frontmatter contains source
+PASS: unity-pattern-service-locator - name matches directory
+PASS: unity-pattern-service-locator - line count 47 within limit
+PASS: unity-pattern-singleton - SKILL.md exists
+PASS: unity-pattern-singleton - valid frontmatter delimiters
+PASS: unity-pattern-singleton - frontmatter contains name
+PASS: unity-pattern-singleton - frontmatter contains description
+PASS: unity-pattern-singleton - frontmatter contains category
+PASS: unity-pattern-singleton - frontmatter contains source
+PASS: unity-pattern-singleton - name matches directory
+PASS: unity-pattern-singleton - line count 52 within limit
+PASS: unity-pattern-spatial-partition - SKILL.md exists
+PASS: unity-pattern-spatial-partition - valid frontmatter delimiters
+PASS: unity-pattern-spatial-partition - frontmatter contains name
+PASS: unity-pattern-spatial-partition - frontmatter contains description
+PASS: unity-pattern-spatial-partition - frontmatter contains category
+PASS: unity-pattern-spatial-partition - frontmatter contains source
+PASS: unity-pattern-spatial-partition - name matches directory
+PASS: unity-pattern-spatial-partition - line count 51 within limit
+PASS: unity-pattern-state - SKILL.md exists
+PASS: unity-pattern-state - valid frontmatter delimiters
+PASS: unity-pattern-state - frontmatter contains name
+PASS: unity-pattern-state - frontmatter contains description
+PASS: unity-pattern-state - frontmatter contains category
+PASS: unity-pattern-state - frontmatter contains source
+PASS: unity-pattern-state - name matches directory
+PASS: unity-pattern-state - line count 50 within limit
+PASS: unity-pattern-strategy - SKILL.md exists
+PASS: unity-pattern-strategy - valid frontmatter delimiters
+PASS: unity-pattern-strategy - frontmatter contains name
+PASS: unity-pattern-strategy - frontmatter contains description
+PASS: unity-pattern-strategy - frontmatter contains category
+PASS: unity-pattern-strategy - frontmatter contains source
+PASS: unity-pattern-strategy - name matches directory
+PASS: unity-pattern-strategy - line count 50 within limit
+PASS: summary - all skill checks passed
+
+exit=0

@@ -2,14 +2,17 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     process::{Command, Stdio},
+    sync::{Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
 };
 
 const TOKEN: &str = "sessions-smoke-token";
+static SESSION_GATEWAY_LOCK: Mutex<()> = Mutex::new(());
 
 struct GatewayProcess {
     child: std::process::Child,
+    _test_lock: MutexGuard<'static, ()>,
 }
 
 impl Drop for GatewayProcess {
@@ -28,6 +31,9 @@ fn reserve_local_port() -> u16 {
 }
 
 fn start_gateway(port: u16) -> GatewayProcess {
+    let test_lock = SESSION_GATEWAY_LOCK
+        .lock()
+        .expect("session gateway test lock poisoned");
     let child = Command::new(env!("CARGO_BIN_EXE_lux"))
         .args([
             "serve",
@@ -44,7 +50,10 @@ fn start_gateway(port: u16) -> GatewayProcess {
         .spawn()
         .expect("start lux test server");
 
-    GatewayProcess { child }
+    GatewayProcess {
+        child,
+        _test_lock: test_lock,
+    }
 }
 
 fn wait_for_health(port: u16) {

@@ -1887,7 +1887,7 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
     let reinit = lux_path.exists();
     if reinit && !args.force {
         eprintln!(
-            "⚠️  Lux workspace already exists at {}. Reinitializing...",
+            "⚠️  Lux workspace already exists at {}. Re-evaluating...",
             lux_path.display()
         );
     }
@@ -1903,7 +1903,7 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
     };
 
     let mut io = lux_spec::TerminalSpecQuestionIo;
-    if reinit {
+    if reinit && args.force {
         lux_spec::lux_reinit(&project_root)?;
     }
     let lux_path = lux_spec::lux_init_interactive(&project_root, &mut io, options)?;
@@ -1915,7 +1915,7 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
 
     let agents_skills_dir = project_root.join(".agents").join("skills");
     let has_existing_lux_skills = agents_skills_dir.is_dir()
-        && std::fs::read_dir(&agents_skills_dir).is_ok_and(|mut it| {
+        && std::fs::read_dir(&agents_skills_dir).is_ok_and(|it| {
             it.filter_map(|e| e.ok())
                 .any(|e| e.file_name().to_string_lossy().starts_with("lux-") && e.path().is_dir())
         });
@@ -1950,7 +1950,7 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
 }
 
 fn prompt_skill_overwrite(project_root: &Path) -> anyhow::Result<bool> {
-    use std::io::{self, BufRead};
+    use std::io;
     eprintln!();
     eprintln!(
         "⚠️  Existing Lux workflow skills found in {}/.agents/skills/:",
@@ -3618,7 +3618,7 @@ fn scan_skill_scope(
 }
 
 fn core_skills_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../Skills")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../Skills/skills")
 }
 
 fn project_skills_dir() -> Option<PathBuf> {
@@ -4063,82 +4063,6 @@ fn run_lux_create_objects(args: UnityCreateObjectsArgs) -> anyhow::Result<()> {
     )
 }
 
-fn run_lux_unity_launch(args: UnityLaunchArgs) -> anyhow::Result<()> {
-    let started = Instant::now();
-    let project_root = resolve_project_root(&args.project_path)?;
-    let discovery_path = project_root.join("Library/UnityAiBridge/server.json");
-
-    if let Ok(backend) = try_ping_unity_bridge_backend(&project_root, Duration::from_secs(1)) {
-        eprintln!(
-            "Lux launch: Unity editor already has a reachable Lux backend for {}; skipping launch",
-            project_root.display()
-        );
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "pid": null,
-                "status": "already_running",
-                "discoveryPath": backend.discovery_path.to_string_lossy(),
-                "bridgeReady": true,
-                "host": backend.host,
-                "port": backend.port,
-                "ping": backend.ping,
-                "elapsedSeconds": started.elapsed().as_secs_f64(),
-                "projectPath": project_root.to_string_lossy(),
-            }))?
-        );
-        return Ok(());
-    }
-
-    let launch_target = match args.unity_path {
-        Some(path) => UnityLaunchTarget {
-            executable: path,
-            prefix_args: Vec::new(),
-        },
-        None => resolve_unity_launch_target(&project_root)?,
-    };
-
-    eprintln!(
-        "Lux launch: launching Unity editor for {}",
-        project_root.display()
-    );
-
-    let child = ProcessCommand::new(&launch_target.executable)
-        .args(&launch_target.prefix_args)
-        .arg("-projectPath")
-        .arg(&project_root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| {
-            format!(
-                "failed to launch Unity at {}",
-                launch_target.executable.display()
-            )
-        })?;
-    let pid = child.id();
-
-    let mut bridge_ready = false;
-    if !args.no_wait {
-        wait_for_unity_bridge_ready(&project_root, Duration::from_secs(args.timeout_seconds))?;
-        bridge_ready = true;
-    }
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "pid": pid,
-            "discoveryPath": discovery_path.to_string_lossy(),
-            "bridgeReady": bridge_ready,
-            "elapsedSeconds": started.elapsed().as_secs_f64(),
-            "projectPath": project_root.to_string_lossy(),
-        }))?
-    );
-
-    Ok(())
-}
-
 fn print_lux_backend_find_game_objects(args: UnityFindGameObjectsArgs) -> anyhow::Result<()> {
     let project_root = resolve_project_root(&args.project_path)?;
     let discovery = read_unity_bridge_discovery(&project_root)?;
@@ -4251,366 +4175,6 @@ fn print_lux_backend_get_hierarchy(args: UnityGetHierarchyArgs) -> anyhow::Resul
     Ok(())
 }
 
-fn print_lux_backend_screenshot(args: UnityScreenshotArgs) -> anyhow::Result<()> {
-    if args.elements_only && !args.annotate_elements {
-        bail!("--elements-only requires --annotate-elements");
-    }
-
-    let project_root = resolve_project_root(&args.project_path)?;
-    let discovery = read_unity_bridge_discovery(&project_root)?;
-    let request = json!({
-        "schemaVersion": 1,
-        "requestId": uuid::Uuid::new_v4().to_string(),
-        "command": "capture_lux_screenshot",
-        "token": discovery.token,
-        "params": {
-            "screenshotCaptureMode": args.capture_mode,
-            "screenshotAnnotateElements": args.annotate_elements,
-            "screenshotElementsOnly": args.elements_only,
-            "actor": "lux-cli"
-        }
-    });
-    let response_line = send_unity_tcp_line_with_timeout(
-        &discovery,
-        &format!("{}\n", serde_json::to_string(&request)?),
-        Duration::from_secs(15),
-    )?;
-    let response_json: Value =
-        serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")?;
-    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!(
-            "Unity backend rejected capture_lux_screenshot: {}",
-            response_json
-        );
-    }
-
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("screenshotResult"))
-        .context("Unity TCP response did not include payload.screenshotResult")?;
-    let file_path = payload
-        .get("filePath")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include payload.screenshotResult.filePath")?;
-    let file_size_bytes = payload
-        .get("fileSizeBytes")
-        .and_then(Value::as_i64)
-        .context("Unity TCP response did not include payload.screenshotResult.fileSizeBytes")?;
-    let media_type = payload
-        .get("mediaType")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include payload.screenshotResult.mediaType")?;
-    let capture_mode = payload
-        .get("captureMode")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include payload.screenshotResult.captureMode")?;
-    let annotation_count = payload
-        .get("annotationCount")
-        .and_then(Value::as_i64)
-        .context("Unity TCP response did not include payload.screenshotResult.annotationCount")?;
-    let annotated_elements = payload
-        .get("annotatedElements")
-        .cloned()
-        .unwrap_or_else(|| json!([]));
-    let annotated = payload
-        .get("annotated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let elements_only = payload
-        .get("elementsOnly")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let screenshot_saved = payload
-        .get("screenshotSaved")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "filePath": file_path,
-            "fileSizeBytes": file_size_bytes,
-            "mediaType": media_type,
-            "captureMode": capture_mode,
-            "annotated": annotated,
-            "elementsOnly": elements_only,
-            "screenshotSaved": screenshot_saved,
-            "annotationCount": annotation_count,
-            "annotatedElements": annotated_elements,
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_backend_simulate_keyboard(args: UnitySimulateKeyboardArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = send_lux_input_simulation_request(
-        &project_root,
-        "simulate_lux_keyboard",
-        json!({
-            "inputAction": args.action.as_str(),
-            "inputKey": args.key,
-            "inputDurationMs": args.duration_ms,
-            "actor": "lux-cli"
-        }),
-    )?;
-    print_lux_input_simulation_result(&response_json)
-}
-
-fn print_lux_backend_simulate_mouse_input(args: UnitySimulateMouseInputArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = send_lux_input_simulation_request(
-        &project_root,
-        "simulate_lux_mouse_input",
-        json!({
-            "inputAction": args.action.as_str(),
-            "inputButton": args.button,
-            "inputDeltaX": args.delta_x,
-            "inputDeltaY": args.delta_y,
-            "inputScrollX": args.scroll_x,
-            "inputScrollY": args.scroll_y,
-            "inputDurationMs": args.duration_ms,
-            "inputSteps": args.steps,
-            "actor": "lux-cli"
-        }),
-    )?;
-    print_lux_input_simulation_result(&response_json)
-}
-
-fn print_lux_backend_record_input(args: UnityRecordInputArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = send_lux_input_simulation_request(
-        &project_root,
-        "record_lux_input",
-        json!({
-            "inputAction": args.action.as_str(),
-            "actor": "lux-cli"
-        }),
-    )?;
-    print_lux_input_record_result(&response_json)
-}
-
-fn print_lux_backend_replay_input(args: UnityReplayInputArgs) -> anyhow::Result<()> {
-    if matches!(args.action, ReplayInputAction::Start) && args.file.is_none() {
-        bail!("lux unity replay-input --action start requires --file <path>");
-    }
-
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = send_lux_input_simulation_request(
-        &project_root,
-        "replay_lux_input",
-        json!({
-            "inputAction": args.action.as_str(),
-            "inputFilePath": args.file.as_ref().map(|path| path.to_string_lossy().to_string()),
-            "actor": "lux-cli"
-        }),
-    )?;
-    print_lux_input_replay_result(&response_json)
-}
-
-fn print_lux_backend_simulate_mouse_ui(args: UnitySimulateMouseUiArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = send_lux_input_simulation_request(
-        &project_root,
-        "simulate_lux_mouse_ui",
-        json!({
-            "mouseUiAction": args.action.as_str(),
-            "mouseUiX": args.x,
-            "mouseUiY": args.y,
-            "mouseUiDurationMs": args.duration_ms,
-            "actor": "lux-cli"
-        }),
-    )?;
-    print_lux_mouse_ui_result(&response_json)
-}
-
-fn send_lux_input_simulation_request(
-    project_root: &Path,
-    command: &str,
-    params: Value,
-) -> anyhow::Result<Value> {
-    let discovery = read_unity_bridge_discovery(project_root)?;
-    let request = json!({
-        "schemaVersion": 1,
-        "requestId": uuid::Uuid::new_v4().to_string(),
-        "command": command,
-        "token": discovery.token,
-        "params": params
-    });
-    let response_line = send_unity_tcp_line_with_timeout(
-        &discovery,
-        &format!("{}\n", serde_json::to_string(&request)?),
-        Duration::from_secs(10),
-    )?;
-    let response_json: Value =
-        serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")?;
-    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!("Unity backend rejected {command}: {}", response_json);
-    }
-
-    Ok(response_json)
-}
-
-fn print_lux_mouse_ui_result(response_json: &Value) -> anyhow::Result<()> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("mouseUiResult"))
-        .context("Unity TCP response did not include payload.mouseUiResult")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "action": payload.get("action").cloned().unwrap_or(Value::Null),
-            "x": payload.get("x").cloned().unwrap_or(Value::Null),
-            "y": payload.get("y").cloned().unwrap_or(Value::Null),
-            "success": payload.get("success").cloned().unwrap_or(Value::Null),
-            "targetName": payload.get("targetName").cloned().unwrap_or(Value::Null),
-            "targetPath": payload.get("targetPath").cloned().unwrap_or(Value::Null),
-            "raycastCount": payload.get("raycastCount").cloned().unwrap_or(Value::Null),
-            "dragActive": payload.get("dragActive").cloned().unwrap_or(Value::Null),
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_input_simulation_result(response_json: &Value) -> anyhow::Result<()> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("inputSimulationResult"))
-        .context("Unity TCP response did not include payload.inputSimulationResult")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "device": payload.get("device").cloned().unwrap_or(Value::Null),
-            "action": payload.get("action").cloned().unwrap_or(Value::Null),
-            "key": payload.get("key").cloned().unwrap_or(Value::Null),
-            "button": payload.get("button").cloned().unwrap_or(Value::Null),
-            "deltaX": payload.get("deltaX").cloned().unwrap_or(Value::Null),
-            "deltaY": payload.get("deltaY").cloned().unwrap_or(Value::Null),
-            "scrollX": payload.get("scrollX").cloned().unwrap_or(Value::Null),
-            "scrollY": payload.get("scrollY").cloned().unwrap_or(Value::Null),
-            "heldKeys": payload.get("heldKeys").cloned().unwrap_or_else(|| json!([])),
-            "heldButtons": payload.get("heldButtons").cloned().unwrap_or_else(|| json!([])),
-            "queuedActions": payload.get("queuedActions").cloned().unwrap_or(Value::Null),
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_input_record_result(response_json: &Value) -> anyhow::Result<()> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("inputRecordResult"))
-        .context("Unity TCP response did not include payload.inputRecordResult")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "action": payload.get("action").cloned().unwrap_or(Value::Null),
-            "active": payload.get("active").cloned().unwrap_or(Value::Null),
-            "frameCount": payload.get("frameCount").cloned().unwrap_or(Value::Null),
-            "filePath": payload.get("filePath").cloned().unwrap_or(Value::Null),
-            "fileSizeBytes": payload.get("fileSizeBytes").cloned().unwrap_or(Value::Null),
-            "mediaType": payload.get("mediaType").cloned().unwrap_or(Value::Null),
-            "message": payload.get("message").cloned().unwrap_or(Value::Null),
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_input_replay_result(response_json: &Value) -> anyhow::Result<()> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("inputReplayResult"))
-        .context("Unity TCP response did not include payload.inputReplayResult")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "action": payload.get("action").cloned().unwrap_or(Value::Null),
-            "active": payload.get("active").cloned().unwrap_or(Value::Null),
-            "filePath": payload.get("filePath").cloned().unwrap_or(Value::Null),
-            "frameCount": payload.get("frameCount").cloned().unwrap_or(Value::Null),
-            "replayedFrameCount": payload.get("replayedFrameCount").cloned().unwrap_or(Value::Null),
-            "completed": payload.get("completed").cloned().unwrap_or(Value::Null),
-            "message": payload.get("message").cloned().unwrap_or(Value::Null),
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_backend_execute_dynamic_code(args: UnityExecuteDynamicCodeArgs) -> anyhow::Result<()> {
-    let code = resolve_dynamic_code_source(&args)?;
-    let project_root = resolve_project_root(&args.project_path)?;
-    let discovery = read_unity_bridge_discovery(&project_root)?;
-    let request = json!({
-        "schemaVersion": 1,
-        "requestId": uuid::Uuid::new_v4().to_string(),
-        "command": "execute_lux_dynamic_code",
-        "token": discovery.token,
-        "params": {
-            "dynamicCode": code,
-            "actor": "lux-cli"
-        }
-    });
-    let response_line = send_unity_tcp_line_with_timeout(
-        &discovery,
-        &format!("{}\n", serde_json::to_string(&request)?),
-        Duration::from_secs(30),
-    )?;
-    let response_json: Value =
-        serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")?;
-    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!(
-            "Unity backend rejected execute_lux_dynamic_code: {}",
-            response_json
-        );
-    }
-
-    print_lux_dynamic_code_result(&response_json)
-}
-
 fn resolve_dynamic_code_source(args: &UnityExecuteDynamicCodeArgs) -> anyhow::Result<String> {
     match (&args.code, &args.file) {
         (Some(_), Some(_)) => bail!("Specify only one dynamic code source: --code or --file"),
@@ -4620,155 +4184,6 @@ fn resolve_dynamic_code_source(args: &UnityExecuteDynamicCodeArgs) -> anyhow::Re
         (None, None) => {
             bail!("lux unity execute-dynamic-code requires --code <string> or --file <path>")
         }
-    }
-}
-
-fn print_lux_dynamic_code_result(response_json: &Value) -> anyhow::Result<()> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("dynamicCodeResult"))
-        .context("Unity TCP response did not include payload.dynamicCodeResult")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "success": payload.get("success").cloned().unwrap_or(Value::Null),
-            "action": payload.get("action").cloned().unwrap_or(Value::Null),
-            "result": payload.get("result").cloned().unwrap_or(Value::Null),
-            "resultType": payload.get("resultType").cloned().unwrap_or(Value::Null),
-            "message": payload.get("message").cloned().unwrap_or(Value::Null),
-            "diagnostics": payload.get("diagnostics").cloned().unwrap_or_else(|| json!([])),
-            "logs": payload.get("logs").cloned().unwrap_or_else(|| json!([])),
-            "elapsedTimeMs": payload.get("elapsedTimeMs").cloned().unwrap_or(Value::Null),
-        }))?
-    );
-    Ok(())
-}
-
-fn print_lux_backend_control_play_mode(args: UnityControlPlayModeArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let requested_action = args.action.as_str();
-    let initial_response = fetch_lux_backend_play_mode_state(&project_root, requested_action)?;
-    let mut state = extract_lux_play_mode_state(&initial_response, requested_action)?;
-
-    if args.wait && requested_action != "status" {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while !play_mode_state_matches(&state, requested_action) {
-            if Instant::now() >= deadline {
-                bail!(
-                    "timed out waiting for PlayMode action {requested_action}; last state: {}",
-                    serde_json::to_string(&state)?
-                );
-            }
-
-            std::thread::sleep(Duration::from_millis(250));
-            let poll_response = fetch_lux_backend_play_mode_state(&project_root, "status")?;
-            state = extract_lux_play_mode_state(&poll_response, requested_action)?;
-        }
-    }
-
-    println!("{}", serde_json::to_string_pretty(&state)?);
-    Ok(())
-}
-
-fn fetch_lux_backend_play_mode_state(project_root: &Path, action: &str) -> anyhow::Result<Value> {
-    let discovery = read_unity_bridge_discovery(project_root)?;
-    let request = json!({
-        "schemaVersion": 1,
-        "requestId": uuid::Uuid::new_v4().to_string(),
-        "command": "control_lux_play_mode",
-        "token": discovery.token,
-        "params": {
-            "playModeAction": action,
-            "actor": "lux-cli"
-        }
-    });
-    let response_line = send_unity_tcp_line(
-        &discovery,
-        &format!("{}\n", serde_json::to_string(&request)?),
-    )?;
-    let response_json: Value =
-        serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")?;
-    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
-        bail!(
-            "Unity backend rejected control_lux_play_mode: {}",
-            response_json
-        );
-    }
-
-    Ok(response_json)
-}
-
-fn extract_lux_play_mode_state(
-    response_json: &Value,
-    requested_action: &str,
-) -> anyhow::Result<Value> {
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("playModeState"))
-        .context("Unity TCP response did not include payload.playModeState")?;
-    let is_playing = payload
-        .get("isPlaying")
-        .and_then(Value::as_bool)
-        .context("Unity TCP response did not include payload.playModeState.isPlaying")?;
-    let is_paused = payload
-        .get("isPaused")
-        .and_then(Value::as_bool)
-        .context("Unity TCP response did not include payload.playModeState.isPaused")?;
-    let transition_requested = payload
-        .get("transitionRequested")
-        .and_then(Value::as_bool)
-        .context("Unity TCP response did not include payload.playModeState.transitionRequested")?;
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-
-    Ok(json!({
-        "schemaVersion": schema_version,
-        "capturedAtUtc": captured_at_utc,
-        "action": requested_action,
-        "isPlaying": is_playing,
-        "isPaused": is_paused,
-        "transitionRequested": transition_requested,
-    }))
-}
-
-fn play_mode_state_matches(state: &Value, action: &str) -> bool {
-    let is_playing = state
-        .get("isPlaying")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let is_paused = state
-        .get("isPaused")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let transition_requested = state
-        .get("transitionRequested")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    match action {
-        "play" => is_playing && !transition_requested,
-        "stop" => !is_playing && !transition_requested,
-        "pause" => is_playing && is_paused,
-        "resume" => is_playing && !is_paused,
-        "status" => true,
-        _ => false,
     }
 }
 
@@ -4850,207 +4265,6 @@ fn print_lux_backend_command_list(args: UnityBackendListCommandsArgs) -> anyhow:
     );
 
     Ok(())
-}
-
-fn print_lux_backend_console_logs(args: UnityGetLogsArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = fetch_lux_backend_command_response(&project_root, "get_lux_console_logs")?;
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("consoleLogs"))
-        .context("Unity TCP response did not include payload.consoleLogs")?;
-
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-    let total_count = payload
-        .get("totalCount")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include payload.consoleLogs.totalCount")?;
-    let displayed_count = payload
-        .get("displayedCount")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include payload.consoleLogs.displayedCount")?;
-    let console_logs = payload
-        .get("consoleLogs")
-        .and_then(Value::as_array)
-        .context("Unity TCP response did not include payload.consoleLogs.consoleLogs")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "totalCount": total_count,
-            "displayedCount": displayed_count,
-            "consoleLogs": console_logs,
-        }))?
-    );
-
-    Ok(())
-}
-
-fn clear_lux_backend_clear_console(args: UnityClearConsoleArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let response_json = fetch_lux_backend_command_response(&project_root, "clear_lux_console")?;
-    let payload = response_json
-        .get("payload")
-        .and_then(|payload| payload.get("consoleClearResult"))
-        .context("Unity TCP response did not include payload.consoleClearResult")?;
-
-    let schema_version = response_json
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include schemaVersion")?;
-    let captured_at_utc = response_json
-        .get("capturedAtUtc")
-        .and_then(Value::as_str)
-        .context("Unity TCP response did not include capturedAtUtc")?;
-    let before_count = payload
-        .get("beforeCount")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include payload.consoleClearResult.beforeCount")?;
-    let after_count = payload
-        .get("afterCount")
-        .and_then(Value::as_u64)
-        .context("Unity TCP response did not include payload.consoleClearResult.afterCount")?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schemaVersion": schema_version,
-            "capturedAtUtc": captured_at_utc,
-            "beforeCount": before_count,
-            "afterCount": after_count,
-        }))?
-    );
-
-    Ok(())
-}
-
-fn print_lux_backend_focus_window(args: UnityFocusWindowArgs) -> anyhow::Result<()> {
-    let project_root = resolve_project_root(&args.project_path)?;
-    let process_match = collect_unity_process_match_info();
-    match fetch_lux_backend_command_response(&project_root, "focus_lux_window") {
-        Ok(response_json) => {
-            let payload = response_json
-                .get("payload")
-                .and_then(|payload| payload.get("focusWindowResult"))
-                .context("Unity TCP response did not include payload.focusWindowResult")?;
-
-            let schema_version = response_json
-                .get("schemaVersion")
-                .and_then(Value::as_u64)
-                .context("Unity TCP response did not include schemaVersion")?;
-            let captured_at_utc = response_json
-                .get("capturedAtUtc")
-                .and_then(Value::as_str)
-                .context("Unity TCP response did not include capturedAtUtc")?;
-            let focused = payload
-                .get("focused")
-                .and_then(Value::as_bool)
-                .context("Unity TCP response did not include payload.focusWindowResult.focused")?;
-
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "schemaVersion": schema_version,
-                    "capturedAtUtc": captured_at_utc,
-                    "platform": std::env::consts::OS,
-                    "attemptedMethod": "unity-backend",
-                    "success": focused,
-                    "processMatch": process_match,
-                    "focused": focused,
-                }))?
-            );
-
-            Ok(())
-        }
-        Err(backend_error) => run_focus_window_os_helper(process_match, backend_error),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn run_focus_window_os_helper(
-    process_match: Value,
-    backend_error: anyhow::Error,
-) -> anyhow::Result<()> {
-    let output = ProcessCommand::new("osascript")
-        .args(["-e", "tell application \"Unity\" to activate"])
-        .output()
-        .with_context(|| {
-            format!("Unity backend focus failed ({backend_error}); failed to run macOS osascript")
-        })?;
-
-    if !output.status.success() {
-        bail!(
-            "Unity backend focus failed ({}); macOS osascript focus failed with status {}: {}",
-            backend_error,
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "platform": std::env::consts::OS,
-            "attemptedMethod": "macos-osascript",
-            "success": true,
-            "processMatch": process_match,
-            "backendAttempted": true,
-            "backendError": backend_error.to_string(),
-        }))?
-    );
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn run_focus_window_os_helper(
-    _process_match: Value,
-    backend_error: anyhow::Error,
-) -> anyhow::Result<()> {
-    Err(backend_error)
-}
-
-fn collect_unity_process_match_info() -> Value {
-    #[cfg(target_os = "macos")]
-    {
-        match ProcessCommand::new("pgrep").args(["-x", "Unity"]).output() {
-            Ok(output) => {
-                let pids: Vec<String> = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect();
-                json!({
-                    "matcher": "pgrep -x Unity",
-                    "matched": !pids.is_empty(),
-                    "pids": pids,
-                })
-            }
-            Err(error) => json!({
-                "matcher": "pgrep -x Unity",
-                "matched": false,
-                "error": error.to_string(),
-            }),
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        json!({
-            "matcher": "not-available",
-            "matched": false,
-        })
-    }
 }
 
 fn fetch_lux_backend_protocol_info(project_root: &Path) -> anyhow::Result<Value> {
@@ -5321,67 +4535,6 @@ fn send_unity_tcp_line(
     send_unity_tcp_line_with_timeout(discovery, request_line, Duration::from_secs(10))
 }
 
-fn wait_for_unity_bridge_ready(project_root: &Path, timeout: Duration) -> anyhow::Result<()> {
-    let deadline = Instant::now() + timeout;
-    let discovery_path = project_root.join("Library/UnityAiBridge/server.json");
-    let mut last_error: Option<String> = None;
-
-    loop {
-        if Instant::now() >= deadline {
-            let message = last_error
-                .map(|error| format!(": {error}"))
-                .unwrap_or_default();
-            bail!(
-                "timed out waiting for Unity bridge readiness at {}{}",
-                discovery_path.display(),
-                message
-            );
-        }
-
-        match read_unity_bridge_discovery(project_root) {
-            Ok(discovery) => {
-                let ping = json!({
-                    "schemaVersion": 1,
-                    "requestId": uuid::Uuid::new_v4().to_string(),
-                    "command": "ping",
-                    "token": discovery.token,
-                    "params": {}
-                });
-                match send_unity_tcp_line_with_timeout(
-                    &discovery,
-                    &format!("{}\n", serde_json::to_string(&ping)?),
-                    Duration::from_secs(1),
-                ) {
-                    Ok(response_line) => {
-                        let response_json: Value = serde_json::from_str(&response_line)
-                            .context("Unity TCP response was not valid JSON")?;
-                        if response_json.get("ok").and_then(Value::as_bool) == Some(true)
-                            && response_json
-                                .get("payload")
-                                .and_then(|payload| payload.get("ping"))
-                                .and_then(|ping| ping.get("status"))
-                                .and_then(Value::as_str)
-                                == Some("ok")
-                        {
-                            return Ok(());
-                        }
-                        last_error =
-                            Some(format!("Unity TCP ping was not ready: {}", response_json));
-                    }
-                    Err(error) => {
-                        last_error = Some(error.to_string());
-                    }
-                }
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-            }
-        }
-
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
-
 fn send_unity_tcp_line_with_timeout(
     discovery: &UnityBridgeDiscovery,
     request_line: &str,
@@ -5505,112 +4658,68 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
     let bridge_source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or(Path::new("."))
-        .join("bridge");
+        .join("bridge")
+        .join("unity");
 
-    let bridge_dirs = ["AiBridgeEditor"];
-    let bridge_files = ["LuxBridgeSettings.cs"];
-
-    for dir_name in &bridge_dirs {
-        let src = bridge_source.join(dir_name);
-        let dst = assets_editor.join(dir_name);
-        if !src.exists() {
-            eprintln!("Warning: source directory not found: {}", src.display());
-            continue;
-        }
-        if dst.exists() {
-            std::fs::remove_dir_all(&dst).with_context(|| {
-                format!(
-                    "Failed to clear existing bridge directory {}",
-                    dst.display()
-                )
-            })?;
-        }
-        copy_dir_recursive(&src, &dst)
-            .with_context(|| format!("Failed to copy {} to {}", src.display(), dst.display()))?;
-        eprintln!("Copied {} -> {}", src.display(), dst.display());
-    }
-
-    for file_name in &bridge_files {
-        let src = bridge_source.join(file_name);
-        let dst = assets_editor.join(file_name);
-        if !src.exists() {
-            eprintln!("Warning: source file not found: {}", src.display());
-            continue;
-        }
-        std::fs::copy(&src, &dst)
-            .with_context(|| format!("Failed to copy {} to {}", src.display(), dst.display()))?;
-        eprintln!("Copied {} -> {}", src.display(), dst.display());
-    }
-
-    let opencode_dir = project_root.join(".opencode");
-    let plugin_dir = opencode_dir.join("plugins/lux");
-
-    if plugin_dir.exists() {
-        eprintln!(
-            "  → OpenCode plugin already exists at {}",
-            plugin_dir.display()
+    let bridge_editor_source = bridge_source.join("AiBridgeEditor");
+    let bridge_settings_source = bridge_source.join("LuxBridgeSettings.cs");
+    if !bridge_editor_source.is_dir() {
+        anyhow::bail!(
+            "Unity bridge source directory not found: {}",
+            bridge_editor_source.display()
         );
-        eprintln!("    To update, remove the existing plugin directory first.");
-    } else {
-        std::fs::create_dir_all(&plugin_dir)
-            .with_context(|| format!("failed to create {}", plugin_dir.display()))?;
-
-        let plugin_files = [
-            ("index.ts", include_str!("templates/plugin/index.ts")),
-            ("types.ts", include_str!("templates/plugin/types.ts")),
-            (
-                "spec-evaluator.ts",
-                include_str!("templates/plugin/spec-evaluator.ts"),
-            ),
-            (
-                "continuation-injector.ts",
-                include_str!("templates/plugin/continuation-injector.ts"),
-            ),
-            (
-                "ticket-loader.ts",
-                include_str!("templates/plugin/ticket-loader.ts"),
-            ),
-            (
-                "session-state.ts",
-                include_str!("templates/plugin/session-state.ts"),
-            ),
-            (
-                "stagnation-detection.ts",
-                include_str!("templates/plugin/stagnation-detection.ts"),
-            ),
-            (
-                "compaction-guard.ts",
-                include_str!("templates/plugin/compaction-guard.ts"),
-            ),
-            (
-                "glossary-manager.ts",
-                include_str!("templates/plugin/glossary-manager.ts"),
-            ),
-            (
-                "package.json",
-                include_str!("templates/plugin/package.json"),
-            ),
-            (
-                "tsconfig.json",
-                include_str!("templates/plugin/tsconfig.json"),
-            ),
-            ("README.md", include_str!("templates/plugin/README.md")),
-            (
-                "node-shims.d.ts",
-                include_str!("templates/plugin/node-shims.d.ts"),
-            ),
-        ];
-
-        for (name, content) in &plugin_files {
-            let path = plugin_dir.join(name);
-            std::fs::write(&path, content)
-                .with_context(|| format!("failed to write {}", path.display()))?;
-        }
-
-        eprintln!("  → Installed OpenCode plugin at {}", plugin_dir.display());
     }
+    if !bridge_settings_source.is_file() {
+        anyhow::bail!(
+            "Unity bridge settings source file not found: {}",
+            bridge_settings_source.display()
+        );
+    }
+
+    let bridge_target = assets_editor.join("LuxBridge");
+    if bridge_target.exists() {
+        std::fs::remove_dir_all(&bridge_target).with_context(|| {
+            format!(
+                "Failed to clear existing bridge directory {}",
+                bridge_target.display()
+            )
+        })?;
+    }
+    copy_dir_recursive(&bridge_editor_source, &bridge_target).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            bridge_editor_source.display(),
+            bridge_target.display()
+        )
+    })?;
+    let settings_target = bridge_target.join("LuxBridgeSettings.cs");
+    std::fs::copy(&bridge_settings_source, &settings_target).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            bridge_settings_source.display(),
+            settings_target.display()
+        )
+    })?;
+
+    let legacy_bridge_target = assets_editor.join("AiBridgeEditor");
+    if legacy_bridge_target.exists() {
+        std::fs::remove_dir_all(&legacy_bridge_target).with_context(|| {
+            format!(
+                "Failed to remove legacy bridge directory {}",
+                legacy_bridge_target.display()
+            )
+        })?;
+    }
+    eprintln!(
+        "Copied {} -> {}",
+        bridge_source.display(),
+        bridge_target.display()
+    );
+
+    install_opencode_plugin(&project_root)?;
 
     // Install OpenCode command files (.opencode/commands/)
+    let opencode_dir = project_root.join(".opencode");
     let commands_dir = opencode_dir.join("commands");
     std::fs::create_dir_all(&commands_dir)
         .with_context(|| format!("failed to create {}", commands_dir.display()))?;
@@ -5667,7 +4776,7 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
         commands_dir.display()
     );
 
-    eprintln!("Bridge installed to {}", assets_editor.display());
+    eprintln!("Bridge installed to {}", bridge_target.display());
     eprintln!("Open Unity Editor and wait for recompile. Menu 'AI Bridge' will appear.");
     Ok(())
 }
@@ -5935,7 +5044,7 @@ fn print_lux_unity_status(args: UnityStatusArgs) -> anyhow::Result<()> {
 fn run_batch_compile(args: CompileArgs) -> anyhow::Result<()> {
     let project_root = resolve_project_root(&args.project_path)?;
 
-    let bridge_marker = project_root.join("Assets/Editor/AiBridgeEditor/LuxBatchAutomation.cs");
+    let bridge_marker = project_root.join("Assets/Editor/LuxBridge/LuxBatchAutomation.cs");
     if !bridge_marker.exists() {
         eprintln!(
             "Bridge not installed, auto-installing to {}...",

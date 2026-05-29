@@ -1,6 +1,8 @@
 ---
 name: test-setup
 description: "Lazy-load only when this workflow is explicitly needed. Use to configure test environments. Make setup explicit, deterministic, isolated, and reversible. Avoid global state leaks, hidden network dependency, and shared temp paths."
+category: workflow
+source: lux
 ---
 
 # Test Setup

@@ -16,7 +16,7 @@ This document serves as the authoritative engineering assessment for the **Roadm
 | OpenCode prompt injection | `gateway/src/templates/plugin/` includes `continuation-injector.ts`, `prompt-builder.ts`, and `next-action-generator.ts`; `adapters/opencode/lux-plugin.ts` integrates prompt/context injection. | Ticket-driven OpenCode hook execution until milestone. | Prompt injection is scaffolded and template-backed; ticket-driven execution provenance is not complete. | High | Guardrail remains: prompt injection without ticket provenance is not completion evidence. |
 | Direct FS / gateway SSoT | Plugin templates include loaders and clients that read/write local state; not all state is gateway-mediated. | Observable, validated SSoT path. | Some orchestration bypasses gateway validation/audit. | High | Inventory and document; do not refactor all plugin state access in this plan. |
 | remote/WebRTC | `/api/remote/sessions` routes exist but are hidden experimental behind `experimental_flags.remote_webrtc=true`. | User/README out-of-scope says no public remote streaming. | Product direction is gated but must stay visibly experimental. | High | Keep disabled by default and exclude from public completion evidence. |
-| Repo green baseline | `cargo build` passes; `cd gateway/ui-src && npx tsc --noEmit` passes; `cargo test` has 1 pre-existing failure in `capture_integration_session_stream_input_stop_and_health`. | Green baseline before roadmap automation. | One known pre-existing test failure remains. | Critical | Track the capture integration failure separately; do not treat roadmap docs as fixing baseline. |
+| Repo green baseline | `cargo build`, `cargo test`, `cd gateway/ui-src && npx tsc --noEmit`, `scripts/check-project-structure.sh`, and `Skills/tools/validate-skills.sh` pass after topology and skill metadata hardening. | Green baseline before roadmap automation. | Behavioral quality of individual skills still needs workflow-level QA beyond schema validation. | Critical | Keep baseline commands green and keep bundled skill schema validation passing before packaging bundled skills as release-ready. |
 
 ## Follow-on Milestones
 
@@ -63,9 +63,23 @@ The following milestones are sequenced after the **Roadmap Reality Lock** is est
 - `gateway/src/` contains 59 Rust source files.
 - Gateway exposes 120+ API and WebSocket routes.
 - Dashboard has 15 pages plus 2 redirects.
-- `Skills/` contains 20 skills.
-- `bridge/` contains 37 C# bridge files.
+- `Skills/skills/` is the tracked source tree for bundled and federated skills.
+- `adapters/opencode/lux-plugin.ts` is the verified OpenCode source adapter path.
+- `bridge/` is registered as the Unity/Godot/Three.js bridge source area and is declared as a git submodule in `.gitmodules`.
 - `seeds/` directory does not exist in the current codebase reality used for this lock.
+
+## Repository Topology Lock
+
+This repository is currently split into runtime state, source adapters, bridge sources, and skill sources. These ownership boundaries are part of the Roadmap Reality Lock and must be kept consistent across README, usage docs, installer code, and structure checks.
+
+| Area | Current ownership | Current path | Notes |
+|---|---|---|---|
+| Runtime state | Lux project SSoT | `.lux/` | Gateway state, roadmap, tickets, run state, and evidence enter through defined write paths only. |
+| Gateway control plane | Tracked source | `gateway/` | Rust CLI, Axum HTTP/WS server, dashboard API, and installer surfaces. |
+| Source adapters | Tracked source | `adapters/` | OpenCode is verified at `adapters/opencode/lux-plugin.ts`; Claude, Codex, and Pi Agent adapters are scaffolded. |
+| Skills source | Tracked source tree | `Skills/skills/` | `Skills/` is present as a normal tracked tree in this checkout; it must not be treated as a runtime SSoT. |
+| Bridge source | Submodule-backed source area | `bridge/` | Fresh checkouts must make the bridge source availability explicit before bridge install can be considered verified. |
+| Removed legacy seed artifacts | Not live source | `seeds/` absent | Deleted seed patches and manifests are not active source unless a supported surface proves they must be restored. |
 
 ## Default Decisions & Invariants
 
@@ -74,14 +88,46 @@ The following milestones are sequenced after the **Roadmap Reality Lock** is est
 - **Convergence Target**: Ambiguity must be `<= 0.02` for a spec to be considered locked.
 - **Remote/WebRTC**: Classified as **hidden experimental**. Not part of the public roadmap or completion evidence; the only opt-in is `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`, and the default value is disabled.
 
+## Trajectory Recommendation
+
+The current repository trajectory should **Continue**, but only through a hardening gate before any new M1-M6 autonomy implementation starts.
+
+| Axis | Recommendation | Rationale | Rollback rule |
+|---|---|---|---|
+| `Skills/skills/` | **Continue** as the tracked skill source tree. | The validator scans the real tracked path by default, and the tracked skill tree now passes schema validation. | Restore an old skill layout only if a supported install or validation surface proves the current path cannot satisfy it. |
+| `adapters/opencode/` | **Continue** as source adapter ownership. | `lux init` and bridge install now converge on `.opencode/plugins/lux-plugin.ts` copied from `adapters/opencode/lux-plugin.ts`. | Reintroduce a legacy plugin bundle only with failing adapter-install evidence from a supported OpenCode surface. |
+| `bridge/` | **Continue**, with explicit submodule initialization. | The Unity bridge source lives under `bridge/unity/` and installs to `Assets/Editor/LuxBridge/`, matching the documented Unity target layout. | Restore `Assets/Editor/AiBridgeEditor/` only if a supported Unity install surface requires that exact path. |
+| Deleted `seeds/` | **Do not revert**. | The uloop manifest fallback now uses a live bundled asset under `gateway/assets/`. No active surface requires deleted seed files. | Restore a deleted seed artifact only when a supported command fails and the evidence names that artifact as required input. |
+| Roadmap docs | **Split** docs from runtime truth. | README and usage docs are projections; `.lux/roadmap.json` and gateway loaders remain the SSoT. | Roll back a doc projection only when it contradicts gateway behavior or `.lux/` runtime truth. |
+| M1-M6 autonomy | **Split** into future milestones. | Scaffolding exists, but autonomous spec convergence, ticket execution, blocker resolution, and T3 push completion are not proven. | Do not mark any M1-M6 milestone complete without fresh evidence from its supported runtime surface. |
+
+Cleanup rollback policy: deleted artifacts are not restored speculatively. A restore requires a failing supported surface, an evidence file naming the missing artifact, and a scoped fix that preserves `.lux/` as runtime SSoT.
+
+## Trajectory Hardening Release Gate
+
+Publish this trajectory only when the hardening gate is green:
+
+| Gate | Command or evidence | Required result |
+|---|---|---|
+| Repository topology | `bash scripts/check-project-structure.sh` / `evidence/task-8-structure.txt` | Passes against `gateway`, `bridge`, `adapters`, `Skills/skills`, `docs`, and `scripts`; removed roots stay absent. |
+| Rust build | `(cd gateway && cargo build)` / `evidence/task-8-cargo-build.txt` | Exit 0. |
+| Rust tests | `(cd gateway && cargo test)` / `evidence/task-8-cargo-test.txt` | Exit 0. |
+| TypeScript typecheck | `(cd gateway/ui-src && npx tsc --noEmit)` / `evidence/task-8-tsc.txt` | Exit 0. |
+| Skills validation evidence | `bash Skills/tools/validate-skills.sh` / `evidence/skills-gate-task-8-validate.txt` | Exit 0 with `PASS: summary - all skill checks passed`; this proves schema validity, not full behavioral completeness of every skill workflow. |
+| Stale path scan | `evidence/task-8-stale-reference-scan.txt` | No active references to removed seed/plugin paths. |
+
+The trajectory hardening gate is green, but M1-M6 implementation still requires a separate plan and fresh supported-surface evidence. This gate does not certify autonomous Unity development; it certifies that the current repository shape, installer paths, bridge layout, skill schema validation, and verification baseline are coherent enough to build on.
+
 ## Integrated Verification Evidence
 
 Current verification evidence:
 
 ```bash
-cd gateway && cargo build     # PASS
-cd gateway && cargo test      # 1 pre-existing failure (capture_integration test)
-cd gateway/ui-src && npx tsc --noEmit  # PASS
+bash scripts/check-project-structure.sh        # PASS
+cd gateway && cargo build                      # PASS
+cd gateway && cargo test                       # PASS
+cd gateway/ui-src && npx tsc --noEmit          # PASS
+bash Skills/tools/validate-skills.sh           # PASS
 ```
 
 ---

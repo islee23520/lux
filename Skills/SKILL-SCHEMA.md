@@ -8,7 +8,7 @@
 name: kebab-case-skill-name  # MUST match directory name
 description: "One-line description (max 200 chars)"
 category: reference | workflow | studio  # Skill classification
-source: unity-patterns | lux | chronos-adapted  # Origin provenance
+source: lux | chronos-adapted | unity-design-patterns-skills  # Origin provenance
 ---
 ```
 

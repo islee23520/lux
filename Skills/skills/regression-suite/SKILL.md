@@ -1,6 +1,8 @@
 ---
 name: regression-suite
 description: "Lazy-load only when this workflow is explicitly needed. Use to design or run regression checks for changed behavior. Prefer targeted tests first, then typecheck/lint/build/smoke. Include command, expected signal, observed result, and remaining untested risk."
+category: workflow
+source: lux
 ---
 
 # Regression Suite

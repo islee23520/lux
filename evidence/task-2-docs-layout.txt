@@ -1,0 +1,5 @@
+docs/usage.md:606:LUX ships curated skills from the tracked source tree at `Skills/skills`. Skills are exposed through the CLI and API, while runtime installation projects them into tool-specific skill directories.
+docs/usage.md:608:Adapter source follows the same separation: OpenCode is verified from `adapters/opencode/lux-plugin.ts`, which installs to `.opencode/plugins/lux-plugin.ts`. Remote/WebRTC remains hidden experimental and requires `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`.
+README.md:439:│   ├── opencode/                   # OpenCode 어댑터 (검증됨, adapters/opencode)
+README.md:447:│   ├── skills/                     # 31개 curated skill source (Skills/skills)
+README.md:542:# - adapters/opencode/lux-plugin.ts를 .opencode/plugins/lux-plugin.ts로 설치

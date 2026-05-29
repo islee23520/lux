@@ -1,0 +1,14 @@
+tmp_root=/tmp/lux-skill-symlink-red.1yqxWA
+tmp_target=/tmp/lux-skill-target.XXXXXX.md
+link=/tmp/lux-skill-target.XXXXXX.md
+PASS: absolute-symlink - SKILL.md exists
+PASS: absolute-symlink - valid frontmatter delimiters
+PASS: absolute-symlink - frontmatter contains name
+PASS: absolute-symlink - frontmatter contains description
+PASS: absolute-symlink - frontmatter contains category
+PASS: absolute-symlink - frontmatter contains source
+PASS: absolute-symlink - name matches directory
+PASS: absolute-symlink - line count 8 within limit
+PASS: summary - all skill checks passed
+exit=0
+RED: absolute SKILL.md symlink currently passes

@@ -1,0 +1,3 @@
+Markdown cleanup verification
+README/docs/plans scan: no unwanted remover traces found; scan exit=1.
+Old audit artifact scan: no old audit files remain.

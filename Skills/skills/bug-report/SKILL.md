@@ -1,6 +1,8 @@
 ---
 name: bug-report
 description: "Lazy-load only when this workflow is explicitly needed. Use to turn observed failures into actionable reports. Capture summary, environment, exact steps, expected result, actual result, logs, suspected subsystem, severity, reproducibility, and minimal next diagnostic. Do not invent fallback data."
+category: workflow
+source: lux
 ---
 
 # Bug Report

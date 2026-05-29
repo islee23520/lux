@@ -1,6 +1,8 @@
 ---
 name: test-helpers
 description: "Lazy-load only when this workflow is explicitly needed. Use when adding or refactoring helper utilities for tests. Keep helpers small, deterministic, local to the test domain, and named by behavior. Avoid hiding assertions or creating broad fixtures that mask failures."
+category: workflow
+source: lux
 ---
 
 # Test Helpers

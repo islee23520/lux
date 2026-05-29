@@ -1,6 +1,8 @@
 ---
 name: core-invariants
 description: "Lazy-load only when this workflow is explicitly needed. Use when a change risks architectural drift. Enforce: .lux is SSoT; clear subsystem ownership; consistent schemas; atomic operations; idempotent retries; no silent fallback. Report violations and concrete repair steps."
+category: workflow
+source: lux
 ---
 
 # Core Invariants

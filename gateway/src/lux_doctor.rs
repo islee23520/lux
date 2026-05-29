@@ -315,7 +315,7 @@ fn check_run_state(lux_dir: &Path) -> DoctorCheck {
     )
 }
 
-fn check_unity_project(project_path: &Path, _is_unity: bool) -> DoctorCheck {
+fn check_unity_project(_project_path: &Path, _is_unity: bool) -> DoctorCheck {
     if _is_unity {
         check(
             "unity-project",

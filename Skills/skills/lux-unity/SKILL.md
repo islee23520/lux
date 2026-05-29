@@ -1,6 +1,8 @@
 ---
 name: lux-unity
 description: "Lazy-load for LUX Unity bridge and MCP game-development operations: status, compile, tests, logs, launch, screenshots, hierarchy, dynamic code, record/replay, and one-loop MCP workflows."
+category: workflow
+source: lux
 ---
 
 # LUX Unity

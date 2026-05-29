@@ -1,0 +1,8 @@
+160000 commit 9ec5b65832882e68a0dc7bb305209348363fb2b7	bridge
+-9ec5b65832882e68a0dc7bb305209348363fb2b7 bridge
+docs/usage.md:298:- `POST /api/bridge/install`
+README.md:314:- `POST /api/bridge/install` — 브릿지 어댑터 설치
+README.md:433:├── bridge/                         # 엔진 브릿지 어댑터
+bridge/unity/README.md:20:git clone --recurse-submodules https://github.com/islee23520/Lux.git
+bridge/unity/README.md:22:git submodule update --init --recursive
+bridge/unity/README.md:27:The bridge source is kept in the `bridge/` submodule (`https://github.com/islee23520/lux-bridge.git`). If `bridge/package.json` is missing after clone, run the submodule update command before installing.

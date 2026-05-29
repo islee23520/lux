@@ -1,0 +1,35 @@
+F1 plan compliance audit
+unchecked task boxes:
+required evidence files:
+OK evidence/task-1-reality-inventory.txt
+OK evidence/task-1-legacy-paths.txt
+OK evidence/task-2-docs-layout.txt
+OK evidence/task-2-stale-paths.txt
+OK evidence/task-3-skills-validate.txt
+OK evidence/task-3-skills-missing-root.txt
+OK evidence/task-4-uloop-path.txt
+OK evidence/task-4-no-seed-fallback.txt
+OK evidence/task-4-uloop-test.txt
+OK evidence/task-5-opencode-install.txt
+OK evidence/task-5-opencode-targets.txt
+OK evidence/task-5-no-plugins-opencode.txt
+OK evidence/task-5-opencode-test.txt
+OK evidence/task-6-bridge-install.txt
+OK evidence/task-6-bridge-idempotent.txt
+OK evidence/task-6-bridge-test.txt
+OK evidence/task-7-skills-ownership.txt
+OK evidence/task-7-bridge-submodule.txt
+OK evidence/task-8-structure.txt
+OK evidence/task-8-cargo-build.txt
+OK evidence/task-8-cargo-test.txt
+OK evidence/task-8-tsc.txt
+OK evidence/task-8-skills-validate.txt
+OK evidence/task-8-stale-reference-scan.txt
+OK evidence/task-8-baseline-verification.txt
+OK evidence/task-9-trajectory-recommendation.txt
+OK evidence/task-9-rollback-policy.txt
+OK evidence/task-10-release-gate.txt
+OK evidence/task-10-capability-labels.txt
+OK evidence/final-f2-code-quality.txt
+OK evidence/final-f3-manual-qa.txt
+OK evidence/final-f4-scope-fidelity.txt

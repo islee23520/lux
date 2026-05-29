@@ -1,6 +1,8 @@
 ---
 name: release-checklist
 description: "Lazy-load only when this workflow is explicitly needed. Use before packaging or publishing. Verify build, tests, docs, CLI help, version metadata, migration notes, security posture, rollback plan, and known limitations. Do not release with unexplained failing checks."
+category: workflow
+source: lux
 ---
 
 # Release Checklist

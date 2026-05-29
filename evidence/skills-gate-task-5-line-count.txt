@@ -1,0 +1,15 @@
+      34 Skills/skills/unity-cs-reference/SKILL.md
+    4999 Skills/skills/unity-cs-reference/references/unity-cs-api.md
+    5033 total
+---
+name: unity-cs-reference
+description: "Lazy-load only when this workflow is explicitly needed. Use as a compact lookup guide for Unity Editor API decisions. Prefer public UnityEditor APIs for LUX bridge automation and keep Unity reference material under references/."
+category: reference
+source: lux
+---
+
+# Unity C# Reference
+
+Developer-facing lookup guide for Unity C# API decisions in LUX bridge and editor automation work. The detailed API reference is stored in `references/unity-cs-api.md` so this skill hub stays small enough for release validation.
+
+## Purpose

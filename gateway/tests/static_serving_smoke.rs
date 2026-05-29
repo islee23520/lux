@@ -2,14 +2,17 @@ use std::{
     fs,
     net::TcpListener,
     process::{Command, Stdio},
+    sync::{Mutex, MutexGuard},
     thread,
     time::{Duration, Instant},
 };
 
 const TOKEN: &str = "static-smoke-token";
+static STATIC_SERVING_LOCK: Mutex<()> = Mutex::new(());
 
 struct GatewayProcess {
     child: std::process::Child,
+    _test_lock: MutexGuard<'static, ()>,
 }
 
 impl Drop for GatewayProcess {
@@ -28,6 +31,9 @@ fn reserve_local_port() -> u16 {
 }
 
 fn start_gateway(port: u16) -> GatewayProcess {
+    let test_lock = STATIC_SERVING_LOCK
+        .lock()
+        .expect("static serving test lock poisoned");
     let child = Command::new(env!("CARGO_BIN_EXE_lux"))
         .args([
             "serve",
@@ -44,7 +50,10 @@ fn start_gateway(port: u16) -> GatewayProcess {
         .spawn()
         .expect("start lux test server");
 
-    GatewayProcess { child }
+    GatewayProcess {
+        child,
+        _test_lock: test_lock,
+    }
 }
 
 fn wait_for_health(port: u16) {
@@ -92,7 +101,6 @@ fn http_body(port: u16, path: &str) -> Option<String> {
         }
     }
 
-    // Read body from same BufReader
     if let Some(cl) = content_length {
         let mut body = vec![0_u8; cl];
         let n = reader.read(&mut body).ok()?;
@@ -140,7 +148,6 @@ fn request_status(port: u16, method: &str, path: &str, headers: &[(&str, &str)])
 fn serves_index_html_from_ui_dir() {
     let port = reserve_local_port();
 
-    // Ensure ui/ directory exists with an index.html for this test
     let ui_dir = std::env::current_dir().unwrap().join("ui");
     let _ = fs::create_dir_all(&ui_dir);
     fs::write(
@@ -166,7 +173,6 @@ fn serves_index_html_from_ui_dir() {
 fn serves_nested_asset() {
     let port = reserve_local_port();
 
-    // Ensure ui/ directory exists with a favicon.svg for this test
     let ui_dir = std::env::current_dir().unwrap().join("ui");
     let _ = fs::create_dir_all(&ui_dir);
     fs::write(
@@ -206,7 +212,6 @@ fn returns_404_for_missing_file() {
 fn handles_missing_ui_dir_gracefully() {
     let port = reserve_local_port();
 
-    // Rename ui/ if it exists so the server sees it as missing
     let ui_dir_backup = std::env::current_dir()
         .unwrap()
         .join("ui")
@@ -231,7 +236,6 @@ fn handles_missing_ui_dir_gracefully() {
         "GET /ui/ should return a response (not crash) when ui/ dir is absent"
     );
 
-    // Restore original ui/ directory
     if let (Some(original), Some(renamed)) = (ui_dir_backup, renamed_path) {
         let _ = fs::rename(renamed, original);
     }

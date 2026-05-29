@@ -436,34 +436,23 @@ Lux/
 │   └── threejs/                    # Three.js 브릿지
 │
 ├── adapters/                       # AI 툴 어댑터 (소스)
-│   ├── opencode/                   # OpenCode 어댑터 (검증됨)
+│   ├── opencode/                   # OpenCode 어댑터 (검증됨, adapters/opencode)
 │   │   └── lux-plugin.ts           # 세션 토스트, 컨텍스트 주입
 │   ├── codex/                      # OpenAI Codex (스캐폴드)
 │   ├── claude/                     # Claude Code (스캐폴드)
 │   ├── pi-agent/                   # Pi-Agent (스캐폴드)
 │   └── README.md
 │
-├── Skills/                     # 20개 내장 AI 스킬
-│   ├── architecture-decision/
-│   ├── architecture-review/
-│   ├── bug-report/
-│   ├── bug-triage/
-│   ├── changelog/
-│   ├── code-review/
-│   ├── core-invariants/
-│   ├── game-dev/
-│   ├── ldp-decision-protocol/
-│   ├── lux-unity/
-│   ├── perf-profile/
-│   ├── regression-suite/
-│   ├── release-checklist/
-│   ├── retrospective/
-│   ├── security-audit/
-│   ├── smoke-check/
-│   ├── tech-debt/
-│   ├── test-helpers/
-│   ├── test-setup/
-│   └── unity-cs-reference/
+├── Skills/                         # 스킬 federation 소스
+│   ├── skills/                     # 31개 curated skill source (Skills/skills)
+│   │   ├── game-dev/
+│   │   ├── lux-unity/
+│   │   ├── unity-cs-reference/
+│   │   ├── studio-*/
+│   │   └── unity-pattern-*/
+│   ├── catalogs/                   # 장르/스킬 inventory
+│   ├── docs/templates/             # 설계/명세 템플릿
+│   └── tools/                      # 스킬 동기화/검증 스크립트
 │
 ├── scripts/                    # 유틸리티 스크립트
 │   ├── e2e-lux-sequential-smoke.sh
@@ -471,7 +460,6 @@ Lux/
 │   ├── policy-scan.mjs         # 불변성 정책 스캐너
 │   └── test-all.sh
 │
-├── seeds/                      # YAML 시드 데이터 & 패치 (120+ 항목)
 ├── docs/                       # 문서
 │   ├── roadmap-reality-lock.md
 │   ├── usage.md
@@ -535,6 +523,9 @@ Lux/
 ### 설치
 
 ```bash
+# 0. Fresh clone: initialize bridge submodule
+git submodule update --init bridge
+
 # 1. LUX CLI 설치
 cargo install --path gateway
 
@@ -551,7 +542,7 @@ lux init
 
 # 자동 수행:
 # - .lux/ 디렉토리 생성 (SSoT)
-# - .opencode/plugins/에 Lux 플러그인 설치
+# - adapters/opencode/lux-plugin.ts를 .opencode/plugins/lux-plugin.ts로 설치
 # - OpenCode에서 lux_* 도구 사용 가능
 ```
 

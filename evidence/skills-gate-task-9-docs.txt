@@ -1,0 +1,19 @@
+README.md:497:| **M1** | Canonical 9-Domain Schema & Defaults |
+README.md:502:| **M6 / Autonomous** | Spec → Ticket → OpenCode 완전 자율 파이프라인 (계획됨) |
+docs/roadmap-reality-lock.md:9:| Roadmap/status truth | `gateway/src/lux_roadmap.rs` exists with `RoadmapReality` and M1-M5 phase tracking; docs are projections that must follow this implementation. | One canonical source of roadmap truth. | Historical docs can still drift from gateway reality if not refreshed. | Critical | Keep `.lux/roadmap.json`/roadmap loader as the canonical status path and update projections from code evidence. |
+docs/roadmap-reality-lock.md:19:| Repo green baseline | `cargo build`, `cargo test`, `cd gateway/ui-src && npx tsc --noEmit`, `scripts/check-project-structure.sh`, and `Skills/tools/validate-skills.sh` pass after topology and skill metadata hardening. | Green baseline before roadmap automation. | Behavioral quality of individual skills still needs workflow-level QA beyond schema validation. | Critical | Keep baseline commands green and keep bundled skill schema validation passing before packaging bundled skills as release-ready. |
+docs/roadmap-reality-lock.md:25:### M1: Canonical 9-Domain Schema & Defaults
+docs/roadmap-reality-lock.md:32:- **Entry Criteria**: M1 complete; consistent ambiguity polarity (0.0 = clear) enforced.
+docs/roadmap-reality-lock.md:55:### M6: Autonomous — Spec-to-Ticket-to-Execution Pipeline
+docs/roadmap-reality-lock.md:59:- **Status**: Planned — `gateway/src/lux_run_state.rs` has M6 states, but the full autonomous pipeline is not implemented.
+docs/roadmap-reality-lock.md:93:The current repository trajectory should **Continue**, but only through a hardening gate before any new M1-M6 autonomy implementation starts.
+docs/roadmap-reality-lock.md:102:| M1-M6 autonomy | **Split** into future milestones. | Scaffolding exists, but autonomous spec convergence, ticket execution, blocker resolution, and T3 push completion are not proven. | Do not mark any M1-M6 milestone complete without fresh evidence from its supported runtime surface. |
+docs/roadmap-reality-lock.md:116:| Skills validation evidence | `bash Skills/tools/validate-skills.sh` / `evidence/skills-gate-task-8-validate.txt` | Exit 0 with `PASS: summary - all skill checks passed`; this proves schema validity, not full behavioral completeness of every skill workflow. |
+docs/roadmap-reality-lock.md:119:Do not start M1-M6 implementation until the trajectory hardening gate is green. This gate does not certify autonomous Unity development; it certifies that the current repository shape, installer paths, bridge layout, and verification baseline are coherent enough to build on.
+docs/roadmap-reality-lock.md:126:bash scripts/check-project-structure.sh        # PASS
+docs/roadmap-reality-lock.md:127:cd gateway && cargo build                      # PASS
+docs/roadmap-reality-lock.md:128:cd gateway && cargo test                       # PASS
+docs/roadmap-reality-lock.md:129:cd gateway/ui-src && npx tsc --noEmit          # PASS
+docs/roadmap-reality-lock.md:130:bash Skills/tools/validate-skills.sh           # PASS
+
+exit=0

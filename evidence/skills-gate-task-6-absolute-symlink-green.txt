@@ -1,0 +1,7 @@
+tmp_root=/tmp/lux-skill-symlink-green.VJJCup
+tmp_target=/tmp/lux-skill-target.XXXXXX.md
+link=/tmp/lux-skill-target.XXXXXX.md
+FAIL: absolute-symlink - SKILL.md must not be an absolute symlink to /tmp/lux-skill-target.XXXXXX.md
+FAIL: summary - one or more skill checks failed
+exit=1
+GREEN: absolute SKILL.md symlink rejected

@@ -14,6 +14,9 @@ LUX is local-first. Durable project state is owned under `.lux/`.
 Minimal flow, install LUX, install the bridge, initialize `.lux/`, start the server.
 
 ```bash
+# 0) Fresh clone: initialize the bridge submodule
+git submodule update --init bridge
+
 # 1) Install the LUX CLI
 cargo install --path gateway
 
@@ -603,7 +606,9 @@ Spec loop (Socratic refinement) surfaces:
 
 ## 7. Skill System
 
-LUX ships with 20 built-in skills. Skills are exposed through the CLI and API.
+LUX ships curated skills from the tracked source tree at `Skills/skills`. Skills are exposed through the CLI and API, while runtime installation projects them into tool-specific skill directories.
+
+Adapter source follows the same separation: OpenCode is verified from `adapters/opencode/lux-plugin.ts`, which installs to `.opencode/plugins/lux-plugin.ts`. Remote/WebRTC remains hidden experimental and requires `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`.
 
 Built-in skill names:
 

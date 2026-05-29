@@ -1,6 +1,8 @@
 ---
 name: code-review
 description: "Lazy-load only when this workflow is explicitly needed. Use to review LUX diffs for correctness, maintainability, security, and tests. Check Rust Axum/CLI conventions, React strict hooks, no UI mock fallback data, Unity 6000+ bridge compatibility, protocol consistency, and fresh verification evidence."
+category: workflow
+source: lux
 ---
 
 # Code Review

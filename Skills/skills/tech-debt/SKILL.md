@@ -1,6 +1,8 @@
 ---
 name: tech-debt
 description: "Lazy-load only when this workflow is explicitly needed. Use to document or reduce debt. Describe symptom, cost, affected files, invariant risk, simplest cleanup, tests needed, and what not to change. Prefer deletion and reuse over new abstractions."
+category: workflow
+source: lux
 ---
 
 # Technical Debt

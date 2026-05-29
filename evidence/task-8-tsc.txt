@@ -1,0 +1,2 @@
+npx tsc --noEmit produced no output
+exit=0

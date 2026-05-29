@@ -4,7 +4,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILLS_ROOT="$REPO_ROOT/.claude/skills"
+: "${SKILLS_ROOT:=$REPO_ROOT/skills}"
 
 overall_status=0
 
@@ -44,6 +44,17 @@ while IFS= read -r -d '' skill_dir; do
     print_result "FAIL" "$skill_name" "missing SKILL.md"
     overall_status=1
     continue
+  fi
+
+  if [ -L "$skill_file" ]; then
+    link_target="$(readlink "$skill_file")"
+    case "$link_target" in
+      /*)
+        print_result "FAIL" "$skill_name" "SKILL.md must not be an absolute symlink to $link_target"
+        overall_status=1
+        continue
+        ;;
+    esac
   fi
 
   print_result "PASS" "$skill_name" "SKILL.md exists"

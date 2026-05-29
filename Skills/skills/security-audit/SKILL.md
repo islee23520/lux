@@ -1,6 +1,8 @@
 ---
 name: security-audit
 description: "Lazy-load only when this workflow is explicitly needed. Use for credentials, command execution, network exposure, logs, generated code, or Unity automation guardrails. Check auth, input validation, path traversal, secret redaction, destructive actions, auditability, and least privilege."
+category: workflow
+source: lux
 ---
 
 # Security Audit

@@ -1,6 +1,8 @@
 ---
 name: retrospective
 description: "Lazy-load only when this workflow is explicitly needed. Use after incidents or milestones. Record what happened, impact, root causes, what worked, what failed, concrete follow-ups, owners, and prevention checks. Keep it blameless and evidence-based."
+category: workflow
+source: lux
 ---
 
 # Retrospective

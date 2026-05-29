@@ -1,6 +1,8 @@
 ---
 name: architecture-decision
 description: "Lazy-load only when this workflow is explicitly needed. Use for durable technical choices. Output a short ADR: Context, Decision, Alternatives, Consequences, Verification, Owner. Prefer existing LUX boundaries: gateway owns CLI/server, bridge owns Unity protocol, Skills owns passive workflows. Reject duplicate state, hidden fallback, and broad rewrites without evidence."
+category: workflow
+source: lux
 ---
 
 # Architecture Decision

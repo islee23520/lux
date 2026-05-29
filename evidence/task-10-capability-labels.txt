@@ -1,0 +1,35 @@
+docs/godot-support.md:3:LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Unity remains the primary public-beta verified engine; Godot is a first-class target category with explicit capability status so unsupported operations are not silently advertised as working.
+docs/godot-support.md:9:| Project detection | verified | `project.godot` with `config_version=5` identifies Godot 4.x projects. |
+docs/godot-support.md:10:| `.lux` init | planned | Godot-specific spec initialization is tracked separately from this bridge/status MVP. |
+docs/godot-support.md:11:| Bridge install | verified | `lux bridge install --project-path <project> --type godot` installs managed files under `addons/lux_bridge/`. |
+docs/godot-support.md:12:| Status | verified | `lux godot status --project-path <project>` reports detection plus separate GoPeak and LUX command capability fields. |
+docs/godot-support.md:14:| Logs/events | planned | Requires a verified Godot/GoPeak evidence loop. |
+docs/godot-support.md:15:| Scene/runtime inspection | planned | GoPeak command availability is reported separately from LUX-verified support. |
+docs/godot-support.md:16:| Screenshot/capture | planned | Not part of this Godot MVP. |
+docs/godot-support.md:17:| `.agents` workflow skill | verified | `lux agents-install` installs `lux-godot` into `.agents/skills/`. |
+docs/godot-support.md:40:The status output separates external GoPeak command visibility from LUX-verified command support:
+docs/godot-support.md:59:GoPeak commands reported in `lux godot status` are external adapter capabilities, NOT LUX-verified support. A `project/build` entry in the GoPeak manifest does not mean `lux godot build` is supported. LUX-verified commands require end-to-end harness verification within the LUX runtime.
+docs/roadmap-reality-lock.md:12:| Socratic spec loop | `gateway/src/lux_spec_loop.rs` is implemented with proposal/approval flow and question/approve/reject/apply endpoints. | Autonomous Socratic convergence loop. | Human-gated proposal flow exists; autonomous convergence is not yet verified. | Medium | Treat as scaffolded implementation until autonomous convergence evidence exists. |
+docs/roadmap-reality-lock.md:16:| OpenCode prompt injection | `gateway/src/templates/plugin/` includes `continuation-injector.ts`, `prompt-builder.ts`, and `next-action-generator.ts`; `adapters/opencode/lux-plugin.ts` integrates prompt/context injection. | Ticket-driven OpenCode hook execution until milestone. | Prompt injection is scaffolded and template-backed; ticket-driven execution provenance is not complete. | High | Guardrail remains: prompt injection without ticket provenance is not completion evidence. |
+docs/roadmap-reality-lock.md:18:| remote/WebRTC | `/api/remote/sessions` routes exist but are hidden experimental behind `experimental_flags.remote_webrtc=true`. | User/README out-of-scope says no public remote streaming. | Product direction is gated but must stay visibly experimental. | High | Keep disabled by default and exclude from public completion evidence. |
+docs/roadmap-reality-lock.md:23:The following milestones are sequenced after the **Roadmap Reality Lock** is established. Several now have scaffolding or partial implementation, but none should be treated as full autonomous Unity development until their success criteria are verified.
+docs/roadmap-reality-lock.md:35:- **Status**: Scaffolded — `gateway/src/lux_ambiguity.rs` and `gateway/src/lux_spec_loop.rs` exist; autonomous convergence to the target is not proven.
+docs/roadmap-reality-lock.md:44:- **Entry Criteria**: M3 complete; OpenCode continuation hooks scaffolded.
+docs/roadmap-reality-lock.md:47:- **Status**: Scaffolded — `gateway/src/lux_hooks.rs` and plugin templates exist; full ticket-driven OpenCode execution loop remains unverified.
+docs/roadmap-reality-lock.md:53:- **Status**: Planned — `gateway/src/lux_verification.rs` creates blockers, but autonomous resolution is not implemented.
+docs/roadmap-reality-lock.md:59:- **Status**: Planned — `gateway/src/lux_run_state.rs` has M6 states, but the full autonomous pipeline is not implemented.
+docs/roadmap-reality-lock.md:67:- `adapters/opencode/lux-plugin.ts` is the verified OpenCode source adapter path.
+docs/roadmap-reality-lock.md:79:| Source adapters | Tracked source | `adapters/` | OpenCode is verified at `adapters/opencode/lux-plugin.ts`; Claude, Codex, and Pi Agent adapters are scaffolded. |
+docs/roadmap-reality-lock.md:81:| Bridge source | Submodule-backed source area | `bridge/` | Fresh checkouts must make the bridge source availability explicit before bridge install can be considered verified. |
+docs/roadmap-reality-lock.md:89:- **Remote/WebRTC**: Classified as **hidden experimental**. Not part of the public roadmap or completion evidence; the only opt-in is `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`, and the default value is disabled.
+README.md:5:LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Unity remains the primary public-beta verified engine; Three.js and Godot are supported through explicit capability maturity tiers so AI tools do not confuse planned or external-adapter capabilities with verified LUX commands.
+README.md:29:| Project detection | verified | planned | verified |
+README.md:30:| `.lux` workspace | verified | planned | planned |
+README.md:31:| Bridge install | verified | planned | verified via `--type godot` |
+README.md:32:| Status | verified | planned | verified with separated `gopeak.*` and `lux.*` fields |
+README.md:33:| Build/run/test | verified for Unity paths | planned | unsupported until GoPeak-backed verification exists |
+README.md:34:| `.agents` workflow skill | verified | planned | verified via `lux-godot` |
+README.md:393:- `GET /api/lux/experimental-flags` — 실험적 기능 플래그
+README.md:507:- ❌ WebRTC / 원격 비디오 스트리밍 (실험적, `experimental_flags.remote_webrtc=true`로 게이트)
+
+exit=0

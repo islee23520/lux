@@ -1,0 +1,3 @@
+gateway/src/uloop_sync.rs:21:    "https://raw.githubusercontent.com/islee23520/Lux/main/seeds/uloop-manifest.json";
+gateway/src/uloop_sync.rs:24:pub const BUNDLED_MANIFEST_PATH: &str = "seeds/uloop-manifest.json";
+asset-exists-exit=1

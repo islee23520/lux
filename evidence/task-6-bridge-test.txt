@@ -1,0 +1,202 @@
+    Blocking waiting for file lock on package cache
+   Compiling lux v0.1.0 (/Users/ilseoblee/workspace/linalab/Lux/gateway)
+warning: unused variable: `project_path`
+   --> gateway/src/lux_doctor.rs:318:24
+    |
+318 | fn check_unity_project(project_path: &Path, _is_unity: bool) -> DoctorCheck {
+    |                        ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_project_path`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `lux` (lib) generated 1 warning (run `cargo fix --lib -p lux` to apply 1 suggestion)
+warning: unused import: `BufRead`
+    --> gateway/src/main.rs:1953:25
+     |
+1953 |     use std::io::{self, BufRead};
+     |                         ^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> gateway/src/main.rs:1918:61
+     |
+1918 |         && std::fs::read_dir(&agents_skills_dir).is_ok_and(|mut it| {
+     |                                                             ----^^
+     |                                                             |
+     |                                                             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `run_lux_unity_launch` is never used
+    --> gateway/src/main.rs:4066:4
+     |
+4066 | fn run_lux_unity_launch(args: UnityLaunchArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `print_lux_backend_screenshot` is never used
+    --> gateway/src/main.rs:4254:4
+     |
+4254 | fn print_lux_backend_screenshot(args: UnityScreenshotArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_simulate_keyboard` is never used
+    --> gateway/src/main.rs:4345:4
+     |
+4345 | fn print_lux_backend_simulate_keyboard(args: UnitySimulateKeyboardArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_simulate_mouse_input` is never used
+    --> gateway/src/main.rs:4360:4
+     |
+4360 | fn print_lux_backend_simulate_mouse_input(args: UnitySimulateMouseInputArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_record_input` is never used
+    --> gateway/src/main.rs:4380:4
+     |
+4380 | fn print_lux_backend_record_input(args: UnityRecordInputArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_replay_input` is never used
+    --> gateway/src/main.rs:4393:4
+     |
+4393 | fn print_lux_backend_replay_input(args: UnityReplayInputArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_simulate_mouse_ui` is never used
+    --> gateway/src/main.rs:4411:4
+     |
+4411 | fn print_lux_backend_simulate_mouse_ui(args: UnitySimulateMouseUiArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `send_lux_input_simulation_request` is never used
+    --> gateway/src/main.rs:4427:4
+     |
+4427 | fn send_lux_input_simulation_request(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_mouse_ui_result` is never used
+    --> gateway/src/main.rs:4454:4
+     |
+4454 | fn print_lux_mouse_ui_result(response_json: &Value) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_input_simulation_result` is never used
+    --> gateway/src/main.rs:4486:4
+     |
+4486 | fn print_lux_input_simulation_result(response_json: &Value) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_input_record_result` is never used
+    --> gateway/src/main.rs:4521:4
+     |
+4521 | fn print_lux_input_record_result(response_json: &Value) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_input_replay_result` is never used
+    --> gateway/src/main.rs:4552:4
+     |
+4552 | fn print_lux_input_replay_result(response_json: &Value) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_execute_dynamic_code` is never used
+    --> gateway/src/main.rs:4583:4
+     |
+4583 | fn print_lux_backend_execute_dynamic_code(args: UnityExecuteDynamicCodeArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_dynamic_code_result` is never used
+    --> gateway/src/main.rs:4626:4
+     |
+4626 | fn print_lux_dynamic_code_result(response_json: &Value) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_control_play_mode` is never used
+    --> gateway/src/main.rs:4658:4
+     |
+4658 | fn print_lux_backend_control_play_mode(args: UnityControlPlayModeArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `fetch_lux_backend_play_mode_state` is never used
+    --> gateway/src/main.rs:4684:4
+     |
+4684 | fn fetch_lux_backend_play_mode_state(project_root: &Path, action: &str) -> anyhow::Result<Value> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `extract_lux_play_mode_state` is never used
+    --> gateway/src/main.rs:4712:4
+     |
+4712 | fn extract_lux_play_mode_state(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `play_mode_state_matches` is never used
+    --> gateway/src/main.rs:4751:4
+     |
+4751 | fn play_mode_state_matches(state: &Value, action: &str) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_console_logs` is never used
+    --> gateway/src/main.rs:4855:4
+     |
+4855 | fn print_lux_backend_console_logs(args: UnityGetLogsArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `clear_lux_backend_clear_console` is never used
+    --> gateway/src/main.rs:4898:4
+     |
+4898 | fn clear_lux_backend_clear_console(args: UnityClearConsoleArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `print_lux_backend_focus_window` is never used
+    --> gateway/src/main.rs:4936:4
+     |
+4936 | fn print_lux_backend_focus_window(args: UnityFocusWindowArgs) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_focus_window_os_helper` is never used
+    --> gateway/src/main.rs:4979:4
+     |
+4979 | fn run_focus_window_os_helper(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `collect_unity_process_match_info` is never used
+    --> gateway/src/main.rs:5022:4
+     |
+5022 | fn collect_unity_process_match_info() -> Value {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_unity_bridge_ready` is never used
+    --> gateway/src/main.rs:5324:4
+     |
+5324 | fn wait_for_unity_bridge_ready(project_root: &Path, timeout: Duration) -> anyhow::Result<()> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `check_uloop_installed` is never used
+  --> gateway/src/uloop_runner.rs:43:8
+   |
+43 | pub fn check_uloop_installed() -> bool {
+   |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_uloop_version` is never used
+  --> gateway/src/uloop_runner.rs:48:8
+   |
+48 | pub fn get_uloop_version() -> Result<String> {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `run_uloop_command_inherit` is never used
+   --> gateway/src/uloop_runner.rs:103:8
+    |
+103 | pub fn run_uloop_command_inherit(uloop_args: &[&str], project_path: Option<&Path>) -> Result<i32> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `lux` (bin "lux") generated 30 warnings (1 duplicate) (run `cargo fix --bin "lux" -p lux` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.76s
+     Running tests/gateway_cli_smoke.rs (/Users/ilseoblee/workspace/linalab/Lux/target/debug/deps/gateway_cli_smoke-4fc0439b6b9bc320)
+
+running 1 test
+test rust_lux_bridge_install_copies_unity_bridge_to_luxbridge_layout ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 64 filtered out; finished in 1.20s
+

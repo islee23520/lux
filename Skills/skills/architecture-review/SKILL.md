@@ -1,6 +1,8 @@
 ---
 name: architecture-review
 description: "Lazy-load only when this workflow is explicitly needed. Use to review an existing design or implementation for boundary drift. Check SSoT, responsibility split, protocol consistency, atomicity, idempotency, and observable failures. Return ranked findings with file references, risk level, and the smallest corrective action."
+category: workflow
+source: lux
 ---
 
 # Architecture Review

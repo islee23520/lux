@@ -229,6 +229,164 @@ fn rust_lux_bridge_install_godot_requires_valid_project_and_is_idempotent() {
 }
 
 #[test]
+fn rust_lux_init_installs_opencode_adapter_from_source_path() {
+    let project_root = create_temp_dir("lux-init-opencode-adapter");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+
+    assert_command_success(&output, "lux init --no-interactive");
+
+    let installed_plugin = project_root.join(".opencode/plugins/lux-plugin.ts");
+    let legacy_plugin_dir = project_root.join(".opencode/plugins/lux");
+    let source_plugin =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../adapters/opencode/lux-plugin.ts");
+    let installed = fs::read_to_string(&installed_plugin).expect("read installed plugin");
+    let source = fs::read_to_string(&source_plugin).expect("read source plugin");
+
+    assert_eq!(installed, source);
+    assert!(
+        !legacy_plugin_dir.exists(),
+        "legacy plugin directory should not be created by default"
+    );
+}
+
+#[test]
+fn rust_lux_init_creates_specs_ssot_contract() {
+    let project_root = create_temp_dir("lux-init-specs-ssot");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+
+    assert_command_success(&output, "lux init --no-interactive");
+
+    let specs_root = project_root.join(".lux/specs");
+    assert!(specs_root.join("gdd.md").is_file());
+    assert!(specs_root.join("spec.json").is_file());
+    assert!(specs_root.join("domains").is_dir());
+    assert!(specs_root.join("domains/design.md").is_file());
+    assert!(specs_root.join("decisions.jsonl").is_file());
+    assert!(specs_root.join("preferences.json").is_file());
+    assert!(specs_root.join("migration.json").is_file());
+}
+
+#[test]
+fn rust_lux_init_migrates_legacy_specs_with_receipt() {
+    let project_root = create_temp_dir("lux-init-specs-migration");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run first lux init");
+    assert_command_success(&first_output, "first lux init --no-interactive");
+
+    let marker = "LEGACY-DESIGN-MARKER";
+    fs::write(
+        project_root.join(".lux/domains/design.md"),
+        format!("# Legacy Design\n\n{marker}\n"),
+    )
+    .expect("write legacy design domain");
+    let _ = fs::remove_dir_all(project_root.join(".lux/specs"));
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run second lux init");
+    assert_command_success(&second_output, "second lux init --no-interactive");
+
+    let migrated_design = fs::read_to_string(project_root.join(".lux/specs/domains/design.md"))
+        .expect("read migrated design domain");
+    assert!(migrated_design.contains(marker));
+
+    let receipt_path = project_root.join(".lux/specs/migration.json");
+    let receipt: Value =
+        serde_json::from_str(&fs::read_to_string(&receipt_path).expect("read migration receipt"))
+            .expect("migration receipt JSON");
+    let sources = receipt["sources"]
+        .as_array()
+        .expect("migration sources should be an array");
+    assert!(sources.iter().any(|source| source == ".lux/spec.json"));
+    assert!(sources
+        .iter()
+        .any(|source| source == ".lux/domains/design.md"));
+}
+
+#[test]
+fn rust_lux_bridge_install_copies_unity_bridge_to_luxbridge_layout() {
+    let temp_dir = create_temp_dir("lux-bridge-install-layout");
+    let project_root = temp_dir.join("Project");
+    let fake_bin = temp_dir.join("bin");
+    let fake_npm = fake_bin.join("npm");
+    fs::create_dir_all(project_root.join("Assets")).expect("create Assets");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+    fs::write(
+        &fake_npm,
+        "#!/bin/sh\nif [ \"$1\" = \"list\" ]; then printf '{\"dependencies\":{\"uloop-cli\":{\"version\":\"0.0.0-test\"}}}\\n'; exit 0; fi\nexit 0\n",
+    )
+    .expect("write fake npm");
+    make_executable(&fake_npm);
+
+    for _ in 0..2 {
+        let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+            .args([
+                "bridge",
+                "install",
+                "--project-path",
+                project_root.to_str().expect("project path UTF-8"),
+                "--type",
+                "unity",
+            ])
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    fake_bin.display(),
+                    std::env::var("PATH").expect("PATH")
+                ),
+            )
+            .output()
+            .expect("run lux bridge install --type unity");
+        assert_command_success(&output, "lux bridge install --type unity");
+    }
+
+    assert!(project_root
+        .join("Assets/Editor/LuxBridge/UnityAiBridge.cs")
+        .is_file());
+    assert!(project_root
+        .join("Assets/Editor/LuxBridge/LuxBridgeSettings.cs")
+        .is_file());
+    assert!(project_root
+        .join(".opencode/plugins/lux-plugin.ts")
+        .is_file());
+    assert!(!project_root.join("Assets/Editor/AiBridgeEditor").exists());
+    assert!(!project_root.join(".opencode/plugins/lux").exists());
+}
+
+#[test]
 fn autonomous_cli_dry_run_non_mutating() {
     let project_root = temp_lux_project("autonomous-dry-run");
     let run_state_path = project_root.join(".lux").join("run-state.json");

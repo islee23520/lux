@@ -1,6 +1,8 @@
 ---
 name: changelog
 description: "Lazy-load only when this workflow is explicitly needed. Use to write release notes from verified changes. Group by Added, Changed, Fixed, Removed, Security, and Internal. Mention user-visible impact first. Exclude unverified claims and noisy implementation detail."
+category: workflow
+source: lux
 ---
 
 # Changelog

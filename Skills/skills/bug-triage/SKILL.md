@@ -1,6 +1,8 @@
 ---
 name: bug-triage
 description: "Lazy-load only when this workflow is explicitly needed. Use to classify and route defects. Determine impact, scope, likely owner, regression window, blocking status, and verification path. Prefer quick reproduction and narrow hypotheses before implementation."
+category: workflow
+source: lux
 ---
 
 # Bug Triage

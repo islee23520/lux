@@ -1,0 +1,818 @@
+# F3 Real Manual QA
+## skill --help
+Usage: lux skill [OPTIONS] <COMMAND>
+
+Commands:
+  list     
+  info     
+  install  
+  remove   
+  update   
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <CONFIG>  Custom Lux config file path
+      --no-update-check  Skip automatic update check
+  -h, --help             Print help
+
+## skill list --json contains repaired skills
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-help
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-prototype
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-facade
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-factory-method
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-brainstorm
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-decorator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-service-locator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-code-review
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-adapter
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-strategy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-spatial-partition
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mediator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-memento
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-gate-check
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dependency-injection
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-proxy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-sprint-plan
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-builder
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-singleton
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-command
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mvp
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-state
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dirty-flag
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-object-pooling
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-observer
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-composite
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/mfds-food-safety
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/cua-driver
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/k-skill-setup
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/korean-law-search
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/github-yeet
+[
+  {
+    "manifest": {
+      "name": "architecture-decision",
+      "version": "1.0.0",
+      "description": "Use for durable technical choices. Output a short ADR: Context, Decision, Alternatives, Consequences, Verification, Owner. Prefer existing LUX boundaries: gateway owns CLI/server, bridge owns Unity protocol, mcp-helper owns MCP translation, Skills owns passive workflows. Reject duplicate state, hidden fallback, and broad rewrites without evidence.",
+      "displayName": "Architecture Decision",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "architecture",
+        "decision",
+        "lux",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/architecture-decision",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "architecture-review",
+      "version": "1.0.0",
+      "description": "Use to review an existing design or implementation for boundary drift. Check SSoT, responsibility split, protocol consistency, atomicity, idempotency, and observable failures. Return ranked findings with file references, risk level, and the smallest corrective action.",
+      "displayName": "Architecture Review",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "architecture",
+        "lux",
+        "review",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/architecture-review",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "bug-report",
+      "version": "1.0.0",
+      "description": "Use to turn observed failures into actionable reports. Capture summary, environment, exact steps, expected result, actual result, logs, suspected subsystem, severity, reproducibility, and minimal next diagnostic. Do not invent fallback data.",
+      "displayName": "Bug Report",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "bug",
+        "lux",
+        "report",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/bug-report",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "bug-triage",
+      "version": "1.0.0",
+      "description": "Use to classify and route defects. Determine impact, scope, likely owner, regression window, blocking status, and verification path. Prefer quick reproduction and narrow hypotheses before implementation.",
+      "displayName": "Bug Triage",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "bug",
+        "lux",
+        "triage",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/bug-triage",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "changelog",
+      "version": "1.0.0",
+      "description": "Use to write release notes from verified changes. Group by Added, Changed, Fixed, Removed, Security, and Internal. Mention user-visible impact first. Exclude unverified claims and noisy implementation detail.",
+      "displayName": "Changelog",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "changelog",
+        "lux",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/changelog",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "code-review",
+      "version": "1.0.0",
+      "description": "Use to review LUX diffs for correctness, maintainability, security, and tests. Check Rust Axum/CLI conventions, React strict hooks, no UI mock fallback data, Unity 6000+ bridge compatibility, protocol consistency, and fresh verification evidence.",
+      "displayName": "Code Review",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "code",
+        "lux",
+        "review",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/code-review",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "core-invariants",
+      "version": "1.0.0",
+      "description": "Use when a change risks architectural drift. Enforce: .lux is SSoT; clear subsystem ownership; consistent schemas; atomic operations; idempotent retries; no silent fallback. Report violations and concrete repair steps.",
+      "displayName": "Core Invariants",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "core",
+        "invariants",
+        "lux",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/core-invariants",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "game-dev",
+      "version": "1.0.0",
+      "description": "Use for compact game planning in LUX. Validate concept, core loop, mechanics, progression, technical feasibility, QA plan, and ethics. Check the player promise, target audience, prototype scope, Unity risks, telemetry/privacy, accessibility, non-exploitative retention, and measurable playtest criteria.",
+      "displayName": "Game Development",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "dev",
+        "game",
+        "lux",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/game-dev",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "ldp-decision-protocol",
+      "version": "1.0.0",
+      "description": "Use for high-risk product, automation, or ethical decisions. Run: clarify intent; quantify evidence; check user/data/IP/fairness risks; define stop and rollback conditions; record approval. Verdicts: PASS, REVIEW, or REJECT. Hard reject privacy leaks, exploitative mechanics, unbounded destructive automation, and unverifiable claims.",
+      "displayName": "LDP Decision Protocol",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "decision",
+        "ldp",
+        "lux",
+        "protocol",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/ldp-decision-protocol",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "lux-unity",
+      "version": "1.0.0",
+      "description": "Unity automation commands for Lux CLI",
+      "displayName": "Lux Unity",
+      "luxVersion": ">=0.1.0",
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "unity",
+        "compile",
+        "test",
+        "screenshot",
+        "logs",
+        "playmode",
+        "dynamic-code"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": {},
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/lux-unity",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "perf-profile",
+      "version": "1.0.0",
+      "description": "Use to investigate latency, memory, CPU, file IO, startup, or UI responsiveness. Define the measured claim, collect baseline data, identify the hot path, change one variable, and verify improvement without weakening correctness.",
+      "displayName": "Performance Profile",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "lux",
+        "perf",
+        "profile",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/perf-profile",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "regression-suite",
+      "version": "1.0.0",
+      "description": "Use to design or run regression checks for changed behavior. Prefer targeted tests first, then typecheck/lint/build/smoke. Include command, expected signal, observed result, and remaining untested risk.",
+      "displayName": "Regression Suite",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "lux",
+        "regression",
+        "suite",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/regression-suite",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "release-checklist",
+      "version": "1.0.0",
+      "description": "Use before packaging or publishing. Verify build, tests, docs, CLI help, version metadata, migration notes, security posture, rollback plan, and known limitations. Do not release with unexplained failing checks.",
+      "displayName": "Release Checklist",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "checklist",
+        "lux",
+        "release",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/release-checklist",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "retrospective",
+      "version": "1.0.0",
+      "description": "Use after incidents or milestones. Record what happened, impact, root causes, what worked, what failed, concrete follow-ups, owners, and prevention checks. Keep it blameless and evidence-based.",
+      "displayName": "Retrospective",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "lux",
+        "retrospective",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/retrospective",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "security-audit",
+      "version": "1.0.0",
+      "description": "Use for credentials, command execution, network exposure, logs, generated code, or Unity automation guardrails. Check auth, input validation, path traversal, secret redaction, destructive actions, auditability, and least privilege.",
+      "displayName": "Security Audit",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "audit",
+        "lux",
+        "security",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/security-audit",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "smoke-check",
+      "version": "1.0.0",
+      "description": "Use for fast confidence after a change. Run the smallest commands that prove the edited path starts, responds, or compiles. Report exact command output summary and stop when the core claim is proven.",
+      "displayName": "Smoke Check",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "check",
+        "lux",
+        "smoke",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/smoke-check",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "tech-debt",
+      "version": "1.0.0",
+      "description": "Use to document or reduce debt. Describe symptom, cost, affected files, invariant risk, simplest cleanup, tests needed, and what not to change. Prefer deletion and reuse over new abstractions.",
+      "displayName": "Technical Debt",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "debt",
+        "lux",
+        "tech",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/tech-debt",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "test-helpers",
+      "version": "1.0.0",
+      "description": "Use when adding or refactoring helper utilities for tests. Keep helpers small, deterministic, local to the test domain, and named by behavior. Avoid hiding assertions or creating broad fixtures that mask failures.",
+      "displayName": "Test Helpers",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "helpers",
+        "lux",
+        "test",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/test-helpers",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "test-setup",
+      "version": "1.0.0",
+      "description": "Use to configure test environments. Make setup explicit, deterministic, isolated, and reversible. Avoid global state leaks, hidden network dependency, and shared temp paths.",
+      "displayName": "Test Setup",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "lux",
+        "setup",
+        "test",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/test-setup",
+    "scope": "core"
+  },
+  {
+    "manifest": {
+      "name": "unity-cs-reference",
+      "version": "1.0.0",
+      "description": "Use as a compact lookup guide for Unity Editor API decisions. Prefer public UnityEditor APIs. Key areas: AssetDatabase import/GUID/path flow; BuildPipeline and BuildReport; CompilationPipeline and domain reload; EditorApplication events; UI Toolkit EditorWindow lifecycle; PackageManager requests; serialization and ScriptableObject persistence. Do not copy Unity implementation code.",
+      "displayName": "Unity C# Reference",
+      "luxVersion": null,
+      "author": {
+        "name": "Linalab",
+        "email": null,
+        "url": null
+      },
+      "keywords": [
+        "cs",
+        "lux",
+        "reference",
+        "unity",
+        "workflow"
+      ],
+      "type": "core",
+      "source": null,
+      "dependencies": null,
+      "requiredPackages": null,
+      "compatibleRenderPipelines": null,
+      "contextSlimRules": null
+    },
+    "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-cs-reference",
+    "scope": "core"
+  }
+]
+
+## skill info ldp-decision-protocol --json
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-help
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-prototype
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-facade
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-factory-method
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-brainstorm
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-decorator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-service-locator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-code-review
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-adapter
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-strategy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-spatial-partition
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mediator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-memento
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-gate-check
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dependency-injection
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-proxy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-sprint-plan
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-builder
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-singleton
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-command
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mvp
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-state
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dirty-flag
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-object-pooling
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-observer
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-composite
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/mfds-food-safety
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/cua-driver
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/k-skill-setup
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/korean-law-search
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/github-yeet
+{
+  "manifest": {
+    "name": "ldp-decision-protocol",
+    "version": "1.0.0",
+    "description": "Use for high-risk product, automation, or ethical decisions. Run: clarify intent; quantify evidence; check user/data/IP/fairness risks; define stop and rollback conditions; record approval. Verdicts: PASS, REVIEW, or REJECT. Hard reject privacy leaks, exploitative mechanics, unbounded destructive automation, and unverifiable claims.",
+    "displayName": "LDP Decision Protocol",
+    "luxVersion": null,
+    "author": {
+      "name": "Linalab",
+      "email": null,
+      "url": null
+    },
+    "keywords": [
+      "decision",
+      "ldp",
+      "lux",
+      "protocol",
+      "unity",
+      "workflow"
+    ],
+    "type": "core",
+    "source": null,
+    "dependencies": null,
+    "requiredPackages": null,
+    "compatibleRenderPipelines": null,
+    "contextSlimRules": null
+  },
+  "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/ldp-decision-protocol",
+  "references": [],
+  "skill_md_preview": [
+    "---",
+    "name: ldp-decision-protocol",
+    "description: \"Lazy-load only when this workflow is explicitly needed. Use for high-risk product, automation, or ethical decisions. Run: clarify intent; quantify evidence; check user/data/IP/fairness risks; define stop and rollback conditions; record approval. Verdicts: PASS, REVIEW, or REJECT.\"",
+    "category: workflow",
+    "source: lux",
+    "---",
+    "",
+    "# LDP Decision Protocol",
+    "",
+    "Use for high-risk product, automation, or ethical decisions. Run: clarify intent; quantify evidence; check user, data, IP, and fairness risks; define stop and rollback conditions; record approval. Verdicts: PASS, REVIEW, or REJECT."
+  ]
+}
+
+## skill info unity-cs-reference --json
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-help
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-prototype
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-facade
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-factory-method
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-brainstorm
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-decorator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-service-locator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-code-review
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-adapter
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-strategy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-spatial-partition
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mediator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-memento
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-gate-check
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dependency-injection
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-proxy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-sprint-plan
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-builder
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-singleton
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-command
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mvp
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-state
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dirty-flag
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-object-pooling
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-observer
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-composite
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/mfds-food-safety
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/cua-driver
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/k-skill-setup
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/korean-law-search
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/github-yeet
+{
+  "manifest": {
+    "name": "unity-cs-reference",
+    "version": "1.0.0",
+    "description": "Use as a compact lookup guide for Unity Editor API decisions. Prefer public UnityEditor APIs. Key areas: AssetDatabase import/GUID/path flow; BuildPipeline and BuildReport; CompilationPipeline and domain reload; EditorApplication events; UI Toolkit EditorWindow lifecycle; PackageManager requests; serialization and ScriptableObject persistence. Do not copy Unity implementation code.",
+    "displayName": "Unity C# Reference",
+    "luxVersion": null,
+    "author": {
+      "name": "Linalab",
+      "email": null,
+      "url": null
+    },
+    "keywords": [
+      "cs",
+      "lux",
+      "reference",
+      "unity",
+      "workflow"
+    ],
+    "type": "core",
+    "source": null,
+    "dependencies": null,
+    "requiredPackages": null,
+    "compatibleRenderPipelines": null,
+    "contextSlimRules": null
+  },
+  "directory_path": "/Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-cs-reference",
+  "references": [
+    "unity-cs-api.md"
+  ],
+  "skill_md_preview": [
+    "---",
+    "name: unity-cs-reference",
+    "description: \"Lazy-load only when this workflow is explicitly needed. Use as a compact lookup guide for Unity Editor API decisions. Prefer public UnityEditor APIs for LUX bridge automation and keep Unity reference material under references/.\"",
+    "category: reference",
+    "source: lux",
+    "---",
+    "",
+    "# Unity C# Reference",
+    "",
+    "Developer-facing lookup guide for Unity C# API decisions in LUX bridge and editor automation work. The detailed API reference is stored in `references/unity-cs-api.md` so this skill hub stays small enough for release validation."
+  ]
+}
+
+## bad input: nonexistent skill
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-help
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-prototype
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-facade
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-factory-method
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-brainstorm
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-decorator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-service-locator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-code-review
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-adapter
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-strategy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-spatial-partition
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mediator
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-memento
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-gate-check
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dependency-injection
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-proxy
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/studio-sprint-plan
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-builder
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-singleton
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-command
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-mvp
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-state
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-dirty-flag
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-object-pooling
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-observer
+Warning: missing manifest.json for skill directory /Users/ilseoblee/workspace/linalab/Lux/gateway/../Skills/skills/unity-pattern-composite
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/mfds-food-safety
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/cua-driver
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/k-skill-setup
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/korean-law-search
+Warning: missing manifest.json for skill directory /Users/ilseoblee/.agents/skills/github-yeet
+Error: skill 'nonexistent-skill-xyz' not found
+bad_input_exit=1

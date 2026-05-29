@@ -1,0 +1,8 @@
+README.md:542:# - adapters/opencode/lux-plugin.ts를 .opencode/plugins/lux-plugin.ts로 설치
+adapters/opencode/README.md:6:- **Runtime install target**: `.opencode/plugins/lux-plugin.ts`
+docs/usage.md:608:Adapter source follows the same separation: OpenCode is verified from `adapters/opencode/lux-plugin.ts`, which installs to `.opencode/plugins/lux-plugin.ts`. Remote/WebRTC remains hidden experimental and requires `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`.
+adapters/README.md:9:| `opencode/` | Verified | `.opencode/plugins/lux-plugin.ts` |
+gateway/src/lux_doctor.rs:392:            "Plugin installed at .opencode/plugins/lux-plugin.ts",
+gateway/src/lux_doctor.rs:615:            "Install the Lux OpenCode plugin for the project at {path}. Run `lux init --project-path {path}` again or copy adapters/opencode/lux-plugin.ts to .opencode/plugins/lux-plugin.ts."
+gateway/src/templates/plugin/README.md:14:This legacy template bundle is not the default OpenCode runtime install target. The verified source adapter is `adapters/opencode/lux-plugin.ts`, installed by Lux into `.opencode/plugins/lux-plugin.ts`.
+gateway/tests/gateway_cli_smoke.rs:247:    let installed_plugin = project_root.join(".opencode/plugins/lux-plugin.ts");

@@ -1,0 +1,22 @@
+Skills/SKILL-SCHEMA.md:8:name: kebab-case-skill-name  # MUST match directory name
+Skills/SKILL-SCHEMA.md:9:description: "One-line description (max 200 chars)"
+Skills/SKILL-SCHEMA.md:10:category: reference | workflow | studio  # Skill classification
+Skills/SKILL-SCHEMA.md:11:source: lux | chronos-adapted | unity-design-patterns-skills  # Origin provenance
+Skills/SKILL-SCHEMA.md:22:- Max 500 lines per SKILL.md
+Skills/tools/validate-skills.sh:5:SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+Skills/tools/validate-skills.sh:40:  skill_name="$(basename "$skill_dir")"
+Skills/tools/validate-skills.sh:44:    print_result "FAIL" "$skill_name" "missing SKILL.md"
+Skills/tools/validate-skills.sh:49:  print_result "PASS" "$skill_name" "SKILL.md exists"
+Skills/tools/validate-skills.sh:53:      print_result "PASS" "$skill_name" "valid frontmatter delimiters"
+Skills/tools/validate-skills.sh:55:      print_result "FAIL" "$skill_name" "missing closing frontmatter delimiter"
+Skills/tools/validate-skills.sh:59:    print_result "FAIL" "$skill_name" "missing opening frontmatter delimiter"
+Skills/tools/validate-skills.sh:63:  for field in name description category source; do
+Skills/tools/validate-skills.sh:65:      print_result "PASS" "$skill_name" "frontmatter contains $field"
+Skills/tools/validate-skills.sh:67:      print_result "FAIL" "$skill_name" "frontmatter missing $field"
+Skills/tools/validate-skills.sh:72:  declared_name="$({
+Skills/tools/validate-skills.sh:73:    awk '/^name:[[:space:]]+/ { sub(/^name:[[:space:]]+/, "", $0); print; exit }' "$skill_file"
+Skills/tools/validate-skills.sh:75:  if [ "$declared_name" = "$skill_name" ]; then
+Skills/tools/validate-skills.sh:76:    print_result "PASS" "$skill_name" "name matches directory"
+Skills/tools/validate-skills.sh:78:    print_result "FAIL" "$skill_name" "name '$declared_name' does not match directory '$skill_name'"
+Skills/tools/validate-skills.sh:84:    print_result "PASS" "$skill_name" "line count $line_count within limit"
+Skills/tools/validate-skills.sh:86:    print_result "FAIL" "$skill_name" "line count $line_count exceeds 500"

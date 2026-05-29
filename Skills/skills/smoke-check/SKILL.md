@@ -1,6 +1,8 @@
 ---
 name: smoke-check
 description: "Lazy-load only when this workflow is explicitly needed. Use for fast confidence after a change. Run the smallest commands that prove the edited path starts, responds, or compiles. Report exact command output summary and stop when the core claim is proven."
+category: workflow
+source: lux
 ---
 
 # Smoke Check

@@ -39,40 +39,6 @@ pub fn find_uloop_binary() -> Result<PathBuf> {
     )
 }
 
-/// Check if uloop binary is available without returning an error.
-pub fn check_uloop_installed() -> bool {
-    find_uloop_binary().is_ok()
-}
-
-/// Get the installed uloop version string.
-pub fn get_uloop_version() -> Result<String> {
-    let binary = find_uloop_binary()?;
-    let output = Command::new(&binary)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("failed to run {} --version", binary.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let code = output.status.code().map_or_else(
-            || "terminated by signal".to_string(),
-            |code| code.to_string(),
-        );
-        if stderr.is_empty() {
-            bail!("uloop --version exited with code {code}");
-        }
-        bail!("uloop --version exited with code {code}: {stderr}");
-    }
-
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if version.is_empty() {
-        bail!("uloop --version produced no output");
-    }
-
-    Ok(version)
-}
-
 /// Run a uloop command with the given arguments.
 ///
 /// Returns `(stdout, stderr, exit_code)` without treating non-zero uloop exits as
@@ -97,21 +63,6 @@ pub fn run_uloop_command(
     let code = output.status.code().unwrap_or(-1);
 
     Ok((stdout, stderr, code))
-}
-
-/// Run a uloop command and inherit stdout/stderr for interactive or live commands.
-pub fn run_uloop_command_inherit(uloop_args: &[&str], project_path: Option<&Path>) -> Result<i32> {
-    let binary = find_uloop_binary()?;
-    let mut cmd = build_uloop_command(&binary, uloop_args, project_path);
-
-    let status = cmd.status().with_context(|| {
-        format!(
-            "failed to execute uloop command: {}",
-            command_summary(&binary, uloop_args, project_path)
-        )
-    })?;
-
-    Ok(status.code().unwrap_or(-1))
 }
 
 fn build_uloop_command(binary: &Path, uloop_args: &[&str], project_path: Option<&Path>) -> Command {

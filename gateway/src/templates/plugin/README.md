@@ -11,7 +11,7 @@ OpenCode plugin for spec-driven Unity game development orchestration.
 
 ## Installation
 
-This plugin is auto-installed by `lux bridge install` into `.opencode/plugins/lux/`.
+This legacy template bundle is not the default OpenCode runtime install target. The verified source adapter is `adapters/opencode/lux-plugin.ts`, installed by Lux into `.opencode/plugins/lux-plugin.ts`.
 
 ## Configuration
 

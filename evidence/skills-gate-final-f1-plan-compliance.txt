@@ -1,0 +1,44 @@
+# F1 Plan Compliance Audit
+
+# Completed count
+90:- [x] 1. RED Baseline Inventory
+123:- [x] 2. Metadata Taxonomy Lock
+157:- [x] 3. Legacy Skill Frontmatter Normalization
+189:- [x] 4. LDP Skill Standalone Repair
+223:- [x] 5. Unity C# Reference Split
+257:- [x] 6. Validator Standalone-Source Hardening
+289:- [x] 7. Gateway Skill Discovery Regression Check
+322:- [x] 8. Green Skill Validation Gate
+349:- [x] 9. Release Docs and Baseline Refresh
+390:- [x] F1. Plan Compliance Audit: verify Tasks 1-9 acceptance criteria have evidence and no task is skipped.
+391:- [x] F2. Code Quality Review: inspect skill frontmatter, symlink handling, validator strictness, and reference split for accidental content loss.
+392:- [x] F3. Real Manual QA: run `lux skill list` and `lux skill info` through the CLI against the repaired tree and capture output.
+393:- [x] F4. Scope Fidelity Check: confirm no M1-M6 autonomy implementation or gateway runtime feature work was added.
+
+# Evidence files
+evidence/skills-gate-final-f1-plan-compliance.txt
+evidence/skills-gate-final-f2-code-quality.txt
+evidence/skills-gate-final-f3-manual-qa.txt
+evidence/skills-gate-final-f4-scope-fidelity.txt
+evidence/skills-gate-task-1-line-counts.txt
+evidence/skills-gate-task-1-red.txt
+evidence/skills-gate-task-1-symlink.txt
+evidence/skills-gate-task-2-schema.txt
+evidence/skills-gate-task-2-taxonomy.txt
+evidence/skills-gate-task-3-diff-scope.txt
+evidence/skills-gate-task-3-frontmatter.txt
+evidence/skills-gate-task-4-name.txt
+evidence/skills-gate-task-4-standalone.txt
+evidence/skills-gate-task-5-line-count.txt
+evidence/skills-gate-task-5-reference-preserved.txt
+evidence/skills-gate-task-5-validator-progress.txt
+evidence/skills-gate-task-6-absolute-symlink-green.txt
+evidence/skills-gate-task-6-absolute-symlink-red.txt
+evidence/skills-gate-task-6-bash-n.txt
+evidence/skills-gate-task-6-validator-current.txt
+evidence/skills-gate-task-7-cli-info.txt
+evidence/skills-gate-task-7-gateway-skill-tests.txt
+evidence/skills-gate-task-8-validate.txt
+evidence/skills-gate-task-9-docs.txt
+evidence/skills-gate-task-9-stale-docs.txt
+evidence/skills-gate-task-9-structure.txt

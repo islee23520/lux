@@ -13,6 +13,9 @@ use crate::lux_ambiguity::{self, TargetedQuestion};
 use crate::lux_roadmap;
 use crate::project::{self, UnityProjectDetection};
 
+#[path = "lux_specs.rs"]
+mod lux_specs;
+
 pub const SUPPORTED_SPEC_MAJOR_VERSION: &str = "1";
 pub const SUPPORTED_SPEC_SCHEMA_MAJOR_VERSION: &str = "2";
 
@@ -1302,6 +1305,8 @@ pub fn lux_init(project_path: &Path) -> Result<PathBuf> {
         fs::write(&glossary_path, include_str!("templates/glossary.md"))
             .with_context(|| format!("failed to write {}", glossary_path.display()))?;
     }
+
+    lux_specs::ensure_specs_contract(project_path, &spec_path, &domains_path)?;
 
     Ok(lux_path)
 }

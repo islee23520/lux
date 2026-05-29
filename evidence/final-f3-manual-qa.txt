@@ -1,0 +1,32 @@
+F3 real manual QA - adapter install through CLI surface
+tmp_project=/tmp/lux-final-adapter-g7uYw4
+✨ Initializing new .lux workspace
+ℹ️  Not a Unity project — skipping Unity auto-detection
+📊 Ambiguity: 0.934 / target 0.020
+Initialized Lux at /tmp/lux-final-adapter-g7uYw4/.lux
+  Installed Lux OpenCode plugin at /tmp/lux-final-adapter-g7uYw4/.opencode/plugins/lux-plugin.ts
+init_exit=0
+plugin_exists=0
+plugin_matches_source=0
+legacy_plugin_dir_absent=0
+init_help_exit=0
+Initialize a .lux game harness workspace
+
+Usage: lux init [OPTIONS]
+
+Options:
+      --config <CONFIG>
+          Custom Lux config file path
+      --project-path <PROJECT_PATH>
+          Unity project root containing the .lux directory
+      --interactive <INTERACTIVE>
+          Enable the interactive spec question flow [default: true] [possible values: true, false]
+      --no-update-check
+          Skip automatic update check
+      --no-interactive
+          Stop after a single non-interactive pass without asking questions
+      --target-ambiguity <TARGET_AMBIGUITY>
+          Target ambiguity threshold before stopping interactive questioning [default: 0.02]
+      --max-iterations <MAX_ITERATIONS>
+          Maximum interactive question rounds to run [default: 10]
+      --force
