@@ -1,22 +1,12 @@
-#[path = "../src/lux_ai_session.rs"]
-mod lux_ai_session;
-#[path = "../src/lux_ambiguity.rs"]
-mod lux_ambiguity;
-#[path = "../src/lux_roadmap.rs"]
-mod lux_roadmap;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
-#[path = "../src/project.rs"]
-mod project;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lux_ai_session::{
+use lux::lux_ai_session;
+use lux::lux_ai_session::{
     advance_phase, apply_session_to_spec, create_session, evaluate_phase_completion, load_session,
     process_message, save_session, SessionPhase, SessionStatus, TurnRole,
 };
-use lux_spec::{lux_init, PillarStatus, SpecProject};
+use lux::lux_spec::{lux_init, PillarStatus, SpecProject};
 
 struct TestProject {
     path: PathBuf,

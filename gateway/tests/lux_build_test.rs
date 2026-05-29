@@ -1,9 +1,6 @@
-#[path = "../src/lux_build.rs"]
-mod lux_build;
-
 use std::{fs, path::PathBuf};
 
-use lux_build::{
+use lux::lux_build::{
     append_build_log, cancel_build, get_build_artifact_path, get_build_log, get_build_status,
     list_builds, mark_build_running, mark_build_succeeded, start_build, BuildManager, BuildStatus,
     BuildTarget,

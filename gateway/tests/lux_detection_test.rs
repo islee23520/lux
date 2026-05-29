@@ -1,23 +1,15 @@
-#[path = "../src/lux_ambiguity.rs"]
-mod lux_ambiguity;
-#[path = "../src/lux_roadmap.rs"]
-mod lux_roadmap;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
-#[allow(dead_code)]
-#[path = "../src/project.rs"]
-mod project;
-
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
-use lux_ambiguity::TargetedQuestion;
-use lux_spec::{
+use lux::lux_ambiguity::TargetedQuestion;
+use lux::lux_spec;
+use lux::lux_spec::{
     answer_direct, apply_detection_to_spec, lux_init_interactive, lux_load, GlossarySpec,
     LuxInitInteractiveOptions, PackagesSpec, SpecProject, SpecQuestionIo, TestingSpec, UnitySpec,
 };
-use project::{detect_unity_project, DetectedPackage, UnityProjectDetection};
+use lux::project;
+use lux::project::{detect_unity_project, DetectedPackage, UnityProjectDetection};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

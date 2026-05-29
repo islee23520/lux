@@ -1,17 +1,8 @@
-#[path = "../src/lux_ambiguity.rs"]
-mod lux_ambiguity;
-#[path = "../src/lux_roadmap.rs"]
-mod lux_roadmap;
-#[path = "../src/lux_spec.rs"]
-mod lux_spec;
-#[path = "../src/project.rs"]
-mod project;
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lux_spec::{
+use lux::lux_spec::{
     lux_init, lux_load, lux_load_domain, lux_save, lux_save_domain, lux_update_domain_field,
     render_markdown_template, DomainSpec, GlossarySpec, PackageEntry, PackagesSpec, PillarStatus,
     SpecDomains, SpecProject, SpecStatus, TargetsSpec, TestingSpec, UnitySpec,

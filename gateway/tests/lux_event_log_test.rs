@@ -1,7 +1,4 @@
-#[path = "../src/lux_event_log.rs"]
-mod lux_event_log;
-
-use lux_event_log::{
+use lux::lux_event_log::{
     EventBuffer, EventFilter, EventLogStore, FileEventLogStore, PlayEvent, PlayEventType,
     SessionMetadata,
 };

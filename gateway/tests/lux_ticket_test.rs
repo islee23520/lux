@@ -1,9 +1,6 @@
-#[path = "../src/lux_ticket.rs"]
-mod lux_ticket;
-
 use std::{fs, path::PathBuf};
 
-use lux_ticket::{
+use lux::lux_ticket::{
     FileTicketStore, Ticket, TicketFilter, TicketPriority, TicketStatus, TicketStore,
 };
 
