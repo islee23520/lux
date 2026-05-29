@@ -1,0 +1,18 @@
+schemaVersion: 1
+id: roguelike
+kind: genre-overlay
+name: Roguelike
+summary: Run-based projects with procedural variation, replayability, and progression resets.
+addsDomains:
+  - procedural-generation
+  - run-progression
+  - meta-progression
+packageOverlays:
+  gameplay-systems:
+    recommended: []
+  testing-validation:
+    recommended: []
+setupQuestions:
+  - id: run-structure
+    prompt: What run structure is primary?
+    options: [rooms, waves, open-map, hybrid]

@@ -1,0 +1,259 @@
+version: "1.0"
+updated: "2026-05-22"
+repo: lux-skills-repos
+description: "Lux Skills Federation - Consolidated game development skills for AI coding assistants"
+reference: "https://github.com/Donchitos/Claude-Code-Game-Studios"
+
+categories:
+  reference:
+    description: "Static design pattern and API reference skills"
+    skills:
+      - unity-pattern-adapter
+      - unity-pattern-builder
+      - unity-pattern-command
+      - unity-pattern-composite
+      - unity-pattern-decorator
+      - unity-pattern-dependency-injection
+      - unity-pattern-dirty-flag
+      - unity-pattern-facade
+      - unity-pattern-factory-method
+      - unity-pattern-mediator
+      - unity-pattern-memento
+      - unity-pattern-mvp
+      - unity-pattern-object-pooling
+      - unity-pattern-observer
+      - unity-pattern-prototype
+      - unity-pattern-proxy
+      - unity-pattern-service-locator
+      - unity-pattern-singleton
+      - unity-pattern-spatial-partition
+      - unity-pattern-state
+      - unity-pattern-strategy
+
+  workflow:
+    description: "Runtime workflow and operation skills"
+    skills:
+      - game-dev
+      - lux-unity
+      - unity-cs-reference
+      - core-invariants
+      - ldp-decision-protocol
+
+  studio:
+    description: "Studio management and collaboration skills (adapted from CCGS)"
+    skills:
+      - studio-brainstorm
+      - studio-code-review
+      - studio-sprint-plan
+      - studio-gate-check
+      - studio-help
+
+skills:
+  - name: unity-pattern-adapter
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/adapter/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-builder
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/builder/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-command
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/command/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-composite
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/composite/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-decorator
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/decorator/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-dependency-injection
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/dependency-injection/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-dirty-flag
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/dirty-flag/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-facade
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/facade/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-factory-method
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/factory-method/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-mediator
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/mediator/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-memento
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/memento/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-mvp
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/mvp/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-object-pooling
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/object-pooling/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-observer
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/observer/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-prototype
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/prototype/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-proxy
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/proxy/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-service-locator
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/service-locator/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-singleton
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/singleton/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-spatial-partition
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/spatial-partition/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-state
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/state/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+  - name: unity-pattern-strategy
+    category: reference
+    source: unity-design-patterns-skills
+    source_path: patterns/strategy/SKILL.md
+    status: canonical
+    platforms: [claude-code, opencode]
+
+  - name: game-dev
+    category: workflow
+    source: lux
+    source_path: Skills/game-dev/SKILL.md
+    status: canonical
+    platforms: [opencode]
+  - name: lux-unity
+    category: workflow
+    source: lux
+    source_path: Skills/lux-unity/SKILL.md
+    status: canonical
+    platforms: [opencode]
+  - name: unity-cs-reference
+    category: workflow
+    source: lux
+    source_path: Skills/unity-cs-reference/SKILL.md
+    status: canonical
+    platforms: [opencode]
+  - name: core-invariants
+    category: workflow
+    source: lux
+    source_path: Skills/core-invariants/SKILL.md
+    status: canonical
+    platforms: [opencode]
+  - name: ldp-decision-protocol
+    category: workflow
+    source: lux
+    source_path: Skills/ldp-decision-protocol/SKILL.md
+    status: canonical
+    platforms: [opencode]
+
+  - name: studio-brainstorm
+    category: studio
+    source: chronos-adapted
+    source_path: .claude/skills/brainstorm/SKILL.md
+    status: adapted
+    platforms: [opencode]
+  - name: studio-code-review
+    category: studio
+    source: chronos-adapted
+    source_path: .claude/skills/code-review/SKILL.md
+    status: adapted
+    platforms: [opencode]
+  - name: studio-sprint-plan
+    category: studio
+    source: chronos-adapted
+    source_path: .claude/skills/sprint-plan/SKILL.md
+    status: adapted
+    platforms: [opencode]
+  - name: studio-gate-check
+    category: studio
+    source: chronos-adapted
+    source_path: .claude/skills/gate-check/SKILL.md
+    status: adapted
+    platforms: [opencode]
+  - name: studio-help
+    category: studio
+    source: chronos-adapted
+    source_path: .claude/skills/help/SKILL.md
+    status: adapted
+    platforms: [opencode]
+
+federation:
+  chronos_baseline:
+    repo: /Users/ilseoblee/workspace/linalab/Chronos
+    description: "Full Donchitos CCGS studio (49 agents, 73 skills, 12 hooks, 11 rules)"
+    imported: [brainstorm, code-review, sprint-plan, gate-check, help]
+    available_on_demand: true
+
+  lux_runtime:
+    repo: /Users/ilseoblee/workspace/linalab/lux
+    description: "Lux Unity AI tooling platform (20 skills, bridge, gateway)"
+    imported: [game-dev, lux-unity, unity-cs-reference, core-invariants, ldp-decision-protocol]
+    available_on_demand: true
+
+  unity_automation:
+    repos: [pbs, seoul-gunner, neon-glitch, seoul-kenshi]
+    description: "Unity runtime automation skills (uloop-*, lux-*)"
+    imported: []
+    available_on_demand: true
+    note: "Runtime-coupled skills requiring Lux gateway/bridge"

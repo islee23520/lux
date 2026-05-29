@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: action-rpg
+kind: genre-overlay
+name: Action RPG
+summary: Real-time character progression and combat-oriented role-playing projects.
+addsDomains:
+  - combat-balance
+  - progression-loot
+  - inventory-equipment
+packageOverlays:
+  gameplay-systems:
+    recommended:
+      - package: com.unity.inputsystem
+        source: Unity Registry
+        reason: Action control schemes and rebinding support.
+  content-data-pipeline:
+    recommended:
+      - package: com.unity.addressables
+        source: Unity Registry
+        reason: Scalable content organization for items, enemies, and levels.
+setupQuestions:
+  - id: combat-style
+    prompt: What combat style is primary?
+    options: [real-time, turn-based, hybrid]

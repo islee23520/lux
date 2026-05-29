@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+*.pyc
+.omo/
+.omx/
+Library/
+Temp/
+Logs/
+UserSettings/
+Build/
+obj/
+Builds/
