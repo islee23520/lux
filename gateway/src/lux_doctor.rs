@@ -398,7 +398,7 @@ fn check_opencode_plugin(project_path: &Path) -> DoctorCheck {
             "opencode-plugin",
             DoctorStatus::Warning,
             "OpenCode plugin missing; session toasts and Lux context injection are unavailable",
-            hint("Run: lux init, or manually copy plugins/opencode/lux-plugin.ts"),
+            hint("Run: lux init, or manually copy adapters/opencode/lux-plugin.ts"),
             true,
         )
     }
@@ -612,7 +612,7 @@ fn fix_prompt(check: &DoctorCheck, project_path: &Path) -> Option<String> {
             "Install the Unity bridge for the Lux project at {path}. Run `lux bridge install --project-path {path}`."
         )),
         "opencode-plugin" => Some(format!(
-            "Install the Lux OpenCode plugin for the project at {path}. Run `lux init --project-path {path}` again or copy plugins/opencode/lux-plugin.ts to .opencode/plugins/lux-plugin.ts."
+            "Install the Lux OpenCode plugin for the project at {path}. Run `lux init --project-path {path}` again or copy adapters/opencode/lux-plugin.ts to .opencode/plugins/lux-plugin.ts."
         )),
         "agents-skills" => Some(format!(
             "Install Lux workflow skills for the project at {path}. Run `lux agents-install --project-path {path}`."

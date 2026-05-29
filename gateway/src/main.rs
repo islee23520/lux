@@ -2605,7 +2605,7 @@ fn install_opencode_plugin(project_root: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to create {}", plugin_dir.display()))?;
 
     let builtin_plugin = resolve_lux_install_root()
-        .join("plugins")
+        .join("adapters")
         .join("opencode")
         .join("lux-plugin.ts");
     if !builtin_plugin.is_file() {
