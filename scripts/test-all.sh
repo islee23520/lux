@@ -60,7 +60,7 @@ fi
 # ── CLI Smoke ───────────────────────────────────
 section "CLI Smoke Tests"
 
-LUX_BIN="$ROOT_DIR/gateway/target/debug/lux"
+LUX_BIN="$ROOT_DIR/target/debug/lux"
 
 if [ -x "$LUX_BIN" ]; then
   "$LUX_BIN" --help > /dev/null 2>&1 && ok "lux --help" || err "lux --help"
@@ -120,6 +120,12 @@ if [ -f "$ROOT_DIR/gateway/src/protocol.rs" ]; then
   ok "protocol.rs module exists"
 else
   err "protocol.rs module missing"
+fi
+
+if (cd "$ROOT_DIR" && bash scripts/check-project-structure.sh 2>&1); then
+  ok "project structure sanity"
+else
+  err "project structure sanity"
 fi
 
 # ── C# Note ─────────────────────────────────────
