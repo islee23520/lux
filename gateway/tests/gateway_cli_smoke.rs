@@ -118,9 +118,114 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
     assert_command_help_contains(&["unity", "simulate-mouse-input", "--help"], "--delta-x");
     assert_command_help_contains(&["unity", "simulate-mouse-input", "--help"], "--scroll-y");
     assert_command_help_contains(&["autonomous", "--help"], "dispatch");
+    assert_command_help_contains(&["godot", "--help"], "status");
+    assert_command_help_contains(&["bridge", "install", "--help"], "--type");
     assert_command_help_contains(&["autonomous", "dry-run", "--help"], "--project-path");
     assert_command_help_contains(&["autonomous", "dispatch", "--help"], "--seq");
     assert_command_help_contains(&["autonomous", "evidence", "--help"], "--run-id");
+}
+
+#[test]
+fn rust_lux_godot_status_reports_separate_gopeak_and_lux_capabilities() {
+    let temp_dir = create_temp_dir("lux-godot-status");
+    let project_root = temp_dir.join("GodotProject");
+    fs::create_dir_all(&project_root).expect("create Godot project");
+    fs::write(
+        project_root.join("project.godot"),
+        "config_version=5\n[application]\nconfig/name=\"Lux Godot Smoke\"\n",
+    )
+    .expect("write project.godot");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "status",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot status");
+
+    assert_command_success(&output, "lux godot status");
+    let status: Value = serde_json::from_slice(&output.stdout).expect("status JSON");
+    assert_eq!(status["ok"], true);
+    assert_eq!(status["engine"], "godot");
+    assert!(status["gopeak"]["available_commands"].is_array());
+    assert!(status["gopeak"]["missing_commands"].is_array());
+    assert!(status["lux"]["supported_commands"].is_array());
+    assert!(status["lux"]["unsupported_commands"]
+        .as_array()
+        .expect("unsupported commands")
+        .iter()
+        .any(|command| command.as_str() == Some("godot build")));
+}
+
+#[test]
+fn rust_lux_godot_build_exits_non_zero_until_verified() {
+    let temp_dir = create_temp_dir("lux-godot-build");
+    let project_root = temp_dir.join("GodotProject");
+    fs::create_dir_all(&project_root).expect("create Godot project");
+    fs::write(project_root.join("project.godot"), "config_version=5\n")
+        .expect("write project.godot");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "build",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot build");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not supported until GoPeak-backed build"));
+}
+
+#[test]
+fn rust_lux_bridge_install_godot_requires_valid_project_and_is_idempotent() {
+    let temp_dir = create_temp_dir("lux-godot-bridge");
+    let project_root = temp_dir.join("GodotProject");
+    fs::create_dir_all(&project_root).expect("create Godot project");
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "bridge",
+            "install",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--type",
+            "godot",
+        ])
+        .output()
+        .expect("run invalid lux bridge install --type godot");
+    assert!(!invalid.status.success());
+
+    fs::write(project_root.join("project.godot"), "config_version=5\n")
+        .expect("write project.godot");
+
+    for _ in 0..2 {
+        let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+            .args([
+                "bridge",
+                "install",
+                "--project-path",
+                project_root.to_str().expect("project path UTF-8"),
+                "--type",
+                "godot",
+            ])
+            .output()
+            .expect("run lux bridge install --type godot");
+        assert_command_success(&output, "lux bridge install --type godot");
+    }
+
+    let plugin_cfg = fs::read_to_string(project_root.join("addons/lux_bridge/plugin.cfg"))
+        .expect("read plugin.cfg");
+    let bridge_gd =
+        fs::read_to_string(project_root.join("addons/lux_bridge/bridge.gd")).expect("read bridge");
+    assert!(plugin_cfg.contains("Lux Bridge"));
+    assert!(bridge_gd.contains("connect_to_host(\"127.0.0.1\", 17342)"));
 }
 
 #[test]

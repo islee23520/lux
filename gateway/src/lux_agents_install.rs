@@ -30,6 +30,7 @@ pub const LUX_WORKFLOW_SKILLS: &[(&str, &str)] = &[
     ("lux-kanban", LUX_KANBAN_SKILL),
     ("lux-doctor", LUX_DOCTOR_SKILL),
     ("lux-status", LUX_STATUS_SKILL),
+    ("lux-godot", LUX_GODOT_SKILL),
 ];
 
 pub fn run_agents_install_command(args: AgentsInstallArgs) -> Result<()> {
@@ -507,3 +508,55 @@ Expected: state such as `Idle`, `Planning`, `ExecutingTicket`, or `Verifying`.
 - Always confirm the project path in JSON before acting on tickets or builds.
 - In CI, parse explicit fields instead of scraping human text.
 "#;
+
+const LUX_GODOT_SKILL: &str = r#"---
+name: lux-godot
+description: Drive Godot projects through the Lux local harness with explicit capability checks.
+---
+
+# lux-godot — Godot Harness Workflow
+
+## Purpose
+Use Lux as a local-first AI harness for Godot projects without overclaiming unsupported build, run, test, scene, or capture behavior.
+
+## When to Use
+- A project contains `project.godot` and should be checked through Lux.
+- An agent needs to install or verify the Godot bridge under `addons/lux_bridge/`.
+- A Codex, Claude, OpenCode, or other `.agents`-aware client needs Godot-specific safety guidance.
+
+## Workflow
+1. Run `lux godot status --project-path <project>` and inspect both `gopeak.*` and `lux.*` fields.
+2. If bridge files are missing, run `lux bridge install --project-path <project> --type godot`.
+3. Treat `gopeak.available_commands` as external GoPeak visibility only.
+4. Treat `lux.supported_commands` and `lux.unsupported_commands` as the Lux execution contract.
+5. If a requested action is unsupported, report the explicit blocker and record evidence under `.lux/` or the active task artifact.
+
+## Commands
+| Command | Use |
+| --- | --- |
+| `lux godot status --project-path <project>` | Detect Godot 4, GoPeak visibility, and Lux-supported commands. |
+| `lux bridge install --project-path <project> --type godot` | Install the managed Godot bridge files. |
+| `lux godot build --project-path <project>` | Currently exits non-zero until GoPeak-backed build verification exists. |
+
+## Gotchas
+- Do not use `--engine godot` for bridge install; this plan uses `--type godot`.
+- Do not infer Lux support from GoPeak manifest entries such as `project/build`.
+- Do not write state outside the project `.lux/` evidence/spec/ticket paths.
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_skills_include_lux_godot() {
+        assert!(list_bundled_skills().contains(&"lux-godot"));
+        let (_, content) = LUX_WORKFLOW_SKILLS
+            .iter()
+            .find(|(name, _)| *name == "lux-godot")
+            .expect("lux-godot skill is bundled");
+        assert!(content.contains("lux godot status"));
+        assert!(content.contains("--type godot"));
+        assert!(content.contains("lux.unsupported_commands"));
+    }
+}

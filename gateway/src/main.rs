@@ -3,9 +3,12 @@ pub mod addon_routes;
 pub mod addon_store;
 pub mod ai_log;
 pub mod auto_update;
+pub mod bridge_types;
 pub mod capture;
 pub mod config;
 pub mod cross_platform;
+pub mod godot_bridge_install;
+pub mod gopeak_manifest;
 pub mod lux_agents_install;
 pub mod lux_ai_session;
 pub mod lux_ambiguity;
@@ -16,6 +19,7 @@ pub mod lux_continuation_state;
 pub mod lux_doctor;
 pub mod lux_event_log;
 pub mod lux_events;
+pub mod lux_hooks;
 pub mod lux_io;
 pub mod lux_lock;
 pub mod lux_loop;
@@ -35,6 +39,7 @@ pub mod lux_triage;
 pub mod lux_verification;
 pub mod lux_worktree;
 pub mod project;
+pub mod project_godot;
 mod protocol;
 mod server;
 pub mod session;
@@ -73,6 +78,8 @@ use ratatui::{
     Frame, Terminal,
 };
 use serde_json::{json, Value};
+
+use crate::bridge_types::BridgeKind;
 
 static CONFIG_PATH_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -123,9 +130,13 @@ enum Command {
     Tui(TuiArgs),
     Serve(ServeArgs),
     Unity(UnityArgs),
+    /// Inspect and operate Godot project harness support
+    Godot(GodotArgs),
     Skill(SkillArgs),
     AiLog(AiLogArgs),
     Compile(CompileArgs),
+    /// Install and run AI coding tool hook bridges
+    Hooks(lux_hooks::HooksArgs),
     Bridge(BridgeArgs),
     RunTests(RunTestsArgs),
     Screenshot(ScreenshotArgs),
@@ -235,6 +246,36 @@ struct LuxInitArgs {
     /// Team profile preset or path for team-mode integration
     #[arg(long = "team-profile")]
     pub team_profile: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+struct GodotArgs {
+    #[command(subcommand)]
+    command: GodotCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum GodotCommand {
+    /// Show Godot project detection and Lux capability status
+    Status(GodotStatusArgs),
+    /// Build through Godot support once GoPeak build verification is available
+    Build(GodotBuildArgs),
+}
+
+#[derive(Parser, Debug)]
+struct GodotStatusArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct GodotBuildArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+}
+
+fn parse_bridge_kind(value: &str) -> anyhow::Result<BridgeKind> {
+    value.parse()
 }
 
 #[derive(Parser, Debug)]
@@ -1149,6 +1190,9 @@ struct BridgeInstallArgs {
     /// Unity project root directory
     #[arg(long, short = 'p')]
     project_path: PathBuf,
+    /// Bridge type to install
+    #[arg(long = "type", default_value = "unity", value_parser = parse_bridge_kind)]
+    bridge_type: BridgeKind,
 }
 
 #[derive(Parser, Debug)]
@@ -1276,12 +1320,14 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Tui(_) => Ok(()),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
+        Command::Godot(args) => run_lux_godot_command(args),
         Command::Skill(args) => run_skill_command(args),
         Command::AiLog(args) => run_ai_log_command(args),
         Command::Compile(args) => {
             eprintln!("DEPRECATED: 'lux compile' is deprecated. Use 'lux unity compile' instead.");
             run_batch_compile(args)
         }
+        Command::Hooks(args) => lux_hooks::run_hooks_command(args),
         Command::Bridge(args) => {
             eprintln!("DEPRECATED: 'lux bridge' is deprecated. Use 'lux unity bridge' instead.");
             run_bridge_command(args)
@@ -3626,6 +3672,72 @@ fn read_skill_adaptation_metadata(directory_path: &Path) -> Option<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// lux godot
+// ---------------------------------------------------------------------------
+
+fn run_lux_godot_command(args: GodotArgs) -> anyhow::Result<()> {
+    match args.command {
+        GodotCommand::Status(status_args) => print_lux_godot_status(status_args),
+        GodotCommand::Build(build_args) => run_lux_godot_build(build_args),
+    }
+}
+
+fn print_lux_godot_status(args: GodotStatusArgs) -> anyhow::Result<()> {
+    let project_root = resolve_project_root(&args.project_path)?;
+    let detection = project_godot::detect_godot_project(&project_root);
+    let gopeak = gopeak_manifest::sync_manifest(&project_root)?;
+    let detected = detection.is_some();
+    let supported_commands = if detected {
+        vec!["godot status", "bridge install --type godot"]
+    } else {
+        Vec::new()
+    };
+    let unsupported_commands = vec![
+        "godot build",
+        "godot run",
+        "godot test",
+        "godot scene inspect",
+        "godot screenshot",
+    ];
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "ok": detected,
+            "engine": "godot",
+            "project_root": project_root,
+            "detected": detection.as_ref().map(|detection| {
+                json!({
+                    "godot_version": detection.godot_version,
+                    "has_godot_dir": detection.has_godot_dir,
+                })
+            }),
+            "gopeak": {
+                "installed": gopeak.installed,
+                "available_commands": gopeak.available_commands,
+                "missing_commands": gopeak.missing_commands,
+            },
+            "lux": {
+                "supported_commands": supported_commands,
+                "unsupported_commands": unsupported_commands,
+            },
+            "message": if detected {
+                "Godot 4 project detected"
+            } else {
+                "Godot 4 project not detected at the specified path"
+            },
+        }))?
+    );
+    Ok(())
+}
+
+fn run_lux_godot_build(_args: GodotBuildArgs) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "lux godot build is not supported until GoPeak-backed build has automated verification"
+    )
+}
+
+// ---------------------------------------------------------------------------
 // lux unity status
 // ---------------------------------------------------------------------------
 
@@ -3699,6 +3811,7 @@ fn run_lux_unity_command(args: UnityArgs) -> anyhow::Result<()> {
                 }),
                 UnityBridgeAction::Install(i) => BridgeAction::Install(BridgeInstallArgs {
                     project_path: i.project_path,
+                    bridge_type: BridgeKind::Unity,
                 }),
             };
             run_bridge_command(BridgeArgs {
@@ -5314,12 +5427,19 @@ fn run_bridge_command(args: BridgeArgs) -> anyhow::Result<()> {
         BridgeAction::Watch(watch_args) => watch_unity_bridge_events(watch_args),
         BridgeAction::Install(install_args) => {
             let project_root = install_args.project_path.clone();
-            install_bridge_files(install_args)?;
+            match install_args.bridge_type.clone() {
+                BridgeKind::Unity => {
+                    install_bridge_files(install_args)?;
 
-            // Also install uloop (unity-cli-loop) for unity CLI operations
-            if let Err(e) = install_uloop_package(&project_root) {
-                eprintln!("⚠️  uloop installation skipped (non-critical): {e}");
-                // Don't fail bridge install — uloop is optional enhancement
+                    // Also install uloop (unity-cli-loop) for unity CLI operations
+                    if let Err(e) = install_uloop_package(&project_root) {
+                        eprintln!("⚠️  uloop installation skipped (non-critical): {e}");
+                        // Don't fail bridge install — uloop is optional enhancement
+                    }
+                }
+                BridgeKind::Godot => {
+                    godot_bridge_install::install_godot_bridge(&project_root)?;
+                }
             }
 
             Ok(())
@@ -5823,6 +5943,7 @@ fn run_batch_compile(args: CompileArgs) -> anyhow::Result<()> {
         );
         install_bridge_files(BridgeInstallArgs {
             project_path: project_root.clone(),
+            bridge_type: BridgeKind::Unity,
         })?;
     }
 
