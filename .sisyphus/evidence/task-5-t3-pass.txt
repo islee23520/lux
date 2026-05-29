@@ -1,7 +1,0 @@
-Task 5 T3 pass evidence
-
-- Implemented milestone_push -> T3Gate mapping.
-- Implemented T3 Unity gate: T2 prerequisite pass + Unity batchmode compile + Unity scene smoke + case-insensitive scene stderr/log error scan.
-- Success path test: lux_verification_t3_passes_with_t2_compile_scene_and_records_evidence.
-- Verification command: cd gateway && cargo test --test lux_verification_test && cargo build.
-- Result: passed.

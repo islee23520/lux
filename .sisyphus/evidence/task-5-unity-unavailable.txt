@@ -1,7 +1,0 @@
-Task 5 Unity unavailable evidence
-
-- Unity executable discovery now hard-fails T3 milestone verification when the resolved executable is missing or empty.
-- Hard-fail message: Unity executable unavailable; milestone push blocked.
-- Failure path test: lux_verification_t3_unity_unavailable_hard_fails.
-- Verification command: cd gateway && cargo test --test lux_verification_test && cargo build.
-- Result: passed.
