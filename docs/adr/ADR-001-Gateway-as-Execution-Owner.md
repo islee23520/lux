@@ -6,8 +6,8 @@ Accepted (Phase 1, 2026-05-14)
 ## Context
 LUX has multiple surfaces that could own execution lifecycle:
 - CLI (`main.rs`) — ephemeral, cannot own durable state
-- OpenCode Plugin (`plugins/opencode/lux-plugin.ts`) — 919 lines of orchestration but single inFlight/current_ticket_id
-- Rust Gateway (`server.rs`) — long-running HTTP/WS process with 100+ routes, health/heartbeat, dashboard API
+- OpenCode Adapter (`adapters/opencode/lux-plugin.ts`) — 919 lines of orchestration but single inFlight/current_ticket_id
+- Rust Gateway (`server.rs`) — long-running HTTP/WS process with 120+ API and WebSocket routes, health/heartbeat, dashboard API
 
 Previous codebase had split-brain: LoopOrchestrator in gateway memory, ContinuationOrchestrator in plugin memory + continuation-state.json, proposed run-state.json as third state location.
 

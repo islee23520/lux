@@ -398,48 +398,52 @@ WebSocket(`/events`)을 통해 실시간 구조화 이벤트:
 
 ```
 Lux/
-├── gateway/                    # Rust CLI + Axum HTTP/WS 서버
+├── gateway/                        # Rust CLI + Axum HTTP/WS 서버
 │   ├── src/
-│   │   ├── main.rs             # CLI 진입점 (25+ 명령어)
-│   │   ├── server.rs           # Axum 라우터 (40+ 엔드포인트)
-│   │   ├── protocol.rs         # 이벤트 봉투 & 브릿지 프로토콜
-│   │   ├── config.rs           # 게이트웨이 설정
-│   │   ├── session.rs          # 세션 추적
-│   │   ├── ai_log.rs           # AI 상호작용 로깅
-│   │   ├── project.rs          # Unity 프로젝트 감지
-│   │   ├── unity_hub.rs        # Unity Hub 통합
-│   │   ├── unity_launch.rs     # 배치 모드 실행
-│   │   ├── capture.rs          # 스크린샷/캡처 세션
-│   │   ├── auto_update.rs      # Git SHA 기반 자동 업데이트
-│   │   ├── cross_platform.rs   # macOS 유틸리티
-│   │   ├── visual_regression.rs # 시각적 회귀 테스트
-│   │   ├── lux_spec.rs         # 9-도메인 Spec 엔진
-│   │   ├── lux_ambiguity.rs    # 모호도 계산
-│   │   ├── lux_ticket.rs       # 칸반 티켓 시스템
-│   │   ├── lux_loop.rs         # 자율 실행 루프
-│   │   ├── lux_terminal.rs     # 터미널 관리
-│   │   ├── lux_build.rs        # WebGL 빌드 관리자
-│   │   ├── lux_verification.rs # 검증 시스템
-│   │   ├── lux_roadmap.rs      # 로드맵 관리
-│   │   ├── skill_adapter/      # 스킬 로딩/어댑테이션
-│   │   └── lib.rs              # 라이브러리 익스포트
-│   ├── ui-src/                 # React 19 SPA 대시보드
-│   │   ├── App.tsx             # 메인 앱 (16개 라우트)
-│   │   └── components/         # 50+ 컴포넌트
-│   ├── tests/                  # 통합 테스트
-│   └── Cargo.toml              # Rust 의존성
+│   │   ├── main.rs                 # CLI 진입점 (25+ 명령어)
+│   │   ├── server.rs               # Axum 라우터 (40+ 엔드포인트)
+│   │   ├── protocol.rs             # 이벤트 봉투 & 브릿지 프로토콜
+│   │   ├── config.rs               # 게이트웨이 설정
+│   │   ├── session.rs              # 세션 추적
+│   │   ├── ai_log.rs               # AI 상호작용 로깅
+│   │   ├── project.rs              # Unity 프로젝트 감지
+│   │   ├── project_godot.rs        # Godot 프로젝트 감지
+│   │   ├── unity_hub.rs            # Unity Hub 통합
+│   │   ├── unity_launch.rs         # 배치 모드 실행
+│   │   ├── capture.rs              # 스크린샷, 캡처 세션
+│   │   ├── auto_update.rs          # Git SHA 기반 자동 업데이트
+│   │   ├── cross_platform.rs       # macOS 유틸리티
+│   │   ├── visual_regression.rs    # 시각적 회귀 테스트
+│   │   ├── bridge_types.rs         # 브릿지 타입 정의
+│   │   ├── addon_*.rs              # 애드온 인증, 라우트, 스토어
+│   │   ├── godot_bridge_install.rs # Godot 브릿지 설치
+│   │   ├── gopeak_manifest.rs      # GoPeak 매니페스트
+│   │   ├── lux_*.rs                # Lux 코어 모듈 (spec, ticket, build, loop, 등)
+│   │   ├── uloop_*.rs              # Unity CLI passthrough
+│   │   ├── skill_adapter/          # 스킬 로딩, 어댑테이션
+│   │   ├── templates/              # OpenCode 플러그인 템플릿
+│   │   └── lib.rs                  # 라이브러리 익스포트
+│   ├── ui-src/                     # React 19 SPA 대시보드
+│   ├── tests/                      # 통합 테스트
+│   ├── ui/                         # 빌드 산출물, 정적 리소스
+│   ├── build.rs
+│   ├── update-manifest.json
+│   └── Cargo.toml                  # Rust 의존성
 │
-├── bridge/                     # Unity C# 브릿지 어댑터 (37개 파일)
-│   ├── AiBridgeEditor/         # 브릿지 에디터 스크립트
-│   ├── AiBridgeTests/          # 브릿지 테스트
-│   └── LuxBridgeSettings.cs    # 설정
+├── bridge/                         # 엔진 브릿지 어댑터
+│   ├── unity/                      # Unity C# 브릿지
+│   ├── godot/                      # Godot 브릿지
+│   └── threejs/                    # Three.js 브릿지
 │
-├── plugins/
-│   └── opencode/               # OpenCode 플러그인
-│       └── lux-plugin.ts       # 세션 토스트, 컨텍스트 주입
+├── adapters/                       # AI 툴 어댑터 (소스)
+│   ├── opencode/                   # OpenCode 어댑터 (검증됨)
+│   │   └── lux-plugin.ts           # 세션 토스트, 컨텍스트 주입
+│   ├── codex/                      # OpenAI Codex (스캐폴드)
+│   ├── claude/                     # Claude Code (스캐폴드)
+│   ├── pi-agent/                   # Pi-Agent (스캐폴드)
+│   └── README.md
 │
 ├── Skills/                     # 20개 내장 AI 스킬
-│   ├── manifest.json           # 스킬 레지스트리
 │   ├── architecture-decision/
 │   ├── architecture-review/
 │   ├── bug-report/
@@ -463,14 +467,21 @@ Lux/
 │
 ├── scripts/                    # 유틸리티 스크립트
 │   ├── e2e-lux-sequential-smoke.sh
+│   ├── check-project-structure.sh
 │   ├── policy-scan.mjs         # 불변성 정책 스캐너
 │   └── test-all.sh
 │
 ├── seeds/                      # YAML 시드 데이터 & 패치 (120+ 항목)
 ├── docs/                       # 문서
 │   ├── roadmap-reality-lock.md
+│   ├── usage.md
+│   ├── godot-support.md
 │   └── adr/                    # 아키텍처 결정 기록
-└── Cargo.toml                  # Rust 워크스페이스
+├── Cargo.toml                  # Rust 워크스페이스
+├── Cargo.lock
+├── package.json
+├── package-lock.json
+└── LICENSE
 ```
 
 ---

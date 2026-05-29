@@ -24,8 +24,7 @@ Rules:
 - One active run only for MVP (no parallel multi-run until state model proven)
 
 M6 autonomous execution extends the active run lifecycle with these durable states:
-`planned`, `dispatch_ready`, `executing`, `verifying`, `blocked`, `retry_ready`,
-`resumed`, `Completed`, `Failed`, and `Quarantined`. The legacy M5 states remain
+`planned`, `dispatch_ready`, `ExecutingTicket` (displayed as "executing"), `Verifying`, `Blocked`, `RetryReady` (displayed as "retry_ready"), `Resumed` (displayed as "resumed"), `Completed`, `Failed`, and `Quarantined`. The legacy M5 states remain
 valid for migration and existing gateway surfaces; M6 states add explicit dispatch,
 executor, verification, retry/resume, and quarantine checkpoints without introducing
 a second source of truth.
@@ -45,6 +44,11 @@ Minimal MVP shape:
   "resume": { "previous_status": null, "checkpoint": null },
   "executor": { "kind": null, "job_id": null, "heartbeat_at": null },
   "verification_policy": null,
+  "stop_reason": null,
+  "continuation_count": 0,
+  "blocker_attempts": 0,
+  "continuation_config": null,
+  "awaiting_since": null,
   "last_error": null,
   "updated_at": "",
   "planned_at": null,

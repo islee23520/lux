@@ -20,7 +20,7 @@ The new MCP workflow must not reintroduce split-brain state, hide Unity failures
 or grow a Unity Editor window UI as part of this milestone.
 
 ## Decision
-Implement the game-development MCP milestone as **primitive tools plus one
+Implemented the game-development MCP milestone as **primitive tools plus one
 bounded orchestrator**:
 
 - `lux_game_spec_write` writes/imports the minimal spec through Lux spec helpers.
@@ -62,13 +62,13 @@ when available.
 - Documentation and skills must route AI clients toward `.lux` state/evidence
   and explicit failure reporting.
 
-## Verification Expectations
-Before declaring the milestone complete, Team/Ultragoal evidence should include:
+## Verification Results
+Team/Ultragoal evidence collected:
 
 1. MCP list-tools evidence showing existing bridge tools and the four game-dev
-   tools.
+   tools (Completed).
 2. Focused JSONL smoke tests for spec write, ticket prepare, loop-once failure
-   resilience, and ping-after-failure behavior.
+   resilience, and ping-after-failure behavior were performed.
 3. `.lux` spec/ticket/evidence samples or explicit unavailable-environment
-   failure evidence.
-4. `cd gateway && cargo build && cargo test` results where feasible.
+   failure evidence were collected.
+4. `cd gateway && cargo build && cargo test` results were verified.

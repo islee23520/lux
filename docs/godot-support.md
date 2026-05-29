@@ -53,3 +53,11 @@ lux godot build --project-path /path/to/godot-project
 ```
 
 This command intentionally exits non-zero for now. It will only become supported after GoPeak-backed build behavior has automated verification.
+
+## GoPeak Boundary
+
+GoPeak commands reported in `lux godot status` are external adapter capabilities, NOT LUX-verified support. A `project/build` entry in the GoPeak manifest does not mean `lux godot build` is supported. LUX-verified commands require end-to-end harness verification within the LUX runtime.
+
+## .agents Workflow
+
+The `lux agents-install` command installs the `lux-godot` skill into `.agents/skills/`. This allows AI clients to follow the Godot harness workflow, providing the necessary context and instructions for interacting with Godot projects through LUX.
