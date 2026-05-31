@@ -13,6 +13,7 @@ This document serves as the authoritative engineering assessment for the **Roadm
 | Ticket system | `gateway/src/lux_ticket.rs`, `gateway/src/lux_ticket_executor.rs`, and `gateway/src/lux_triage.rs` exist; ticket store supports CRUD, filtering, status tracking, executor, and triage. | Execution-grade tickets with acceptance/evidence/milestone refs. | Core system is implemented; autonomous execution schema extension remains pending. | High | Extend schema/provenance only after convergence requirements are locked. |
 | Milestone execution | `gateway/src/lux_roadmap.rs` exists; roadmap loading, status tracking, and feature flags are implemented. | Durable milestone graph and executor. | Roadmap status exists; full milestone executor remains follow-on. | High | Use existing roadmap loader/feature flags as the milestone truth foundation. |
 | Verification/blockers | `gateway/src/lux_verification.rs` exists with blocker ticket creation, blocker checks, and blocker resolution request endpoint support. | Autonomous blocker resolution. | Blockers are tracked and resolution can be requested; autonomous resolution is not implemented. | High | Keep blocker autonomy as follow-on and require evidence before marking complete. |
+| Game context observation | Unity context, hierarchy, logs, screenshots, uloop passthrough, and capture surfaces exist across gateway/bridge code and docs, but they are not yet locked as one schema. | A context-first Game Context Adapter that gives AI tools text/JSON scene, object, component, coordinate, camera/UI, log, PlayMode, screenshot, and optional vision evidence before execution is marked complete. | Pixel-only or command-only review can miss the link between a visual symptom and the GameObject/component/coordinate that caused it. | Critical | Add a Game Context Adapter contract before advancing autonomous execution; vision evidence is supplemental and must link back to engine context or blocker evidence. |
 | OpenCode prompt injection | `gateway/src/templates/plugin/` includes `continuation-injector.ts`, `prompt-builder.ts`, and `next-action-generator.ts`; `adapters/opencode/lux-plugin.ts` integrates prompt/context injection. | Ticket-driven OpenCode hook execution until milestone. | Prompt injection is scaffolded and template-backed; ticket-driven execution provenance is not complete. | High | Guardrail remains: prompt injection without ticket provenance is not completion evidence. |
 | Direct FS / gateway SSoT | Plugin templates include loaders and clients that read/write local state; not all state is gateway-mediated. | Observable, validated SSoT path. | Some orchestration bypasses gateway validation/audit. | High | Inventory and document; do not refactor all plugin state access in this plan. |
 | remote/WebRTC | `/api/remote/sessions` routes exist but are hidden experimental behind `experimental_flags.remote_webrtc=true`. | User/README out-of-scope says no public remote streaming. | Product direction is gated but must stay visibly experimental. | High | Keep disabled by default and exclude from public completion evidence. |
@@ -22,11 +23,11 @@ This document serves as the authoritative engineering assessment for the **Roadm
 
 The following milestones are sequenced after the **Roadmap Reality Lock** is established. Several now have scaffolding or partial implementation, but none should be treated as full autonomous Unity development until their success criteria are verified.
 
-### M1: Canonical 9-Domain Schema & Defaults
+### M1: Game Context Schema & Defaults
 - **Entry Criteria**: Roadmap Reality Lock complete; gap matrix established.
-- **Description**: Migration to the full 9-domain specification engine (Architecture, UI/UX, Logic, Assets, Testing, Performance, Security, Deployment, Documentation) with built-in defaults and domain-specific validation rules.
-- **Success Criteria**: Canonical domain v3 schema is the only accepted input for spec generation; all 9 domains have active validation hooks.
-- **Status**: Partially implemented — `gateway/src/lux_spec.rs` has `SpecDomains`, and templates include 9 domain markdown files; canonical validation/default migration is not complete.
+- **Description**: Migration to a game-first schema that locks GDD/spec domains plus the AI observation units needed for actual game development: scene hierarchy, selected object/component snapshots, Transform/RectTransform/Collider values, camera/UI coordinate state, logs, PlayMode/input traces, screenshots, and optional vision annotations.
+- **Success Criteria**: Game requirements and engine observations are represented as stable `.lux` text/JSON evidence; screenshot and vision evidence can supplement but not replace object/component/coordinate/log context.
+- **Status**: Partially implemented — `gateway/src/lux_spec.rs` has `SpecDomains`, templates include game-relevant markdown files, and Unity context commands exist; a unified Game Context Adapter contract is not complete.
 
 ### M2: Ambiguity Convergence & Socratic Loop
 - **Entry Criteria**: M1 complete; consistent ambiguity polarity (0.0 = clear) enforced.
@@ -84,6 +85,7 @@ This repository is currently split into runtime state, source adapters, bridge s
 ## Default Decisions & Invariants
 
 - **Canonical SSoT**: `.lux/roadmap.json` is the single source of truth for roadmap and status.
+- **Game Context Adapter**: AI-visible game state must be context-first. Scene, object, component, coordinate, camera, UI, log, and PlayMode data are first-class text/JSON evidence; screenshots and vision annotations are supplemental and must link back to engine context or explicit blocker evidence.
 - **Ambiguity Polarity**: `0.0` = fully clear, `1.0` = maximally ambiguous.
 - **Convergence Target**: Ambiguity must be `<= 0.02` for a spec to be considered locked.
 - **Remote/WebRTC**: Classified as **hidden experimental**. Not part of the public roadmap or completion evidence; the only opt-in is `.lux/roadmap.json` `experimental_flags.remote_webrtc=true`, and the default value is disabled.

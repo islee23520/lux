@@ -1,10 +1,11 @@
 # Lux Game Harness Overhaul Plan
 
 ## TL;DR
-> **Summary**: Reframe LUX as a game-development harness whose canonical flow is `.lux/specs` GDD/spec SSoT -> Socratic ambiguity minimization -> goal/ticket selection -> `lux run` execution -> TDD plus engine-specific manual QA evidence.
+> **Summary**: Reframe LUX as a context-first game-development harness whose canonical flow is `.lux/specs` GDD/spec SSoT -> Socratic ambiguity minimization -> game context observation -> goal/ticket selection -> `lux run` execution -> TDD plus engine-specific manual QA evidence.
 > **Deliverables**:
 > - `.lux/specs/` canonical GDD/domain/decision model under `.lux` SSoT.
 > - Baseline game-domain schema plus LLM-approved custom domains covering Unity, Godot, and Three.js without pretending equal maturity.
+> - Game Context Adapter contract that exposes scene hierarchy, selected objects, components, coordinates, camera/UI state, logs, PlayMode state, screenshots, and optional vision as stable AI-readable evidence.
 > - Socratic review loop that logs every user answer and compares it against prior decisions.
 > - `lux run` goal pursuit contract that chooses the next task from spec ambiguity, tickets, and engine capability.
 > - Verification router for TDD, command evidence, screenshots, and optional video per working engine surface.
@@ -34,11 +35,13 @@ The user wants LUX to be an overhaul harness tool specifically for games. Initia
 
 ## Work Objectives
 ### Core Objective
-Make LUX's next architecture milestone a game-specific harness contract where game intent is captured in `.lux/specs`, ambiguity is reduced before execution, and `lux run` executes only evidence-grade tasks against a detected working game engine.
+Make LUX's next architecture milestone a game-specific harness contract where game intent is captured in `.lux/specs`, ambiguity is reduced before execution, game/engine state is observed through stable context snapshots, and `lux run` executes only evidence-grade tasks against a detected working game engine.
 
 ### Deliverables
 - `.lux/specs/gdd.md`, `.lux/specs/spec.json`, `.lux/specs/domains/*.md`, `.lux/specs/decisions.jsonl`, and `.lux/specs/preferences.json` contract.
 - A canonical baseline game-domain set: `gdd`, `mechanics`, `controls`, `camera`, `levels`, `art-style`, `audio`, `narrative`, `ui-ux`, `technical-architecture`, `engine`, `testing`, `build-release`.
+- A Game Context Adapter contract for scene hierarchy, selected object/component snapshots, Transform/RectTransform/Collider/Camera/UI coordinate state, console/compile logs, PlayMode/input trace, screenshots, and optional vision feedback.
+- A rule that screenshot and vision feedback are supplemental evidence; text/JSON context snapshots are the first-class interface that lets AI agents reason about game state without hallucinating from pixels alone.
 - LLM-approved custom domain support with decision-ledger provenance.
 - Migration from existing `.lux/spec.json` and `.lux/domains/*.md` with explicit receipts.
 - Socratic loop that records questions, answers, accepted decisions, rejected decisions, contradictions, and preference inferences.
@@ -63,6 +66,7 @@ Make LUX's next architecture milestone a game-specific harness contract where ga
 ### Must Have
 - `.lux/` remains the only runtime SSoT root.
 - `.lux/specs/` is canonical for game GDD/spec documents.
+- Game state observation is context-first: scene, component, coordinate, camera, UI, log, and PlayMode data must be representable as text/JSON evidence before vision-only review can mark work complete.
 - Existing `.lux/spec.json` and `.lux/domains` migration is explicit and observable.
 - No silent fallback from `.lux/specs` to stale `.lux/domains`.
 - Every user answer and accepted/rejected decision is persisted.
@@ -75,6 +79,7 @@ Make LUX's next architecture milestone a game-specific harness contract where ga
 - Do not claim Godot/Three.js runtime parity if only Unity is verified.
 - Do not store canonical game requirements outside `.lux`.
 - Do not make docs say screenshots/video are always available; they are capability-gated.
+- Do not make vision feedback the only verification surface for game behavior; it must be linked back to engine context, object identity, coordinates, logs, or explicit blocker evidence.
 - Do not use dry-run evidence as completion evidence for real execution.
 
 ## Verification Strategy
@@ -99,7 +104,7 @@ Wave 5: Task 12, Task 13, Task 14
 ### Dependency Matrix
 | Task | Depends On | Blocks |
 | --- | --- | --- |
-| 1. Current surface inventory | none | 2, 3, 4, 7, 12 |
+| 1. Current Surface Inventory | none | 2, 3, 4, 7, 12, 15 |
 | 2. `.lux/specs` SSoT contract | 1 | 4, 5, 6, 8, 10 |
 | 3. Engine capability taxonomy | 1 | 7, 9, 10, 12 |
 | 4. Game domain schema and migration | 2 | 5, 6, 8, 10 |
@@ -113,6 +118,7 @@ Wave 5: Task 12, Task 13, Task 14
 | 12. End-to-end temp project harness | 7, 9, 10 | 13, 14 |
 | 13. Release docs and guardrails | 11, 12 | 14 |
 | 14. Baseline verification report | 12, 13 | Final Verification |
+| 15. Game Context Adapter contract | 1, 2, 3 | 7, 9, 10, 12 |
 
 ## TODOs
 - [ ] 1. Current Surface Inventory
@@ -552,12 +558,47 @@ Wave 5: Task 12, Task 13, Task 14
 
   **Commit**: YES | Message: `test: add game harness e2e smoke` | Files: `gateway/tests/gateway_cli_smoke.rs`, fixtures
 
+- [ ] 15. Game Context Adapter Contract
+
+  **What to do**: Define the first-class observation contract that AI tools receive before acting on a game project. The contract must cover scene hierarchy, selected object identity, component/property snapshots, Transform/RectTransform/Collider data, camera and UI coordinate state, console/compile logs, PlayMode/input trace, screenshot references, and optional vision annotations. It must state how each observation links back to `.lux/specs`, tickets, run evidence, and engine capability status.
+  **Must NOT do**: Do not make pixel-only vision feedback a completion gate without engine context. Do not introduce remote streaming, browser-based Unity control, or unverified Godot/Three.js parity.
+
+  **Parallelization**: Can Parallel: YES | Wave 4 | Blocks: 7, 9, 10, 12, 13 | Blocked By: 1, 2, 3
+
+  **References**:
+  - Unity context APIs: `gateway/src/uloop_runner.rs`, `gateway/src/bridge_types.rs`, `gateway/src/capture.rs`
+  - Existing context command docs: `README.md`, `docs/usage.md`, `Skills/skills/lux-unity/SKILL.md`
+  - Spec SSoT: `.lux/specs` contract from Tasks 2 and 4
+
+  **Acceptance Criteria**:
+  - [ ] Observation schema names every required context field and its evidence source.
+  - [ ] Screenshot/vision evidence is represented as a supplement to text/JSON state, not a replacement.
+  - [ ] Coordinate and UI/camera state include enough data for an AI agent to connect visual symptoms back to GameObjects or blocker evidence.
+  - [ ] Unsupported engine observations produce explicit capability blockers.
+
+  **QA Scenarios**:
+  ```text
+  Scenario: Context schema is text/JSON first
+    Tool: bash
+    Steps: rg -n "Game Context Adapter|scene hierarchy|RectTransform|coordinate|vision" README.md docs Skills gateway
+    Expected: docs and/or schema describe text/JSON observations before screenshot/vision evidence.
+    Evidence: evidence/game-harness-task-15-context-contract.txt
+
+  Scenario: Vision is not standalone completion evidence
+    Tool: bash
+    Steps: rg -n "vision.*supplement|not.*vision.*only|pixel-only" README.md docs Skills gateway
+    Expected: guardrail exists in public docs or skill contract.
+    Evidence: evidence/game-harness-task-15-vision-guardrail.txt
+  ```
+
+  **Commit**: YES | Message: `docs: lock game context adapter contract` | Files: README/docs/skills and later schema tests
+
 - [ ] 13. Release Docs and Guardrails
 
   **What to do**: Update README, usage docs, roadmap reality lock, and skill docs to state the new game harness contract: `.lux/specs` GDD SSoT, Socratic ambiguity, engine capability routing, evidence-gated `lux run`, and explicit engine maturity.
   **Must NOT do**: Do not claim completed full autonomous game development.
 
-  **Parallelization**: Can Parallel: YES | Wave 5 | Blocks: 14 | Blocked By: 11, 12
+  **Parallelization**: Can Parallel: YES | Wave 5 | Blocks: 14 | Blocked By: 11, 12, 15
 
   **References**:
   - `README.md`
@@ -625,7 +666,7 @@ Wave 5: Task 12, Task 13, Task 14
 
 ## Final Verification Wave
 > ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
-- [ ] F1. Plan Compliance Audit: verify Tasks 1-14 acceptance criteria have evidence and no task is skipped.
+- [ ] F1. Plan Compliance Audit: verify Tasks 1-15 acceptance criteria have evidence and no task is skipped.
 - [ ] F2. Code Quality Review: inspect SSoT migration, no silent fallback, run-state evidence gating, and engine router strictness.
 - [ ] F3. Real Manual QA: run one full CLI flow on a temp project and one working engine-specific manual QA surface or explicit blocker flow.
 - [ ] F4. Scope Fidelity Check: confirm this milestone did not claim full M1-M6 autonomy or fake all-engine parity.
@@ -649,8 +690,9 @@ Recommended commits:
 7. `feat(cli): expose game spec loop`
 8. `feat(verify): capture engine manual qa evidence`
 9. `feat(run): pursue spec-backed game goals`
-10. `docs: define lux game harness contract`
-11. `test: record game harness verification baseline`
+10. `docs: lock game context adapter contract`
+11. `docs: define lux game harness contract`
+12. `test: record game harness verification baseline`
 
 Do not commit automatically unless explicitly requested.
 

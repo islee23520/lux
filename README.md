@@ -2,9 +2,9 @@
 
 **LUX** = **L**inalab **U**nity **X**
 
-LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Unity remains the primary public-beta verified engine; Three.js and Godot are supported through explicit capability maturity tiers so AI tools do not confuse planned or external-adapter capabilities with verified LUX commands.
+LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Its game-development direction is **context-first**: LUX turns game intent, project structure, engine state, scene hierarchy, object properties, coordinates, logs, screenshots, and verification results into stable AI-readable evidence before any agent claims progress. Unity remains the primary public-beta verified engine; Three.js and Godot are supported through explicit capability maturity tiers so AI tools do not confuse planned or external-adapter capabilities with verified LUX commands.
 
-AI 코딩 도구가 Unity Editor와 Godot/Three.js 프로젝트 상태를 안전하게 확인하고 증거 기반으로 다음 행동을 결정하게 하는 **독립형 로컬 자동화 툴킷**입니다.
+AI 코딩 도구가 Unity Editor와 Godot/Three.js 프로젝트 상태를 안전하게 확인하고 증거 기반으로 다음 행동을 결정하게 하는 **독립형 로컬 자동화 툴킷**입니다. LUX의 게임 플러그인 계층은 비전 모델만을 전제로 하지 않고, 먼저 씬/오브젝트/컴포넌트/좌표계/카메라/UI/콘솔 로그를 텍스트와 JSON 컨텍스트로 고정한 뒤 필요한 경우 스크린샷·비전 피드백을 연결합니다.
 
 > **"Local-first"** — 모든 기능은 `localhost`에서 작동합니다. 보안과 성능을 위해 원격 스트리밍이나 외부 클라우드 의존성을 최소화합니다.
 
@@ -126,6 +126,25 @@ AI 어시스턴트 (터미널)
 ---
 
 ## 핵심 기능
+
+### 0. Game Context Adapter — AI용 Unity 관측 계층
+
+LUX의 게임 개발 플러그인 방향은 **Vision-first가 아니라 Context-first**입니다. AI가 Unity 프로젝트를 고칠 때 실패하는 주된 이유는 코드 지식 부족보다 현재 씬, 좌표계, 프리팹 연결, UI 배치, PlayMode 상태, 콘솔 로그, 화면 결과를 하나의 증거 루프로 보지 못하는 데 있습니다.
+
+LUX는 다음 관측 단위를 표준 컨텍스트로 잠급니다:
+
+| 관측 단위 | 목적 |
+|---|---|
+| GDD/spec map | `.lux/specs` 아래 게임 의도와 도메인 결정을 SSoT로 고정 |
+| Scene hierarchy | 활성 씬, GameObject, 부모/자식 구조 파악 |
+| Selected object / component snapshot | Transform, RectTransform, Collider, Renderer, Script 참조 확인 |
+| Coordinate and camera state | 월드좌표/스크린좌표/카메라 타겟/2D·3D 축 혼용 문제 검증 |
+| UI layout state | Canvas, anchors, RectTransform, 화면 밖 배치 문제 검증 |
+| Console and compile logs | 코드 변경 후 실패 원인을 증거로 연결 |
+| PlayMode and input trace | 실행 상태, 입력 재현, 런타임 루프 검증 |
+| Screenshot / vision evidence | 텍스트 컨텍스트로 설명되지 않는 시각 결과를 보조 증거로 연결 |
+
+이 계층의 목표는 단순한 자동 클릭이나 원격 제어가 아니라, **AI가 게임 상태를 읽고 변경하고 검증할 수 있는 관측 표준**을 제공하는 것입니다. 스크린샷과 비전 피드백은 중요하지만, 먼저 좌표·컴포넌트·로그·씬 상태가 텍스트/JSON으로 재현 가능해야 합니다.
 
 ### 1. AI 어시스턴트 통합
 
@@ -494,12 +513,12 @@ Lux/
 
 | 마일스톤 | 설명 |
 |----------|------|
-| **M1** | Canonical 9-Domain Schema & Defaults |
+| **M1** | Game Context Schema & Defaults — GDD/spec, 도메인, 씬/좌표/UI/카메라 관측 단위 표준화 |
 | **M2** | 모호도 수렴 & 소크라테스 루프 (≤ 0.02) |
 | **M3** | 실행 등급 티켓 스키마 |
-| **M4** | 티켓 기반 OpenCode Hook 실행기 |
+| **M4** | 티켓 기반 OpenCode Hook 실행기 + 엔진 상태 컨텍스트 주입 |
 | **M5** | 블로커 자동 해결 그래프 |
-| **M6 / Autonomous** | Spec → Ticket → OpenCode 완전 자율 파이프라인 (계획됨) |
+| **M6 / Autonomous** | Spec → Ticket → OpenCode → 엔진 관측/검증 완전 자율 파이프라인 (계획됨) |
 
 ### 범위 외
 

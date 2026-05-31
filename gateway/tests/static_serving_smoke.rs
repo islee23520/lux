@@ -30,10 +30,15 @@ fn reserve_local_port() -> u16 {
         .port()
 }
 
-fn start_gateway(port: u16) -> GatewayProcess {
+fn start_static_test() -> (MutexGuard<'static, ()>, u16) {
     let test_lock = STATIC_SERVING_LOCK
         .lock()
         .expect("static serving test lock poisoned");
+    let port = reserve_local_port();
+    (test_lock, port)
+}
+
+fn start_gateway(port: u16, test_lock: MutexGuard<'static, ()>) -> GatewayProcess {
     let child = Command::new(env!("CARGO_BIN_EXE_lux"))
         .args([
             "serve",
@@ -146,7 +151,7 @@ fn request_status(port: u16, method: &str, path: &str, headers: &[(&str, &str)])
 
 #[test]
 fn serves_index_html_from_ui_dir() {
-    let port = reserve_local_port();
+    let (test_lock, port) = start_static_test();
 
     let ui_dir = std::env::current_dir().unwrap().join("ui");
     let _ = fs::create_dir_all(&ui_dir);
@@ -156,7 +161,7 @@ fn serves_index_html_from_ui_dir() {
     )
     .expect("write test index.html");
 
-    let _gateway = start_gateway(port);
+    let _gateway = start_gateway(port, test_lock);
     wait_for_health(port);
 
     let status = http_status(port, "/ui/");
@@ -171,7 +176,7 @@ fn serves_index_html_from_ui_dir() {
 
 #[test]
 fn serves_nested_asset() {
-    let port = reserve_local_port();
+    let (test_lock, port) = start_static_test();
 
     let ui_dir = std::env::current_dir().unwrap().join("ui");
     let _ = fs::create_dir_all(&ui_dir);
@@ -181,7 +186,7 @@ fn serves_nested_asset() {
     )
     .expect("write test favicon.svg");
 
-    let _gateway = start_gateway(port);
+    let _gateway = start_gateway(port, test_lock);
     wait_for_health(port);
 
     let status = http_status(port, "/ui/favicon.svg");
@@ -196,8 +201,8 @@ fn serves_nested_asset() {
 
 #[test]
 fn returns_404_for_missing_file() {
-    let port = reserve_local_port();
-    let _gateway = start_gateway(port);
+    let (test_lock, port) = start_static_test();
+    let _gateway = start_gateway(port, test_lock);
     wait_for_health(port);
 
     let status = http_status(port, "/ui/nonexistent-file-xyz-123.html");
@@ -210,7 +215,7 @@ fn returns_404_for_missing_file() {
 
 #[test]
 fn handles_missing_ui_dir_gracefully() {
-    let port = reserve_local_port();
+    let (test_lock, port) = start_static_test();
 
     let ui_dir_backup = std::env::current_dir()
         .unwrap()
@@ -225,7 +230,7 @@ fn handles_missing_ui_dir_gracefully() {
         None
     };
 
-    let _gateway = start_gateway(port);
+    let _gateway = start_gateway(port, test_lock);
     wait_for_health(port);
 
     let status = http_status(port, "/ui/");
