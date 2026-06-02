@@ -1,6 +1,0 @@
-file-list-diff=0
-legacy-bridge-absent=0
-      29 /tmp/lux-unity-idem-38251/before.txt
-      29 /tmp/lux-unity-idem-38251/after.txt
-      58 total
-cleanup=removed /tmp/lux-unity-idem-38251

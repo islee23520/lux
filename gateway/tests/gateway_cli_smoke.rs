@@ -1,3 +1,12 @@
+use chrono::{DateTime, Utc};
+use lux::{
+    lux_run_state::RunState,
+    lux_team_profile::TeamProfile,
+    lux_ticket::{
+        DispatchPolicy, FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore,
+    },
+    lux_verification::{route_verification, VerificationOpts, VerificationStatus},
+};
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -5,7 +14,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -126,6 +135,28 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
 }
 
 #[test]
+fn gui_command_is_not_available() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .arg("--help")
+        .output()
+        .expect("run lux help command");
+
+    assert!(
+        output.status.success(),
+        "lux --help should succeed for server-only gateway"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("gui"),
+        "lux --help should not expose gui command, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("tui"),
+        "lux --help should not expose tui command, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn rust_lux_godot_status_reports_separate_gopeak_and_lux_capabilities() {
     let temp_dir = create_temp_dir("lux-godot-status");
     let project_root = temp_dir.join("GodotProject");
@@ -158,6 +189,76 @@ fn rust_lux_godot_status_reports_separate_gopeak_and_lux_capabilities() {
         .expect("unsupported commands")
         .iter()
         .any(|command| command.as_str() == Some("godot build")));
+    assert!(status["lux"]["capability_blockers"]
+        .as_array()
+        .expect("capability blockers")
+        .iter()
+        .any(|blocker| blocker["capability"] == "build"
+            && blocker["status"] == "unsupported"
+            && blocker["recommended_next_supported_action"]
+                .as_str()
+                .is_some_and(|action| action.contains("lux godot status"))));
+}
+
+#[test]
+fn rust_lux_godot_status_writes_engine_capabilities_json() {
+    let temp_dir = create_temp_dir("lux-godot-capabilities");
+    let project_root = temp_dir.join("GameProject");
+    fs::create_dir_all(project_root.join("Assets")).expect("create Assets");
+    fs::create_dir_all(project_root.join("ProjectSettings")).expect("create ProjectSettings");
+    fs::write(
+        project_root.join("ProjectSettings/ProjectVersion.txt"),
+        "m_EditorVersion: 2022.3.20f1\n",
+    )
+    .expect("write Unity marker");
+    fs::write(
+        project_root.join("package.json"),
+        r#"{
+  "dependencies": {
+    "three": "^0.179.0"
+  }
+}"#,
+    )
+    .expect("write Three.js marker");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "status",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot status for capability snapshot");
+
+    assert_command_success(&output, "lux godot status for capability snapshot");
+
+    let capabilities_path = project_root.join(".lux/engines/capabilities.json");
+    assert!(
+        capabilities_path.is_file(),
+        "capabilities.json should be written"
+    );
+
+    let payload: Value = serde_json::from_str(
+        &fs::read_to_string(&capabilities_path).expect("read engine capabilities json"),
+    )
+    .expect("engine capabilities json should parse");
+
+    assert_eq!(payload["schema_version"], "1");
+    assert_eq!(payload["engine"], "godot");
+    assert_eq!(payload["status"], "unsupported");
+    assert_eq!(payload["unity"]["status"], "detected");
+    assert_eq!(payload["godot"]["status"], "unsupported");
+    assert_eq!(payload["three_js"]["status"], "limited");
+    assert_eq!(payload["unity"]["detected"], true);
+    assert_eq!(payload["godot"]["detected"], false);
+    assert_eq!(payload["three_js"]["detected"], true);
+    assert!(payload["godot"]["blocker_reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("project.godot")));
+    assert!(payload["three_js"]["blocker_reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("Three.js")));
 }
 
 #[test]
@@ -229,8 +330,8 @@ fn rust_lux_bridge_install_godot_requires_valid_project_and_is_idempotent() {
 }
 
 #[test]
-fn rust_lux_init_installs_opencode_adapter_from_source_path() {
-    let project_root = create_temp_dir("lux-init-opencode-adapter");
+fn rust_lux_init_does_not_require_removed_opencode_adapter_source() {
+    let project_root = create_temp_dir("lux-init-without-opencode-adapter");
 
     let output = Command::new(env!("CARGO_BIN_EXE_lux"))
         .args([
@@ -246,12 +347,11 @@ fn rust_lux_init_installs_opencode_adapter_from_source_path() {
 
     let installed_plugin = project_root.join(".opencode/plugins/lux-plugin.ts");
     let legacy_plugin_dir = project_root.join(".opencode/plugins/lux");
-    let source_plugin =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../adapters/opencode/lux-plugin.ts");
-    let installed = fs::read_to_string(&installed_plugin).expect("read installed plugin");
-    let source = fs::read_to_string(&source_plugin).expect("read source plugin");
 
-    assert_eq!(installed, source);
+    assert!(
+        !installed_plugin.exists(),
+        "removed adapters/opencode source must not be required by lux init"
+    );
     assert!(
         !legacy_plugin_dir.exists(),
         "legacy plugin directory should not be created by default"
@@ -278,10 +378,44 @@ fn rust_lux_init_creates_specs_ssot_contract() {
     assert!(specs_root.join("gdd.md").is_file());
     assert!(specs_root.join("spec.json").is_file());
     assert!(specs_root.join("domains").is_dir());
-    assert!(specs_root.join("domains/design.md").is_file());
+    assert!(specs_root.join("domains/gdd.md").is_file());
+    assert!(!specs_root.join("domains/design.md").exists());
+    assert!(!specs_root.join("domains/architecture.md").exists());
     assert!(specs_root.join("decisions.jsonl").is_file());
     assert!(specs_root.join("preferences.json").is_file());
     assert!(specs_root.join("migration.json").is_file());
+}
+
+#[test]
+fn rust_lux_init_writes_engine_capabilities_snapshot() {
+    let project_root = create_temp_dir("lux-init-engine-capabilities");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+
+    assert_command_success(&output, "lux init --no-interactive");
+
+    let capabilities_path = project_root.join(".lux/engines/capabilities.json");
+    assert!(
+        capabilities_path.is_file(),
+        "engine capabilities snapshot should exist"
+    );
+    let snapshot: Value = serde_json::from_str(
+        &fs::read_to_string(&capabilities_path).expect("read capabilities snapshot"),
+    )
+    .expect("parse capabilities snapshot");
+    let engines = snapshot["engines"].as_array().expect("engines array");
+    assert_eq!(engines.len(), 3);
+    assert!(engines.iter().any(|engine| engine["engine"] == "unity"));
+    assert!(engines.iter().any(|engine| engine["engine"] == "godot"));
+    assert!(engines.iter().any(|engine| engine["engine"] == "three_js"));
 }
 
 #[test]
@@ -318,21 +452,382 @@ fn rust_lux_init_migrates_legacy_specs_with_receipt() {
         .expect("run second lux init");
     assert_command_success(&second_output, "second lux init --no-interactive");
 
-    let migrated_design = fs::read_to_string(project_root.join(".lux/specs/domains/design.md"))
-        .expect("read migrated design domain");
+    let migrated_design = fs::read_to_string(project_root.join(".lux/specs/domains/gdd.md"))
+        .expect("read migrated gdd domain");
     assert!(migrated_design.contains(marker));
 
     let receipt_path = project_root.join(".lux/specs/migration.json");
     let receipt: Value =
         serde_json::from_str(&fs::read_to_string(&receipt_path).expect("read migration receipt"))
             .expect("migration receipt JSON");
+    assert_eq!(receipt["canonical_root"], ".lux/specs");
+    let migrated_at = receipt["migrated_at"]
+        .as_str()
+        .expect("migration receipt should include a migrated_at timestamp");
+    assert!(
+        DateTime::parse_from_rfc3339(migrated_at).is_ok(),
+        "migration receipt timestamp should be RFC3339"
+    );
     let sources = receipt["sources"]
         .as_array()
         .expect("migration sources should be an array");
+    assert_eq!(receipt["canonical_root"], ".lux/specs");
+    let migrated_at = receipt["migrated_at"]
+        .as_str()
+        .expect("migration timestamp should be a string");
+    DateTime::parse_from_rfc3339(migrated_at).expect("migration timestamp should be RFC3339");
     assert!(sources.iter().any(|source| source == ".lux/spec.json"));
     assert!(sources
         .iter()
         .any(|source| source == ".lux/domains/design.md"));
+}
+
+#[test]
+fn spec_loop_cli_starts_answers_approves_applies() {
+    let project_root = create_temp_dir("lux-spec-loop-cli-round");
+
+    let init = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+    assert_command_success(&init, "lux init --no-interactive for spec-loop");
+
+    let start = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "start",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux spec-loop start");
+    assert_command_success(&start, "lux spec-loop start");
+    let start_stdout = String::from_utf8_lossy(&start.stdout);
+    let run_id = cli_field(&start_stdout, "run_id").expect("start should print run_id");
+    let question_id =
+        cli_field(&start_stdout, "question_id").expect("start should print question_id");
+
+    let answer = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "answer",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+            &question_id,
+            "Players make a short scout dash collect upgrade loop.",
+        ])
+        .output()
+        .expect("run lux spec-loop answer");
+    assert_command_success(&answer, "lux spec-loop answer");
+    let answer_stdout = String::from_utf8_lossy(&answer.stdout);
+    let proposal_id =
+        cli_field(&answer_stdout, "proposal_id").expect("answer should print proposal_id");
+
+    let approve = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "approve",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+            &proposal_id,
+        ])
+        .output()
+        .expect("run lux spec-loop approve");
+    assert_command_success(&approve, "lux spec-loop approve");
+
+    let apply = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "apply",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+        ])
+        .output()
+        .expect("run lux spec-loop apply");
+    assert_command_success(&apply, "lux spec-loop apply");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "status",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+        ])
+        .output()
+        .expect("run lux spec-loop status");
+    assert_command_success(&status, "lux spec-loop status");
+    assert!(String::from_utf8_lossy(&status.stdout).contains("state="));
+
+    let decisions = fs::read_to_string(project_root.join(".lux/specs/decisions.jsonl"))
+        .expect("read decisions ledger");
+    assert!(decisions.contains("\"event\":\"question_answered\""));
+    assert!(decisions.contains("\"event\":\"proposal_approved\""));
+    assert!(decisions.contains("\"event\":\"proposal_applied\""));
+
+    let domain_doc = fs::read_to_string(project_root.join(".lux/specs/domains/gdd.md"))
+        .expect("read canonical gdd domain doc");
+    assert!(domain_doc.contains("Players make a short scout dash collect upgrade loop."));
+}
+
+#[test]
+fn spec_loop_cli_rejects_empty_answer() {
+    let project_root = create_temp_dir("lux-spec-loop-empty-answer");
+    let init = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+    assert_command_success(&init, "lux init --no-interactive for empty answer");
+
+    let start = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "start",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux spec-loop start");
+    assert_command_success(&start, "lux spec-loop start for empty answer");
+    let start_stdout = String::from_utf8_lossy(&start.stdout);
+    let run_id = cli_field(&start_stdout, "run_id").expect("start should print run_id");
+    let question_id =
+        cli_field(&start_stdout, "question_id").expect("start should print question_id");
+    let ledger_path = project_root.join(".lux/specs/decisions.jsonl");
+    let ledger_before = fs::read_to_string(&ledger_path).expect("read decisions ledger before");
+
+    let answer = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "answer",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+            &question_id,
+            "",
+        ])
+        .output()
+        .expect("run lux spec-loop answer empty");
+
+    assert!(
+        !answer.status.success(),
+        "empty answer should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&answer.stdout),
+        String::from_utf8_lossy(&answer.stderr)
+    );
+    assert!(String::from_utf8_lossy(&answer.stderr).contains("answer cannot be empty"));
+    let ledger_after = fs::read_to_string(&ledger_path).expect("read decisions ledger after");
+    assert_eq!(ledger_before, ledger_after);
+}
+
+#[test]
+fn run_dry_run_writes_spec_backed_current_goal() {
+    let project_root = create_temp_dir("lux-run-dry-run-next-goal");
+    init_lux_project_for_run(&project_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "run",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--dry-run",
+            "make next playable step",
+        ])
+        .output()
+        .expect("run lux run --dry-run");
+
+    assert_command_success(&output, "lux run --dry-run");
+
+    let run_state: Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".lux/run-state.json")).expect("run-state JSON"),
+    )
+    .expect("run-state should parse");
+    let run_id = run_state["runId"].as_str().expect("run id should persist");
+    let plan_path = project_root
+        .join(".lux/runs")
+        .join(run_id)
+        .join("plan.json");
+    let plan: Value =
+        serde_json::from_str(&fs::read_to_string(&plan_path).expect("plan JSON should exist"))
+            .expect("plan should parse");
+    assert_eq!(
+        plan["nextGoal"]["sourceSpecRefs"][0],
+        ".lux/specs/spec.json"
+    );
+    assert!(plan["nextGoal"]["rationale"]
+        .as_str()
+        .expect("rationale should be text")
+        .contains(".lux/specs"));
+
+    let current_goal_path = project_root.join(".lux/goals/current.json");
+    let current_goal: Value = serde_json::from_str(
+        &fs::read_to_string(&current_goal_path).expect("current goal should exist"),
+    )
+    .expect("current goal should parse");
+    assert_eq!(current_goal["goalId"], plan["nextGoal"]["goalId"]);
+    assert!(current_goal["sourceSpecRefs"]
+        .as_array()
+        .expect("source refs array")
+        .iter()
+        .any(|value| value == ".lux/specs/spec.json"));
+    assert!(current_goal["selectedEngine"].is_string());
+
+    let decisions =
+        fs::read_to_string(project_root.join(".lux/specs/decisions.jsonl")).expect("decisions");
+    assert!(decisions.contains("\"event\":\"goal_selected\""));
+    assert!(decisions.contains(run_id));
+}
+
+#[test]
+fn run_without_evidence_does_not_complete_and_writes_blocker_evidence() {
+    let project_root = create_temp_dir("lux-run-no-false-complete");
+    init_lux_project_for_run(&project_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "run",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "make next playable step",
+        ])
+        .output()
+        .expect("run lux run");
+
+    assert_command_success(&output, "lux run without evidence");
+
+    let run_state: Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".lux/run-state.json")).expect("run-state JSON"),
+    )
+    .expect("run-state should parse");
+    assert_ne!(run_state["status"], "Completed");
+    assert_eq!(run_state["status"], "AwaitingEvidence");
+    let run_id = run_state["runId"].as_str().expect("run id should persist");
+    let evidence_path = project_root
+        .join(".lux/evidence/autonomous")
+        .join(run_id)
+        .join("awaiting-evidence-blocker.json");
+    let evidence: Value =
+        serde_json::from_str(&fs::read_to_string(&evidence_path).expect("blocker evidence"))
+            .expect("blocker evidence JSON");
+    assert_eq!(evidence["status"], "awaiting_evidence");
+    assert_eq!(evidence["runId"], run_id);
+    assert!(evidence["currentGoal"]["sourceSpecRefs"]
+        .as_array()
+        .expect("source refs array")
+        .iter()
+        .any(|value| value == ".lux/specs/spec.json"));
+}
+
+#[test]
+fn game_harness_no_engine_blocks() {
+    let project_root = create_temp_dir("lux-game-harness-no-engine");
+    init_refine_and_seed_run_state(&project_root);
+    let ticket = create_h12_execution_ticket(
+        &project_root,
+        "godot_cli",
+        vec!["__lux_missing_godot_cli_for_h12__"],
+    );
+
+    let plan = run_h12_dry_run_and_read_plan(&project_root);
+    assert!(plan["nextGoal"]["sourceSpecRefs"]
+        .as_array()
+        .expect("source refs array")
+        .iter()
+        .any(|value| value == ".lux/specs/spec.json"));
+    assert!(
+        !plan.to_string().contains(".lux/domains"),
+        "run plan must not reference stale .lux/domains paths"
+    );
+
+    let result = route_verification(
+        &ticket,
+        &h12_verification_opts(&project_root, "h12-no-engine"),
+    )
+    .expect("no-engine verification should record blocker evidence");
+    assert_eq!(result.status, VerificationStatus::Unsupported);
+    assert!(!result.passed);
+    assert_eq!(result.policy_used, "godot_cli");
+    assert_eq!(result.evidence_paths.len(), 1);
+    let evidence_path = project_root.join(&result.evidence_paths[0]);
+    let evidence = fs::read_to_string(&evidence_path).expect("blocker evidence should read");
+    assert!(evidence.contains("missing CLI"));
+    assert!(evidence.contains("\"policy\":\"godot_cli\""));
+    assert!(FileTicketStore::new(&project_root)
+        .list(Default::default())
+        .expect("tickets should list")
+        .iter()
+        .any(|ticket| ticket.tags.iter().any(|tag| tag == "engine-blocker")));
+    copy_h12_artifact(
+        &project_root,
+        &result.evidence_paths[0],
+        "game-harness-task-12-no-engine-blocker.txt",
+    );
+}
+
+#[test]
+fn game_harness_fake_unity_evidence() {
+    let project_root = create_temp_dir("lux-game-harness-fake-unity");
+    init_refine_and_seed_run_state(&project_root);
+    let ticket = create_h12_execution_ticket(
+        &project_root,
+        "unity_uloop",
+        vec![
+            "printf compile-ok",
+            "printf test-ok",
+            "printf screenshot_path=fake-unity.png",
+        ],
+    );
+    fs::write(project_root.join("fake-unity.png"), "png").expect("fake screenshot marker");
+
+    let plan = run_h12_dry_run_and_read_plan(&project_root);
+    assert!(plan["nextGoal"]["sourceSpecRefs"]
+        .as_array()
+        .expect("source refs array")
+        .iter()
+        .any(|value| value == ".lux/specs/spec.json"));
+    assert!(
+        !plan.to_string().contains(".lux/domains"),
+        "run plan must not reference stale .lux/domains paths"
+    );
+
+    let result = route_verification(
+        &ticket,
+        &h12_verification_opts(&project_root, "h12-fake-unity"),
+    )
+    .expect("fake Unity verification should write evidence");
+    assert_eq!(result.status, VerificationStatus::Passed);
+    assert!(result.passed);
+    assert_eq!(result.policy_used, "unity_uloop");
+    assert_eq!(result.evidence_paths.len(), 3);
+    let evidence = result
+        .evidence_paths
+        .iter()
+        .map(|path| fs::read_to_string(project_root.join(path)).expect("evidence should read"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(evidence.contains("phase=compile"));
+    assert!(evidence.contains("phase=test"));
+    assert!(evidence.contains("phase=screenshot"));
+    for (index, evidence_path) in result.evidence_paths.iter().enumerate() {
+        copy_h12_artifact(
+            &project_root,
+            evidence_path,
+            &format!("game-harness-task-12-fake-unity-{index}.txt"),
+        );
+    }
 }
 
 #[test]
@@ -379,11 +874,82 @@ fn rust_lux_bridge_install_copies_unity_bridge_to_luxbridge_layout() {
     assert!(project_root
         .join("Assets/Editor/LuxBridge/LuxBridgeSettings.cs")
         .is_file());
-    assert!(project_root
-        .join(".opencode/plugins/lux-plugin.ts")
-        .is_file());
+    assert!(
+        !project_root
+            .join(".opencode/plugins/lux-plugin.ts")
+            .exists(),
+        "removed adapters/opencode source must not be required by bridge install"
+    );
     assert!(!project_root.join("Assets/Editor/AiBridgeEditor").exists());
     assert!(!project_root.join(".opencode/plugins/lux").exists());
+}
+
+#[test]
+fn doctor_reports_luxbridge_install_path() {
+    let current_project = create_test_unity_project("lux-doctor-luxbridge", false);
+    fs::create_dir_all(current_project.join("Assets/Editor/LuxBridge"))
+        .expect("create current LuxBridge dir");
+    fs::write(
+        current_project.join("Assets/Editor/LuxBridge/UnityAiBridge.cs"),
+        "// Lux bridge marker\n",
+    )
+    .expect("write current LuxBridge marker");
+
+    let current_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "doctor",
+            "--project-path",
+            current_project.to_str().expect("project path UTF-8"),
+            "--check-bridge",
+            "--verbose",
+        ])
+        .output()
+        .expect("run lux doctor for current bridge path");
+    assert_command_success(&current_output, "lux doctor current bridge path");
+    let current_stderr = String::from_utf8_lossy(&current_output.stderr);
+    assert!(
+        current_stderr.contains("Unity bridge installed in Assets/Editor/LuxBridge"),
+        "doctor should report current LuxBridge path, got:\n{current_stderr}"
+    );
+    assert!(
+        !current_stderr.contains("Unity bridge installed in Assets/Editor/AiBridgeEditor"),
+        "doctor must not report legacy bridge path as installed, got:\n{current_stderr}"
+    );
+
+    let legacy_project = create_test_unity_project("lux-doctor-legacy-bridge", false);
+    fs::create_dir_all(legacy_project.join("Assets/Editor/AiBridgeEditor"))
+        .expect("create legacy bridge dir");
+    fs::write(
+        legacy_project.join("Assets/Editor/AiBridgeEditor/UnityAiBridge.cs"),
+        "// Legacy bridge marker\n",
+    )
+    .expect("write legacy bridge marker");
+
+    let legacy_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "doctor",
+            "--project-path",
+            legacy_project.to_str().expect("project path UTF-8"),
+            "--check-bridge",
+            "--verbose",
+        ])
+        .output()
+        .expect("run lux doctor for legacy bridge path");
+    assert_command_success(&legacy_output, "lux doctor legacy bridge path");
+    let legacy_stderr = String::from_utf8_lossy(&legacy_output.stderr);
+    assert!(
+        legacy_stderr
+            .contains("Legacy Unity bridge install needs migration to Assets/Editor/LuxBridge"),
+        "doctor should require legacy bridge migration, got:\n{legacy_stderr}"
+    );
+    assert!(
+        !legacy_stderr.contains("Unity bridge installed in Assets/Editor/AiBridgeEditor"),
+        "doctor must not report legacy bridge path as installed, got:\n{legacy_stderr}"
+    );
+    assert!(
+        legacy_stderr.contains("Run: lux bridge install --project-path"),
+        "doctor should print migration install hint, got:\n{legacy_stderr}"
+    );
 }
 
 #[test]
@@ -763,6 +1329,106 @@ fn skill_install_project_adapt_writes_metadata_and_info_json_reads_it() {
         info_json["adaptation_metadata"]["skill_name"],
         "smoke-adapt-skill"
     );
+}
+
+#[test]
+fn skill_list_discovers_plugin_style_lazy_skill() {
+    let home = create_temp_dir("lux-plugin-skill-home");
+    let plugin_root = create_plugin_skill_root("lux-plugin-skill-root");
+
+    let list = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list", "--scope", "plugin", "--json"])
+        .env("HOME", &home)
+        .env("LUX_SKILL_PLUGIN_ROOTS", &plugin_root)
+        .output()
+        .expect("run lux skill list --scope plugin --json");
+
+    assert_command_success(&list, "lux skill list --scope plugin");
+    let skills: Value = serde_json::from_slice(&list.stdout).expect("skill list JSON");
+    let skills = skills.as_array().expect("skill list should be an array");
+    let programming = skills
+        .iter()
+        .find(|skill| skill["manifest"]["name"] == "programming")
+        .expect("programming plugin skill should be discovered");
+    assert_eq!(programming["scope"], "plugin");
+    assert_eq!(programming["manifest"]["category"], "programming");
+    assert_eq!(programming["manifest"]["lazyLoad"], true);
+}
+
+#[test]
+fn skill_info_reports_lazy_category_metadata() {
+    let home = create_temp_dir("lux-plugin-skill-info-home");
+    let plugin_root = create_plugin_skill_root("lux-plugin-skill-info-root");
+
+    let info = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "info", "programming", "--json"])
+        .env("HOME", &home)
+        .env("LUX_SKILL_PLUGIN_ROOTS", &plugin_root)
+        .output()
+        .expect("run lux skill info programming --json");
+
+    assert_command_success(&info, "lux skill info programming --json");
+    let info_json: Value = serde_json::from_slice(&info.stdout).expect("skill info JSON");
+    assert_eq!(info_json["manifest"]["name"], "programming");
+    assert_eq!(info_json["manifest"]["category"], "programming");
+    assert_eq!(info_json["manifest"]["lazyLoad"], true);
+    assert_eq!(info_json["references"][0], "rust/README.md");
+    assert!(info_json["skill_md_preview"]
+        .as_array()
+        .expect("preview should be an array")
+        .iter()
+        .any(|line| line == "Use this skill for strict Rust work."));
+}
+
+#[test]
+fn skill_list_skips_malformed_plugin_skill_and_keeps_project_skill() {
+    let home = create_temp_dir("lux-plugin-skill-edge-home");
+    let project = create_test_unity_project("lux-plugin-skill-edge-project", true);
+    let plugin_root = create_malformed_plugin_skill_root("lux-plugin-skill-edge-root");
+    let project_skill = project.join(".agents/skills/project-skill");
+    fs::create_dir_all(&project_skill).expect("create project skill");
+    fs::write(
+        project_skill.join("manifest.json"),
+        r#"{
+  "name": "project-skill",
+  "version": "1.0.0",
+  "description": "Project skill",
+  "type": "test"
+}"#,
+    )
+    .expect("write project skill manifest");
+    fs::write(project_skill.join("SKILL.md"), "# Project Skill\n").expect("write project skill");
+
+    let project_list = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list", "--scope", "project", "--json"])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .env("LUX_SKILL_PLUGIN_ROOTS", &plugin_root)
+        .output()
+        .expect("run lux skill list --scope project --json");
+    assert_command_success(&project_list, "lux skill list --scope project");
+    let project_skills: Value =
+        serde_json::from_slice(&project_list.stdout).expect("project skill list JSON");
+    assert!(project_skills
+        .as_array()
+        .expect("project skills should be an array")
+        .iter()
+        .any(|skill| skill["manifest"]["name"] == "project-skill"));
+
+    let plugin_list = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args(["skill", "list", "--scope", "plugin", "--json"])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .env("LUX_SKILL_PLUGIN_ROOTS", &plugin_root)
+        .output()
+        .expect("run lux skill list --scope plugin --json");
+    assert_command_success(&plugin_list, "lux skill list --scope plugin");
+    let plugin_skills: Value =
+        serde_json::from_slice(&plugin_list.stdout).expect("plugin skill list JSON");
+    assert!(plugin_skills
+        .as_array()
+        .expect("plugin skills should be an array")
+        .is_empty());
 }
 
 #[test]
@@ -2744,6 +3410,196 @@ fn assert_command_success(output: &std::process::Output, label: &str) {
     );
 }
 
+fn cli_field(output: &str, name: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key == name).then(|| value.trim().to_string())
+    })
+}
+
+fn init_lux_project_for_run(project_root: &Path) {
+    let init = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init");
+    assert_command_success(&init, "lux init --no-interactive for run");
+    TeamProfile::default()
+        .save(&project_root.join(".lux"))
+        .expect("team profile should save");
+    let mut state = RunState::idle(project_root).expect("idle run state should create");
+    state
+        .save(project_root)
+        .expect("run-state should save for lux run");
+}
+
+fn init_refine_and_seed_run_state(project_root: &Path) {
+    let init = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "init",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--no-interactive",
+        ])
+        .output()
+        .expect("run lux init for H12");
+    assert_command_success(&init, "lux init --no-interactive for H12");
+
+    let start = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "start",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux spec-loop start for H12");
+    assert_command_success(&start, "lux spec-loop start for H12");
+    let start_stdout = String::from_utf8_lossy(&start.stdout);
+    let run_id = cli_field(&start_stdout, "run_id").expect("start should print run_id");
+    let question_id =
+        cli_field(&start_stdout, "question_id").expect("start should print question_id");
+
+    let answer = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "answer",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+            &question_id,
+            "Players clear a tiny room, collect a key, and unlock the exit.",
+        ])
+        .output()
+        .expect("run lux spec-loop answer for H12");
+    assert_command_success(&answer, "lux spec-loop answer for H12");
+    let answer_stdout = String::from_utf8_lossy(&answer.stdout);
+    let proposal_id =
+        cli_field(&answer_stdout, "proposal_id").expect("answer should print proposal_id");
+
+    let approve = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "approve",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+            &proposal_id,
+        ])
+        .output()
+        .expect("run lux spec-loop approve for H12");
+    assert_command_success(&approve, "lux spec-loop approve for H12");
+
+    let apply = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "spec-loop",
+            "apply",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            &run_id,
+        ])
+        .output()
+        .expect("run lux spec-loop apply for H12");
+    assert_command_success(&apply, "lux spec-loop apply for H12");
+
+    TeamProfile::default()
+        .save(&project_root.join(".lux"))
+        .expect("team profile should save");
+    RunState::idle(project_root)
+        .expect("idle run state should create")
+        .save(project_root)
+        .expect("run-state should save for H12");
+}
+
+fn create_h12_execution_ticket(
+    project_root: &Path,
+    verification_policy: &str,
+    command_allowlist: Vec<&str>,
+) -> Ticket {
+    let now = Utc::now().to_rfc3339();
+    let ticket = Ticket {
+        id: format!("h12-{}", uuid::Uuid::new_v4()),
+        title: "H12 playable smoke ticket".to_string(),
+        description: "End-to-end game harness smoke ticket".to_string(),
+        status: TicketStatus::ToDo,
+        priority: TicketPriority::High,
+        assignee: None,
+        blockers: Vec::new(),
+        tags: vec!["h12-e2e".to_string()],
+        spec_ref: Some(".lux/specs/spec.json".to_string()),
+        created_at: now.clone(),
+        updated_at: now,
+        execution_objective: Some("Implement the next playable smoke milestone".to_string()),
+        allowed_executor: Some("codex".to_string()),
+        dispatch_policy: Some(DispatchPolicy::DispatchRequested),
+        verification_policy: Some(verification_policy.to_string()),
+        command_allowlist: Some(
+            command_allowlist
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+        ),
+        evidence_refs: None,
+        blocker_policy: None,
+        non_goals: Some(vec!["Do not depend on a personal Unity project".to_string()]),
+    };
+    FileTicketStore::new(project_root)
+        .create(ticket)
+        .expect("H12 ticket should create")
+}
+
+fn run_h12_dry_run_and_read_plan(project_root: &Path) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "run",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--dry-run",
+            "make next playable step",
+        ])
+        .output()
+        .expect("run lux run --dry-run for H12");
+    assert_command_success(&output, "lux run --dry-run for H12");
+
+    let run_state: Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".lux/run-state.json")).expect("run-state JSON"),
+    )
+    .expect("run-state should parse");
+    let run_id = run_state["runId"].as_str().expect("run id should persist");
+    serde_json::from_str(
+        &fs::read_to_string(
+            project_root
+                .join(".lux/runs")
+                .join(run_id)
+                .join("plan.json"),
+        )
+        .expect("plan JSON should read"),
+    )
+    .expect("plan should parse")
+}
+
+fn h12_verification_opts(project_root: &Path, run_id: &str) -> VerificationOpts {
+    VerificationOpts {
+        run_id: run_id.to_string(),
+        working_dir: project_root.to_path_buf(),
+        evidence_dir: PathBuf::from(format!(".lux/evidence/autonomous/{run_id}")),
+    }
+}
+
+fn copy_h12_artifact(project_root: &Path, evidence_path: &str, file_name: &str) {
+    let Ok(copy_dir) = std::env::var("LUX_H12_EVIDENCE_COPY_DIR") else {
+        return;
+    };
+    let copy_path = PathBuf::from(copy_dir).join(file_name);
+    fs::create_dir_all(copy_path.parent().expect("copy path should have parent"))
+        .expect("artifact copy directory should be created");
+    fs::copy(project_root.join(evidence_path), copy_path).expect("artifact should copy");
+}
+
 fn create_ai_log_fixture_project(prefix: &str) -> std::path::PathBuf {
     let project_root = create_temp_dir(prefix).join("Project");
     let lux_directory = project_root.join(".lux");
@@ -2793,6 +3649,41 @@ fn create_test_skill_source(name: &str) -> std::path::PathBuf {
     fs::write(references.join("usage.md"), "# Usage\n").expect("write reference");
 
     source
+}
+
+fn create_plugin_skill_root(prefix: &str) -> std::path::PathBuf {
+    let plugin_root = create_temp_dir(prefix);
+    let skill_dir = plugin_root.join("skills/programming");
+    fs::create_dir_all(skill_dir.join("references/rust")).expect("create programming references");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        concat!(
+            "---\n",
+            "name: programming\n",
+            "description: Strict language-specific programming discipline.\n",
+            "category: programming\n",
+            "---\n",
+            "# Programming\n",
+            "\n",
+            "Use this skill for strict Rust work.\n",
+        ),
+    )
+    .expect("write programming skill");
+    fs::write(skill_dir.join("references/rust/README.md"), "# Rust\n")
+        .expect("write rust reference");
+    plugin_root
+}
+
+fn create_malformed_plugin_skill_root(prefix: &str) -> std::path::PathBuf {
+    let plugin_root = create_temp_dir(prefix);
+    let skill_dir = plugin_root.join("skills/broken");
+    fs::create_dir_all(&skill_dir).expect("create malformed plugin skill");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: [not-a-string]\n---\n# Broken\n",
+    )
+    .expect("write malformed skill");
+    plugin_root
 }
 
 fn create_test_unity_project(prefix: &str, include_lux_package: bool) -> std::path::PathBuf {
@@ -3562,11 +4453,12 @@ fn session_full_replay_cycle() {
 
 fn temp_lux_project(name: &str) -> std::path::PathBuf {
     use std::time::{SystemTime, UNIX_EPOCH};
+    let pid = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("lux-smoke-{name}-{nanos}"));
+    let root = std::env::temp_dir().join(format!("lux-smoke-{name}-{pid}-{nanos}"));
     fs::create_dir_all(root.join(".lux")).unwrap();
     root
 }

@@ -1,8 +1,0 @@
-reference_nonempty=pass
-6:# Unity C# Reference
-14:- [UnityEngine Core](#unityengine-core)
-24:- [UnityEditor Core](#unityeditor-core)
-34:- [Cross-Reference with LUX Bridge](#cross-reference-with-lux-bridge)
-72:## UnityEngine Core
-2834:## UnityEditor Core
-4979:## Cross-Reference with LUX Bridge

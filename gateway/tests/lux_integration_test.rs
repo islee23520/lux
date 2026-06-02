@@ -160,13 +160,92 @@ fn spec_backward_compatibility() {
 #[test]
 fn spec_evaluation_with_target_ambiguity() {
     let mut spec = SpecProject::default();
-    spec.domains.design = Some(DomainSpec::new("design", "design.md", 0.08));
-    spec.domains.architecture = Some(DomainSpec::new("architecture", "architecture.md", 0.08));
-    spec.domains.art_style = Some(DomainSpec::new("art_style", "art_style.md", 0.08));
-    spec.domains.audio = Some(DomainSpec::new("audio", "audio.md", 0.08));
-    spec.domains.narrative = Some(DomainSpec::new("narrative", "narrative.md", 0.08));
-    spec.domains.levels = Some(DomainSpec::new("levels", "levels.md", 0.08));
-    spec.domains.ui_ux = Some(DomainSpec::new("ui_ux", "ui_ux.md", 0.08));
+    spec.domains.design = Some(complete_domain(
+        "design",
+        "design.md",
+        &[
+            "core_loop",
+            "genre",
+            "player_count",
+            "session_length",
+            "win_condition",
+        ],
+    ));
+    spec.domains.architecture = Some(complete_domain(
+        "architecture",
+        "architecture.md",
+        &["engine", "platform", "networking", "data_storage"],
+    ));
+    spec.domains.mechanics = Some(complete_domain(
+        "mechanics",
+        "mechanics.md",
+        &[
+            "movement_model",
+            "interaction_rules",
+            "resource_rules",
+            "progression_rules",
+        ],
+    ));
+    spec.domains.controls = Some(complete_domain(
+        "controls",
+        "controls.md",
+        &["input_devices", "action_map", "rebinding", "accessibility"],
+    ));
+    spec.domains.camera = Some(complete_domain(
+        "camera",
+        "camera.md",
+        &[
+            "camera_mode",
+            "follow_rules",
+            "framing",
+            "occlusion_strategy",
+        ],
+    ));
+    spec.domains.art_style = Some(complete_domain(
+        "art_style",
+        "art_style.md",
+        &[
+            "visual_style",
+            "color_palette",
+            "resolution",
+            "animation_style",
+        ],
+    ));
+    spec.domains.audio = Some(complete_domain(
+        "audio",
+        "audio.md",
+        &["music_style", "sfx_list", "ambient_sounds", "dynamic_audio"],
+    ));
+    spec.domains.narrative = Some(complete_domain(
+        "narrative",
+        "narrative.md",
+        &[
+            "story_arc",
+            "characters",
+            "dialogue_system",
+            "world_building",
+        ],
+    ));
+    spec.domains.levels = Some(complete_domain(
+        "levels",
+        "levels.md",
+        &["level_count", "difficulty_curve", "level_generation"],
+    ));
+    spec.domains.testing = Some(complete_domain(
+        "testing",
+        "testing.md",
+        &[
+            "editmode_coverage",
+            "playmode_smoke",
+            "manual_qa_channel",
+            "evidence_gate",
+        ],
+    ));
+    spec.domains.ui_ux = Some(complete_domain(
+        "ui_ux",
+        "ui_ux.md",
+        &["hud_layout", "menu_flow", "accessibility", "input_mapping"],
+    ));
     spec.unity = Some(UnitySpec {
         required_version: Some("6000.0".to_string()),
         detected_version: Some("6000.0".to_string()),
@@ -212,6 +291,17 @@ fn spec_evaluation_with_target_ambiguity() {
         target_ambiguity <= lenient_target_ambiguity,
         "ambiguity was {target_ambiguity}"
     );
+}
+
+fn complete_domain(name: &str, content_path: &str, fields: &[&str]) -> DomainSpec {
+    let mut domain = DomainSpec::new(name, content_path, 0.08);
+    domain.defined = true;
+    for field in fields {
+        domain
+            .fields
+            .insert((*field).to_string(), json!(format!("{name} {field}")));
+    }
+    domain
 }
 
 #[test]

@@ -16,15 +16,31 @@ const DOMAIN_NAMES = [
   "ui_ux",
 ] as const
 
-// Read spec.json from project directory
-export function loadSpec(projectPath: string): LuxSpecProject | null {
-  const specPath = path.join(projectPath, ".lux", "spec.json")
+const SPEC_PATH_CANDIDATES = [
+  { label: "canonical", segments: ["specs", "spec.json"] },
+  { label: "compatibility fallback", segments: ["spec.json"] },
+] as const
+
+function parseSpecContent(content: string): LuxSpecProject | null {
   try {
-    const content = fs.readFileSync(specPath, "utf-8")
     return JSON.parse(content) as LuxSpecProject
-  } catch { /* intentional: missing or corrupt spec falls back to continuation-driven ambiguity */
-    return null
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return null
+    }
+    throw error
   }
+}
+
+export function loadSpec(projectPath: string): LuxSpecProject | null {
+  for (const candidate of SPEC_PATH_CANDIDATES) {
+    const specPath = path.join(projectPath, ".lux", ...candidate.segments)
+    if (!fs.existsSync(specPath)) {
+      continue
+    }
+    return parseSpecContent(fs.readFileSync(specPath, "utf-8"))
+  }
+  return null
 }
 
 // Read Unity Packages/manifest.json to get detected packages

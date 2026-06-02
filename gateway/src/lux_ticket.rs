@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use lux_run_core::{TicketPriority, TicketStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -67,25 +68,6 @@ pub struct Ticket {
     pub blocker_policy: Option<BlockerPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_goals: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum TicketStatus {
-    #[default]
-    Backlog,
-    Blocked,
-    ToDo,
-    InProgress,
-    Done,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum TicketPriority {
-    Critical,
-    High,
-    #[default]
-    Medium,
-    Low,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

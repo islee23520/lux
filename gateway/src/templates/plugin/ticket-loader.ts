@@ -8,6 +8,7 @@ export interface Ticket {
   title?: string
   description?: string
   status: TicketStatus
+  type?: string
   spec_ref?: string | null
   tags?: string[]
   [key: string]: unknown

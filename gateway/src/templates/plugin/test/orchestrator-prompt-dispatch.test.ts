@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { buildContinuationPrompt } from '../prompt-builder'
 
 vi.mock('../compile-guard', () => ({
   checkAndFixCompile: vi.fn(),
@@ -131,9 +132,30 @@ describe('ContinuationOrchestrator Prompt Dispatch (T5.3)', () => {
 
   it('dispatches prompt successfully and updates state', async () => {
     const result = await orchestrator.onTrigger('test')
+    const mockedBuildContinuationPrompt = vi.mocked(buildContinuationPrompt)
 
     expect(result.dispatched).toBe(true)
     expect(result.selectedTicketId).toBe('T1')
+    expect(mockedBuildContinuationPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      aiContext: expect.objectContaining({
+        ontology: expect.objectContaining({
+          schemaVersion: '1.0.0',
+          requiredTerms: expect.arrayContaining(['scene', 'coordinate_frames', 'completion_gate']),
+        }),
+        astSummary: expect.objectContaining({
+          source: 'unknown',
+          nodeCount: 1,
+          nodeTypes: ['ticket'],
+        }),
+        coordinateMappingSummary: expect.objectContaining({
+          frames: expect.arrayContaining(['world', 'local', 'screen', 'viewport', 'ui']),
+        }),
+        evidenceGateRequirements: expect.objectContaining({
+          requiredEvidence: expect.arrayContaining(['scene_ast', 'coordinate_map', 'expected_visual_state', 'vision_match']),
+        }),
+        blockers: [],
+      }),
+    }))
     expect(mockPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       body: { parts: [{ type: 'text', text: 'Mocked Prompt' }] },
     }))

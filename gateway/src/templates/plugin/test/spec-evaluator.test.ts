@@ -11,11 +11,30 @@ describe("spec-evaluator", () => {
 
   beforeEach(() => {
     vi.resetAllMocks()
+    vi.mocked(fs.existsSync).mockReturnValue(true)
   })
 
   describe("loadSpec", () => {
-    it("should load and parse spec.json successfully", () => {
+    it("should load and parse canonical spec successfully", () => {
       const mockSpec: Partial<LuxSpecProject> = { project_name: "Test Project" }
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p.toString() === path.join(projectPath, ".lux", "specs", "spec.json")
+      )
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockSpec))
+
+      const result = loadSpec(projectPath)
+      expect(result).toEqual(mockSpec)
+      expect(fs.readFileSync).toHaveBeenCalledWith(
+        path.join(projectPath, ".lux", "specs", "spec.json"),
+        "utf-8"
+      )
+    })
+
+    it("should use legacy compatibility fallback when canonical spec is missing", () => {
+      const mockSpec: Partial<LuxSpecProject> = { project_name: "Legacy Project" }
+      vi.mocked(fs.existsSync).mockImplementation((p) =>
+        p.toString() === path.join(projectPath, ".lux", "spec.json")
+      )
       vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockSpec))
 
       const result = loadSpec(projectPath)
@@ -27,15 +46,15 @@ describe("spec-evaluator", () => {
     })
 
     it("should return null if spec.json is missing", () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error("File not found")
-      })
+      vi.mocked(fs.existsSync).mockReturnValue(false)
 
       const result = loadSpec(projectPath)
       expect(result).toBeNull()
+      expect(fs.readFileSync).not.toHaveBeenCalled()
     })
 
     it("should return null if spec.json is invalid JSON", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true)
       vi.mocked(fs.readFileSync).mockReturnValue("invalid json")
 
       const result = loadSpec(projectPath)
@@ -132,9 +151,7 @@ describe("spec-evaluator", () => {
     })
 
     it("should return default result if spec is missing", () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error("File not found")
-      })
+      vi.mocked(fs.existsSync).mockReturnValue(false)
 
       const result = evaluateSpec(projectPath)
       expect(result.should_continue).toBe(true)
@@ -271,9 +288,7 @@ describe("spec-evaluator", () => {
 
   describe("getNextQuestion", () => {
     it("should return next action if evaluation says should continue", () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error("File not found")
-      })
+      vi.mocked(fs.existsSync).mockReturnValue(false)
 
       const result = getNextQuestion(projectPath)
       expect(result).toContain("No spec.json found")

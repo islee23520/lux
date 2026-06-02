@@ -26,7 +26,7 @@ pub enum LuxEvent {
         new_status: String,
     },
 
-    /// Emitted when kanban progress changes so dashboards can reflect status counts and the active ticket.
+    /// Emitted when kanban progress changes so API clients can reflect status counts and the active ticket.
     #[serde(rename = "kanban:progress")]
     KanbanProgress {
         by_status: HashMap<String, u32>,

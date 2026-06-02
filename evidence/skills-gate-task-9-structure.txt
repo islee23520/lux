@@ -1,3 +1,0 @@
-project structure sanity ok
-
-exit=0

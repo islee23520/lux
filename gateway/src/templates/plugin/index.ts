@@ -13,7 +13,7 @@ import { getState, type LuxSessionState } from "./session-state"
 import { setupSessionEndDetection } from "./session-end-detector"
 import { getStagnationDetails, shouldStopForStagnation, trackProgress } from "./stagnation-detection"
 import { evaluateStopConditions, type StopDecision } from "./stop-evaluator"
-import { invalidateCache, loadTickets, type Ticket } from "./ticket-loader"
+import { invalidateCache, loadTickets, type Ticket, type TicketSummary } from "./ticket-loader"
 import type { LuxPluginConfig } from "./types"
 
 declare const process: { env: Record<string, string | undefined> }
@@ -95,7 +95,7 @@ interface OpenCodePlugin {
 
 const DEFAULT_CONFIG: LuxPluginConfig = {
   maxContinuations: 50,
-  specPath: ".lux/spec.json",
+  specPath: ".lux/specs/spec.json",
   glossaryPath: ".lux/glossary.md",
   targetAmbiguity: 0.02,
 }
@@ -337,6 +337,7 @@ export class ContinuationOrchestrator {
       summary: ticketSummary,
       continuationCount: this.state.continuationCount,
       consecutiveFailures: this.state.consecutiveFailures,
+      aiContext: buildAiContextSummary(ticket, ticketSummary),
     })
     this.state.inFlight = true
     try {
@@ -402,6 +403,49 @@ export class ContinuationOrchestrator {
       return this.result(false, null, ticket.id ?? null, message)
     }
   }
+}
+
+function buildAiContextSummary(ticket: Ticket, summary: TicketSummary) {
+  const blockers = Array.isArray(ticket.blockers)
+    ? ticket.blockers
+        .filter((item): item is string => typeof item === "string" && item.length > 0)
+        .map((blocker) => ({ kind: "ticket_blocker", reason: blocker }))
+    : [];
+
+  return {
+    ontology: {
+      schemaVersion: "1.0.0",
+      requiredTerms: [
+        "scene",
+        "stage",
+        "actor",
+        "component",
+        "transform",
+        "camera",
+        "viewport",
+        "coordinate_frames",
+        "expected_visual_state",
+        "evidence_class",
+        "blocker_class",
+        "completion_gate",
+        "schema_version",
+      ],
+    },
+    astSummary: {
+      source: ticket.spec_ref ?? "unknown",
+      nodeCount: summary.incompleteCount,
+      nodeTypes: [ticket.type ?? "ticket"],
+    },
+    coordinateMappingSummary: {
+      frames: ["world", "local", "screen", "viewport", "ui"],
+      origins: [],
+    },
+    evidenceGateRequirements: {
+      requiredEvidence: ["scene_ast", "coordinate_map", "expected_visual_state", "vision_match"],
+      requiredReferences: ["ast_node", "coordinate_region", "contract_doc", "blocker_reason"],
+    },
+    blockers,
+  };
 }
 
 const plugin = {

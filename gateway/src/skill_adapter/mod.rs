@@ -5,6 +5,7 @@
 
 pub mod adaptation;
 pub mod compatibility;
+pub mod discovery;
 pub mod metadata;
 pub mod slimming;
 

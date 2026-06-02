@@ -33,28 +33,28 @@ err()  { ((fail++)) || true; echo -e "  ${RED}FAIL${NC} $1"; }
 warn() { ((skip++)) || true; echo -e "  ${YELLOW}SKIP${NC} $1"; }
 
 # ── Rust ────────────────────────────────────────
-section "Rust Gateway"
+section "Rust Workspace"
 
 if [ "$QUICK" = true ]; then
-  warn "cargo test (--quick mode, skipped)"
+  warn "cargo test --workspace (--quick mode, skipped)"
 else
-  if (cd "$ROOT_DIR/gateway" && cargo test 2>&1); then
-    ok "cargo test"
+  if (cd "$ROOT_DIR" && cargo test --workspace 2>&1); then
+    ok "cargo test --workspace"
   else
     # Retry the known-flaky server test once
     echo "  Retrying flaky server test..."
     if (cd "$ROOT_DIR/gateway" && cargo test cli_server_starts_and_enforces_header_auth_and_origin_policy 2>&1); then
-      ok "cargo test (flaky retry passed)"
+      ok "cargo test --workspace (flaky retry passed)"
     else
-      err "cargo test"
+      err "cargo test --workspace"
     fi
   fi
 fi
 
-if (cd "$ROOT_DIR/gateway" && cargo build 2>&1); then
-  ok "cargo build"
+if (cd "$ROOT_DIR" && cargo build --workspace 2>&1); then
+  ok "cargo build --workspace"
 else
-  err "cargo build"
+  err "cargo build --workspace"
 fi
 
 # ── CLI Smoke ───────────────────────────────────
@@ -72,33 +72,25 @@ if [ -x "$LUX_BIN" ]; then
   "$LUX_BIN" skill list --help > /dev/null 2>&1 && ok "lux skill list --help" || err "lux skill list --help"
   "$LUX_BIN" skill info --help > /dev/null 2>&1 && ok "lux skill info --help" || err "lux skill info --help"
   "$LUX_BIN" skill install --help > /dev/null 2>&1 && ok "lux skill install --help" || err "lux skill install --help"
+  "$LUX_BIN" mcp --help > /dev/null 2>&1 && ok "lux mcp --help" || err "lux mcp --help"
   "$LUX_BIN" serve --help > /dev/null 2>&1 && ok "lux serve --help" || err "lux serve --help"
 else
   warn "lux binary not found (run cargo build first)"
 fi
 
-# ── TypeScript ──────────────────────────────────
-section "TypeScript / UI"
-
-if (cd "$ROOT_DIR/gateway/ui-src" && npx tsc --noEmit 2>&1); then
-  ok "tsc --noEmit (strict mode)"
-else
-  err "tsc --noEmit"
-fi
-
 # ── Protocol Schema ─────────────────────────────
 section "Protocol & Module Checks"
 
-if (cd "$ROOT_DIR/gateway" && cargo test protocol 2>&1); then
-  ok "cargo test protocol (EventCategory serde)"
+if (cd "$ROOT_DIR/gateway" && cargo test --lib protocol 2>&1); then
+  ok "cargo test --lib protocol (EventCategory serde)"
 else
-  err "cargo test protocol"
+  err "cargo test --lib protocol"
 fi
 
-if (cd "$ROOT_DIR/gateway" && cargo test ai_log 2>&1); then
-  ok "cargo test ai_log (JSONL primitives)"
+if (cd "$ROOT_DIR/gateway" && cargo test --lib ai_log 2>&1); then
+  ok "cargo test --lib ai_log (JSONL primitives)"
 else
-  err "cargo test ai_log"
+  err "cargo test --lib ai_log"
 fi
 
 # ── .lux Path Checks ────────────────────────────
@@ -126,6 +118,12 @@ if (cd "$ROOT_DIR" && bash scripts/check-project-structure.sh 2>&1); then
   ok "project structure sanity"
 else
   err "project structure sanity"
+fi
+
+if (cd "$ROOT_DIR" && { ! rg -n "axum|clap|tokio::process|std::process::Command|Command::new|crate::gateway|gateway::" crates 2>&1; }); then
+  ok "core crate boundary"
+else
+  err "core crate boundary"
 fi
 
 # ── C# Note ─────────────────────────────────────

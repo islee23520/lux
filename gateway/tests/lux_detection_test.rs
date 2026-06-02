@@ -5,11 +5,13 @@ use anyhow::Result;
 use lux::lux_ambiguity::TargetedQuestion;
 use lux::lux_spec;
 use lux::lux_spec::{
-    answer_direct, apply_detection_to_spec, lux_init_interactive, lux_load, GlossarySpec,
+    answer_direct, apply_detection_to_spec, lux_init, lux_init_interactive, lux_load, GlossarySpec,
     LuxInitInteractiveOptions, PackagesSpec, SpecProject, SpecQuestionIo, TestingSpec, UnitySpec,
 };
 use lux::project;
 use lux::project::{detect_unity_project, DetectedPackage, UnityProjectDetection};
+use lux::project_godot;
+use lux_project::{recommended_capability_blockers, CapabilityStatus, EngineKind};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -175,6 +177,10 @@ fn lux_init_interactive_non_interactive() {
         .packages
         .as_ref()
         .is_some_and(|packages| packages.required.is_empty()));
+    assert!(
+        !temp.path().join(".lux/engines/capabilities.json").exists(),
+        "non-interactive init should not persist engine capability snapshots"
+    );
 }
 
 #[test]
@@ -358,6 +364,226 @@ fn detect_unity_project_non_unity_returns_none() {
     assert!(detect_unity_project(temp.path())
         .expect("detection should succeed")
         .is_none());
+}
+
+#[test]
+fn lux_init_does_not_write_engine_capabilities_for_plain_project() {
+    let temp = TestTempDir::new();
+
+    lux_init(temp.path()).expect("lux init should succeed");
+
+    assert!(!temp.path().join(".lux/engines/capabilities.json").exists());
+}
+
+#[test]
+fn godot_detection_reports_blockers_without_build_success() {
+    let temp = TestTempDir::new();
+    write_file(temp.path(), "project.godot", "config_version=5\n");
+
+    let detection = project_godot::detect_godot_project(temp.path())
+        .expect("Godot 4 project should be detected");
+    let blockers = recommended_capability_blockers(Some(EngineKind::Godot));
+
+    assert_eq!(detection.godot_version.as_deref(), Some("4.x"));
+    assert!(blockers.iter().any(|blocker| {
+        blocker.capability == "build"
+            && blocker.status == CapabilityStatus::Unsupported
+            && blocker.evidence_path.ends_with("godot-build.json")
+            && blocker
+                .recommended_next_supported_action
+                .contains("lux godot status")
+    }));
+    assert!(!blockers
+        .iter()
+        .any(|blocker| blocker.status == CapabilityStatus::Verified));
+}
+
+#[test]
+fn lux_godot_status_persists_engine_capabilities_json() {
+    let temp = TestTempDir::new();
+    let project_root = temp.path().join("GodotProject");
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    write_file(&project_root, "project.godot", "config_version=5\n");
+    write_file(
+        &project_root,
+        "package.json",
+        r#"{
+  "dependencies": {
+    "three": "^0.179.0"
+  }
+}"#,
+    );
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "status",
+            "--project-path",
+            project_root.to_str().expect("project path should be UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot status");
+
+    assert!(output.status.success());
+
+    let capabilities_path = project_root.join(".lux/engines/capabilities.json");
+    assert!(
+        capabilities_path.is_file(),
+        "expected persisted engine capability file at {}",
+        capabilities_path.display()
+    );
+
+    let payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&capabilities_path).expect("read persisted capabilities json"),
+    )
+    .expect("parse persisted capabilities json");
+    assert_eq!(payload["schema_version"], "1");
+    assert_eq!(payload["engine"], "godot");
+    assert_eq!(payload["status"], "limited");
+    assert_eq!(
+        payload["reason"],
+        "Godot project markers found in project.godot"
+    );
+    assert_eq!(payload["unity"]["status"], "unsupported");
+    assert_eq!(payload["godot"]["status"], "limited");
+    assert_eq!(payload["three_js"]["status"], "limited");
+    assert_eq!(
+        payload["unity"]["reason"],
+        "Unity project markers not detected in project root."
+    );
+    assert!(payload["godot"]["blocker_reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("GoPeak-backed")));
+    assert!(payload["three_js"]["blocker_reason"]
+        .as_str()
+        .is_some_and(|reason| reason.contains("verified LUX harness")));
+}
+
+#[test]
+fn lux_init_persists_engine_capability_inventory() {
+    let temp = TestTempDir::new();
+    std::fs::create_dir_all(temp.path().join("ProjectSettings"))
+        .expect("unity marker dir should be created");
+    std::fs::write(
+        temp.path().join("ProjectSettings/ProjectVersion.txt"),
+        "m_EditorVersion: 6000.0.0f1\n",
+    )
+    .expect("unity marker should be written");
+
+    let catalog = lux_project::persist_engine_capabilities(temp.path(), EngineKind::Unity)
+        .expect("engine capability detection should succeed");
+
+    assert!(temp.path().join(".lux/engines/capabilities.json").is_file());
+    assert_eq!(catalog.engine, EngineKind::Unity);
+    assert_eq!(
+        catalog.status,
+        lux_project::EngineCapabilityStatus::Detected
+    );
+    assert!(catalog.reason.contains("Unity"));
+    assert_eq!(
+        catalog.unity.status,
+        lux_project::EngineCapabilityStatus::Detected
+    );
+    assert_eq!(
+        catalog.godot.status,
+        lux_project::EngineCapabilityStatus::Unsupported
+    );
+    assert_eq!(
+        catalog.three_js.status,
+        lux_project::EngineCapabilityStatus::Unsupported
+    );
+    assert!(catalog.godot.blocker_reason.is_some());
+    assert!(catalog.three_js.blocker_reason.is_some());
+}
+
+#[test]
+fn lux_godot_status_writes_three_engine_capability_contract_for_empty_and_unity_like_projects() {
+    let empty_temp = TestTempDir::new();
+    let empty_project_root = empty_temp.path().join("EmptyProject");
+    std::fs::create_dir_all(&empty_project_root).expect("create empty project root");
+
+    let empty_output = std::process::Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "status",
+            "--project-path",
+            empty_project_root
+                .to_str()
+                .expect("project path should be UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot status for empty project");
+
+    assert!(empty_output.status.success());
+
+    let empty_capabilities_path = empty_project_root.join(".lux/engines/capabilities.json");
+    assert!(
+        empty_capabilities_path.is_file(),
+        "expected persisted engine capability file at {}",
+        empty_capabilities_path.display()
+    );
+    let empty_payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&empty_capabilities_path)
+            .expect("read empty-project capabilities json"),
+    )
+    .expect("parse empty-project capabilities json");
+    assert_eq!(
+        empty_payload["engines"]
+            .as_array()
+            .map(|entries| entries.len()),
+        Some(3)
+    );
+    assert_eq!(empty_payload["engines"][0]["engine"], "unity");
+    assert_eq!(empty_payload["engines"][1]["engine"], "godot");
+    assert_eq!(empty_payload["engines"][2]["engine"], "three_js");
+    assert_eq!(empty_payload["engines"][0]["status"], "unsupported");
+    assert_eq!(empty_payload["engines"][1]["status"], "unsupported");
+    assert_eq!(empty_payload["engines"][2]["status"], "unsupported");
+
+    let unity_temp = TestTempDir::new();
+    let unity_project_root = unity_temp.path().join("UnityProject");
+    std::fs::create_dir_all(&unity_project_root).expect("create unity project root");
+    write_file(
+        &unity_project_root,
+        "ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 6000.0.0f1\n",
+    );
+
+    let unity_output = std::process::Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "godot",
+            "status",
+            "--project-path",
+            unity_project_root
+                .to_str()
+                .expect("project path should be UTF-8"),
+        ])
+        .output()
+        .expect("run lux godot status for unity-like project");
+
+    assert!(unity_output.status.success());
+
+    let unity_capabilities_path = unity_project_root.join(".lux/engines/capabilities.json");
+    assert!(
+        unity_capabilities_path.is_file(),
+        "expected persisted engine capability file at {}",
+        unity_capabilities_path.display()
+    );
+    let unity_payload: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&unity_capabilities_path)
+            .expect("read unity-like capabilities json"),
+    )
+    .expect("parse unity-like capabilities json");
+    assert_eq!(
+        unity_payload["engines"]
+            .as_array()
+            .map(|entries| entries.len()),
+        Some(3)
+    );
+    assert_eq!(unity_payload["engines"][0]["engine"], "unity");
+    assert_eq!(unity_payload["engines"][0]["status"], "detected");
+    assert_eq!(unity_payload["engines"][1]["status"], "unsupported");
+    assert_eq!(unity_payload["engines"][2]["status"], "unsupported");
 }
 
 #[test]

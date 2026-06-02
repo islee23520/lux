@@ -17,6 +17,9 @@ use crate::{
     lux_io::atomic_write_json,
     lux_lock::{acquire_lux_lock, LuxLockGuard, DEFAULT_STALE_THRESHOLD_SECS},
     lux_metrics::RunMetrics,
+    lux_next_goal::{
+        persist_current_goal, select_next_goal, write_awaiting_evidence_blocker, NextGoal,
+    },
     lux_roadmap::{RoadmapPhaseStatus, RoadmapReality},
     lux_run_recover::ExecutionSession,
     lux_run_state::{ApprovalGateType, StopReason},
@@ -267,6 +270,7 @@ struct RunManifest {
 struct RunPlan {
     run_id: String,
     goal: Option<String>,
+    next_goal: NextGoal,
     ambiguity_score: f64,
     task_count: usize,
     ready_count: usize,
@@ -377,9 +381,23 @@ pub fn plan_phase(lifecycle: &mut RunLifecycle) -> Result<()> {
     let ambiguity = crate::lux_ambiguity::calculate_ambiguity(&spec);
     let ready_count = lifecycle.dag.ready_nodes().len();
     let roles = adaptive_team_composition(lifecycle);
+    let next_goal = select_next_goal(
+        &lifecycle.config.project_path,
+        &spec,
+        &ambiguity,
+        &lifecycle.dag,
+        lifecycle.config.goal.clone(),
+    )?;
+    persist_current_goal(
+        &lifecycle.config.project_path,
+        &lifecycle.state.run_id,
+        lifecycle.config.goal.clone(),
+        &next_goal,
+    )?;
     let plan = RunPlan {
         run_id: lifecycle.state.run_id.clone(),
         goal: lifecycle.config.goal.clone(),
+        next_goal,
         ambiguity_score: ambiguity.overall_score,
         task_count: lifecycle.dag.nodes.len(),
         ready_count,
@@ -556,6 +574,11 @@ pub fn complete_run(lifecycle: &mut RunLifecycle) -> Result<()> {
     let next = if failed {
         RunStatus::Failed
     } else if awaiting_evidence {
+        write_awaiting_evidence_blocker(
+            &lifecycle.config.project_path,
+            &lifecycle.state.run_id,
+            &lifecycle.dag,
+        )?;
         RunStatus::AwaitingEvidence
     } else {
         RunStatus::Completed
@@ -930,13 +953,19 @@ fn current_domain(lifecycle: &RunLifecycle) -> Option<String> {
         .ready_nodes()
         .first()
         .and_then(|node| node.id.strip_prefix("task-"))
-        .and_then(|rest| rest.split('-').next())
-        .map(|domain| match domain {
-            "ui" => "ui".to_string(),
-            "architecture" => "architecture".to_string(),
-            "testing" => "testing".to_string(),
-            "roadmap" => "gameplay".to_string(),
-            other => other.to_string(),
+        .map(|rest| match rest {
+            rest if rest.starts_with("technical-architecture-") => {
+                "technical-architecture".to_string()
+            }
+            rest if rest.starts_with("build-release-") => "build-release".to_string(),
+            rest if rest.starts_with("art-style-") => "art-style".to_string(),
+            rest if rest.starts_with("ui-ux-") => "ui-ux".to_string(),
+            rest if rest.starts_with("roadmap-") => "gdd".to_string(),
+            rest => rest
+                .split_once('-')
+                .map(|(domain, _)| domain)
+                .unwrap_or(rest)
+                .to_string(),
         })
 }
 

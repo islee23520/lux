@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use lux::lux_ambiguity::calculate_ambiguity;
 use lux::lux_spec::{
-    DomainSpec, GlossarySpec, PackageEntry, PackagesSpec, SpecProject, TargetsSpec, TestingSpec,
-    UnitySpec,
+    DomainSpec, GlossarySpec, PackageEntry, PackagesSpec, SpecDecision, SpecProject, TargetsSpec,
+    TestingSpec, UnitySpec,
 };
 use serde_json::json;
 
@@ -25,7 +25,7 @@ fn test_ambiguity_empty_spec() {
         report.overall_score
     );
     assert_score_close(report.completion_ratio, 0.0);
-    assert_eq!(report.domain_scores.len(), 7);
+    assert_eq!(report.domain_scores.len(), 11);
     assert!(report.targeted_questions.len() >= 21);
 }
 
@@ -81,7 +81,7 @@ fn test_ambiguity_partial_spec() {
 
     assert!(report.overall_score > 0.02);
     assert!(report.overall_score < 1.0);
-    assert_score_close(report.completion_ratio, 2.0 / 7.0);
+    assert_score_close(report.completion_ratio, 2.0 / 11.0);
     assert!(
         report.domain_scores["design"].composite_score
             < report.domain_scores["audio"].composite_score
@@ -239,6 +239,108 @@ fn test_ambiguity_missing_testing_produces_question() {
 }
 
 #[test]
+fn socratic_mechanics_question() {
+    let spec = SpecProject::default();
+
+    let report = calculate_ambiguity(&spec);
+
+    for (domain, expected_fragment) in [
+        ("mechanics", "movement"),
+        ("controls", "input"),
+        ("camera", "camera"),
+        ("testing", "EditMode"),
+    ] {
+        let question = report
+            .targeted_questions
+            .iter()
+            .find(|question| question.domain == domain)
+            .unwrap_or_else(|| panic!("missing {domain} should create a targeted question"));
+        assert!(
+            question.question.contains(expected_fragment),
+            "{domain} question should name its missing field: {}",
+            question.question
+        );
+    }
+
+    assert!(report
+        .targeted_questions
+        .iter()
+        .filter(|question| question.domain == "mechanics")
+        .all(|question| question.phase == "phase3_core_loop"));
+}
+
+#[test]
+fn socratic_answered_question_reduces_domain_ambiguity() {
+    let workspace = TestWorkspace::new("mechanics_reduced");
+    let before = calculate_ambiguity(&SpecProject::default());
+
+    let mut spec = SpecProject::default();
+    spec.domains.mechanics = Some(domain(
+        "mechanics",
+        workspace.markdown_path(
+            "mechanics",
+            full_markdown(
+                "Mechanics",
+                &[
+                    "movement",
+                    "combat",
+                    "interaction",
+                    "resource",
+                    "progression",
+                ],
+            ),
+        ),
+        &["movement_model", "interaction_rules"],
+    ));
+
+    let after = calculate_ambiguity(&spec);
+
+    assert!(
+        after.domain_scores["mechanics"].composite_score
+            < before.domain_scores["mechanics"].composite_score,
+        "answered mechanics fields should reduce mechanics ambiguity"
+    );
+}
+
+#[test]
+fn socratic_contradiction_blocks_false_clarity() {
+    let workspace = TestWorkspace::new("contradiction");
+    let mut spec = full_spec(&workspace);
+    spec.dialectic.decisions.push(SpecDecision {
+        id: "decision-fast-combat".to_string(),
+        domain: Some("mechanics".to_string()),
+        text: "Combat should be real-time and fast.".to_string(),
+        rationale: Some("First answer favored action timing.".to_string()),
+        source_question: Some("Should combat be turn-based or real-time?".to_string()),
+        created_at: Some("2026-06-01T00:00:00Z".to_string()),
+    });
+    spec.dialectic.decisions.push(SpecDecision {
+        id: "decision-turn-combat".to_string(),
+        domain: Some("mechanics".to_string()),
+        text: "Combat should be deliberate and turn-based.".to_string(),
+        rationale: Some("Later answer favored planning.".to_string()),
+        source_question: Some("Should combat be turn-based or real-time?".to_string()),
+        created_at: Some("2026-06-01T00:01:00Z".to_string()),
+    });
+
+    let report = calculate_ambiguity(&spec);
+
+    assert!(
+        report.overall_score > 0.02,
+        "contradiction should keep ambiguity above target, got {}",
+        report.overall_score
+    );
+    assert!(
+        report
+            .recommendations
+            .iter()
+            .any(|recommendation| recommendation.contains("contradiction")),
+        "recommendations should name contradiction: {:?}",
+        report.recommendations
+    );
+}
+
+#[test]
 fn test_ambiguity_filled_unity_no_question() {
     let mut spec = SpecProject::default();
     spec.unity = Some(UnitySpec {
@@ -343,6 +445,55 @@ fn full_spec(workspace: &TestWorkspace) -> SpecProject {
         ),
         &["engine", "platform", "networking", "data_storage"],
     ));
+    spec.domains.mechanics = Some(domain(
+        "mechanics",
+        workspace.markdown_path(
+            "mechanics",
+            full_markdown(
+                "Mechanics",
+                &[
+                    "movement",
+                    "interaction",
+                    "resource",
+                    "progression",
+                    "combat",
+                ],
+            ),
+        ),
+        &[
+            "movement_model",
+            "interaction_rules",
+            "resource_rules",
+            "progression_rules",
+        ],
+    ));
+    spec.domains.controls = Some(domain(
+        "controls",
+        workspace.markdown_path(
+            "controls",
+            full_markdown(
+                "Controls",
+                &["input", "action", "rebinding", "accessibility", "device"],
+            ),
+        ),
+        &["input_devices", "action_map", "rebinding", "accessibility"],
+    ));
+    spec.domains.camera = Some(domain(
+        "camera",
+        workspace.markdown_path(
+            "camera",
+            full_markdown(
+                "Camera",
+                &["camera", "follow", "framing", "occlusion", "viewport"],
+            ),
+        ),
+        &[
+            "camera_mode",
+            "follow_rules",
+            "framing",
+            "occlusion_strategy",
+        ],
+    ));
     spec.domains.art_style = Some(domain(
         "art_style",
         workspace.markdown_path(
@@ -393,6 +544,22 @@ fn full_spec(workspace: &TestWorkspace) -> SpecProject {
             ),
         ),
         &["level_count", "difficulty_curve", "level_generation"],
+    ));
+    spec.domains.testing = Some(domain(
+        "testing",
+        workspace.markdown_path(
+            "testing",
+            full_markdown(
+                "Testing",
+                &["editmode", "playmode", "manual", "evidence", "qa"],
+            ),
+        ),
+        &[
+            "editmode_coverage",
+            "playmode_smoke",
+            "manual_qa_channel",
+            "evidence_gate",
+        ],
     ));
     spec.domains.ui_ux = Some(domain(
         "ui_ux",

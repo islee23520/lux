@@ -6,8 +6,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 required_roots=(
   "gateway"
+  "crates"
   "bridge"
-  "adapters"
   "Skills"
   "Skills/skills"
   "docs"
@@ -22,9 +22,12 @@ for path in "${required_roots[@]}"; do
 done
 
 removed_roots=(
+  "adapters"
   "seeds"
   "plugins"
   "bridge-threejs"
+  "gateway/ui"
+  "gateway/ui-src"
 )
 
 for path in "${removed_roots[@]}"; do
@@ -53,11 +56,6 @@ fi
 
 if ! find "$ROOT_DIR/Skills/skills" -mindepth 2 -maxdepth 2 -name manifest.json | grep -q .; then
   echo "Skills must contain per-skill manifest.json files" >&2
-  exit 1
-fi
-
-if [ ! -f "$ROOT_DIR/adapters/opencode/lux-plugin.ts" ]; then
-  echo "adapters/opencode/lux-plugin.ts missing; OpenCode adapter source must remain tracked" >&2
   exit 1
 fi
 

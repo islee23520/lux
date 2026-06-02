@@ -1,11 +1,11 @@
 ---
-description: Open a domain spec for editing (design, architecture, audio, etc.)
+description: Open a game domain spec for editing (gdd, mechanics, controls, camera, etc.)
 subtask: true
 ---
 
-Open a Lux domain markdown spec file for editing. The user should specify which domain to edit.
+Open a Lux game domain markdown spec file for editing. The user should specify which domain to edit.
 
-Available domains: design, architecture, art-style, audio, narrative, levels, ui-ux, testing, packages
+Available domains: gdd, mechanics, controls, camera, levels, art-style, audio, narrative, ui-ux, technical-architecture, engine, testing, build-release
 
 Usage: `/lux-spec-edit <domain>`
 

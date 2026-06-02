@@ -12,6 +12,7 @@ use axum::{
 use lux::{
     addon_auth::AddonAuthConfig,
     lux_spec::{DomainSpec, DomainStatus, Requirement, RequirementStatus, SpecProject, SpecStatus},
+    lux_verification::{CheckCategory, CheckResult, VerificationResult},
     server::{router, GatewayConfig, GatewayState},
 };
 use serde_json::{json, Value};
@@ -31,7 +32,8 @@ impl TempProject {
             .duration_since(UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("lux-spec-api-{nonce}-{count}"));
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("lux-spec-api-{pid}-{nonce}-{count}"));
         fs::create_dir_all(&path).expect("create temp project");
         Self { path }
     }
@@ -103,7 +105,14 @@ async fn test_lux_init_api() {
         spec.project_name,
         project.path.file_name().unwrap().to_string_lossy()
     );
-    assert!(project.path.join(".lux/spec.json").exists());
+    assert!(
+        project.path.join(".lux/specs/spec.json").exists(),
+        "canonical spec path should exist"
+    );
+    assert!(
+        project.path.join(".lux/spec.json").exists(),
+        "compatibility mirror should exist"
+    );
 }
 
 #[tokio::test]
@@ -249,7 +258,8 @@ async fn test_lux_ambiguity_api() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = response_json(response).await;
     assert_eq!(json["overall"], 1.0);
-    assert!(json["domains"].as_object().unwrap().contains_key("design"));
+    assert!(json["domains"].as_object().unwrap().contains_key("gdd"));
+    assert!(!json["domains"].as_object().unwrap().contains_key("design"));
 }
 
 #[tokio::test]
@@ -258,8 +268,8 @@ async fn test_lux_progress_summary_api() {
     let state = test_state();
     let mut spec = init_project(&state, &project).await;
     spec.overall_ambiguity = 0.45;
-    let mut design = DomainSpec::new("design", "design.md", 0.3);
-    design.status = DomainStatus::Defined;
+    let mut gdd = DomainSpec::new("gdd", "gdd.md", 0.3);
+    gdd.status = DomainStatus::Defined;
     let mut implemented = Requirement::default();
     implemented.id = "req-1".to_string();
     implemented.text = "Implemented requirement".to_string();
@@ -267,9 +277,54 @@ async fn test_lux_progress_summary_api() {
     let mut proposed = Requirement::default();
     proposed.id = "req-2".to_string();
     proposed.text = "Proposed requirement".to_string();
-    design.requirements = vec![implemented, proposed];
-    spec.domains.design = Some(design);
+    gdd.requirements = vec![implemented, proposed];
+    spec.domains.gdd = Some(gdd);
     lux::lux_spec::lux_save(&project.path, &spec).expect("save spec");
+    fs::write(
+        project.path.join(".lux/specs/decisions.jsonl"),
+        "{\"event\":\"question_answered\"}\n{\"event\":\"goal_selected\"}\n",
+    )
+    .expect("write decisions ledger");
+    fs::create_dir_all(project.path.join(".lux/goals")).expect("create goals dir");
+    fs::write(
+        project.path.join(".lux/goals/current.json"),
+        json!({
+            "goalId": "ambiguity:gdd",
+            "sourceSpecRefs": [".lux/specs/spec.json"],
+            "selectedEngine": "unity",
+            "rationale": "spec ambiguity remains"
+        })
+        .to_string(),
+    )
+    .expect("write current goal");
+    lux::lux_verification::save_verification_result(
+        &VerificationResult {
+            passed: false,
+            timestamp: "2026-06-01T00:00:00Z".to_string(),
+            checks: vec![
+                CheckResult {
+                    name: "Spec evidence".to_string(),
+                    category: CheckCategory::SpecCompleteness,
+                    passed: true,
+                    score: 1.0,
+                    message: "accepted".to_string(),
+                    details: None,
+                },
+                CheckResult {
+                    name: "Engine evidence".to_string(),
+                    category: CheckCategory::UnityCompilable,
+                    passed: false,
+                    score: 0.0,
+                    message: "missing engine evidence".to_string(),
+                    details: None,
+                },
+            ],
+            overall_score: 0.5,
+            blocker_ticket_ids: vec!["blocker-1".to_string()],
+        },
+        &project.path,
+    )
+    .expect("save latest verification");
 
     let ticket_response = router(state.clone())
         .oneshot(json_request(
@@ -299,18 +354,36 @@ async fn test_lux_progress_summary_api() {
     assert_eq!(response.status(), StatusCode::OK);
     let summary = response_json(response).await;
     assert_eq!(summary["spec"]["overall_ambiguity"], 0.45);
-    assert_eq!(summary["spec"]["domains"]["design"]["ambiguity"], 0.3);
-    assert_eq!(summary["spec"]["domains"]["design"]["status"], "Defined");
-    assert_eq!(
-        summary["spec"]["domains"]["design"]["requirements_total"],
-        2
-    );
-    assert_eq!(summary["spec"]["domains"]["design"]["requirements_done"], 1);
+    assert_eq!(summary["spec"]["domains"]["gdd"]["ambiguity"], 0.3);
+    assert_eq!(summary["spec"]["domains"]["gdd"]["status"], "Defined");
+    assert_eq!(summary["spec"]["domains"]["gdd"]["requirements_total"], 2);
+    assert_eq!(summary["spec"]["domains"]["gdd"]["requirements_done"], 1);
     assert_eq!(summary["kanban"]["by_status"]["Backlog"], 1);
     assert_eq!(summary["kanban"]["total"], 1);
     assert_eq!(summary["kanban"]["active_count"], 0);
     assert_eq!(summary["loop"]["state"], "Idle");
     assert!(summary["loop"]["iteration"].is_null());
+    assert!(summary["spec_path"]
+        .as_str()
+        .expect("spec path should be text")
+        .ends_with(".lux/specs/spec.json"));
+    assert_eq!(summary["decision_count"], 2);
+    assert_eq!(summary["current_next_goal"]["goalId"], "ambiguity:gdd");
+    assert_eq!(summary["current_next_goal"]["selectedEngine"], "unity");
+    assert!(summary["engine_capabilities"]["inventory_path"]
+        .as_str()
+        .expect("inventory path should be text")
+        .ends_with(".lux/engines/capabilities.json"));
+    assert!(summary["engine_capabilities"]["engines"]
+        .as_array()
+        .expect("engines should be an array")
+        .iter()
+        .any(|engine| engine["engine"] == "unity"));
+    assert_eq!(summary["evidence_status"]["latest_present"], true);
+    assert_eq!(summary["evidence_status"]["accepted_count"], 1);
+    assert_eq!(summary["evidence_status"]["missing_count"], 1);
+    assert_eq!(summary["evidence_status"]["blocker_count"], 1);
+    assert_eq!(summary["evidence_status"]["state"], "blocker");
 }
 
 #[tokio::test]
@@ -335,4 +408,8 @@ async fn test_lux_progress_summary_uninitialized_returns_empty_not_found() {
     assert_eq!(summary["kanban"]["by_status"]["Backlog"], 0);
     assert_eq!(summary["loop"]["state"], "Idle");
     assert!(summary["loop"]["iteration"].is_null());
+    assert_eq!(summary["spec_path"], ".lux/specs/spec.json");
+    assert_eq!(summary["decision_count"], 0);
+    assert!(summary["current_next_goal"].is_null());
+    assert_eq!(summary["evidence_status"]["latest_present"], false);
 }

@@ -36,9 +36,55 @@ describe("prompt-builder", () => {
     summary: mockSummary,
     continuationCount: 0,
     consecutiveFailures: 0,
+    aiContext: {
+      ontology: {
+        schemaVersion: "1.0.0",
+        requiredTerms: [
+          "scene",
+          "stage",
+          "actor",
+          "component",
+          "transform",
+          "camera",
+          "viewport",
+          "coordinate_frames",
+          "expected_visual_state",
+          "evidence_class",
+          "blocker_class",
+          "completion_gate",
+          "schema_version",
+        ],
+      },
+      astSummary: {
+        source: "scene",
+        nodeCount: 3,
+        nodeTypes: ["GameObject", "Component"],
+      },
+      coordinateMappingSummary: {
+        frames: ["world", "local", "screen", "viewport", "ui"],
+        origins: ["player_spawn"],
+      },
+      evidenceGateRequirements: {
+        requiredEvidence: ["scene_ast", "coordinate_map", "expected_visual_state", "vision_match"],
+        requiredReferences: ["ast_node", "coordinate_region", "contract_doc", "blocker_reason"],
+      },
+      blockers: [{ kind: "dirty_worktree", reason: "working tree not clean" }],
+    },
   };
 
   describe("buildContinuationPrompt", () => {
+    it("includes AI context sections for V13 injection", () => {
+      const prompt = buildContinuationPrompt(defaultCtx);
+
+      expect(prompt).toContain("AI context:");
+      expect(prompt).toContain("Ontology: schema=1.0.0; required=scene, stage, actor");
+      expect(prompt).toContain("AST summary: source=scene; nodes=3; types=GameObject, Component");
+      expect(prompt).toContain("Coordinate mapping: frames=world, local, screen, viewport, ui; origins=player_spawn");
+      expect(prompt).toContain("Evidence gates: evidence=scene_ast, coordinate_map, expected_visual_state, vision_match; references=ast_node, coordinate_region, contract_doc, blocker_reason");
+      expect(prompt).toContain("Blockers: dirty_worktree (working tree not clean)");
+      expect(prompt).toContain("Constraints: pixel-only completion is forbidden. Fake engine parity is forbidden.");
+    });
+
     it("builds a standard continuation prompt", () => {
       const prompt = buildContinuationPrompt(defaultCtx);
 
@@ -49,6 +95,13 @@ describe("prompt-builder", () => {
       expect(prompt).toContain("- [ ] Criteria 2");
       expect(prompt).toContain("Progress: 1/2 tickets complete. Continuation #1.");
       expect(prompt).toContain("Spec ambiguity: 20%. Decision confidence: 0.95.");
+      expect(prompt).toContain("AI context:");
+      expect(prompt).toContain("Ontology: schema=1.0.0; required=scene, stage, actor");
+      expect(prompt).toContain("AST summary: source=scene; nodes=3; types=GameObject, Component");
+      expect(prompt).toContain("Coordinate mapping: frames=world, local, screen, viewport, ui; origins=player_spawn");
+      expect(prompt).toContain("Evidence gates: evidence=scene_ast, coordinate_map, expected_visual_state, vision_match; references=ast_node, coordinate_region, contract_doc, blocker_reason");
+      expect(prompt).toContain("Blockers: dirty_worktree (working tree not clean)");
+      expect(prompt).toContain("Constraints: pixel-only completion is forbidden. Fake engine parity is forbidden.");
       expect(prompt).toContain("Preserve .lux as the source of truth.");
     });
 

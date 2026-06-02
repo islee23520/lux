@@ -105,7 +105,6 @@ fn run_diagnostics(project_path: &Path, args: &DoctorArgs) -> Result<DoctorRepor
         is_unity_project,
         args.check_bridge,
     ));
-    checks.push(check_opencode_plugin(project_path));
     checks.push(check_agents_skills(project_path));
     checks.push(check_lux_binary());
     checks.push(check_lux_integrity(&lux_dir));
@@ -354,51 +353,44 @@ fn check_bridge(project_path: &Path, is_unity_project: bool, enabled: bool) -> D
             false,
         );
     }
-    let bridge_dir = project_path
+    let bridge_file = project_path
         .join("Assets")
         .join("Editor")
-        .join("AiBridgeEditor");
-    if bridge_dir.is_dir() {
+        .join("LuxBridge")
+        .join("UnityAiBridge.cs");
+    if bridge_file.is_file() {
         check(
             "bridge",
             DoctorStatus::Ok,
-            "Unity bridge installed in Assets/Editor/AiBridgeEditor",
+            "Unity bridge installed in Assets/Editor/LuxBridge",
             None,
             false,
         )
-    } else {
+    } else if project_path
+        .join("Assets")
+        .join("Editor")
+        .join("AiBridgeEditor")
+        .is_dir()
+    {
         check(
             "bridge",
             DoctorStatus::Warning,
-            "Unity bridge not installed in Assets/Editor/",
+            "Legacy Unity bridge install needs migration to Assets/Editor/LuxBridge",
             Some(format!(
                 "Run: lux bridge install --project-path {}",
                 project_path.display()
             )),
             true,
         )
-    }
-}
-
-fn check_opencode_plugin(project_path: &Path) -> DoctorCheck {
-    let plugin_path = project_path
-        .join(".opencode")
-        .join("plugins")
-        .join("lux-plugin.ts");
-    if plugin_path.is_file() {
-        check(
-            "opencode-plugin",
-            DoctorStatus::Ok,
-            "Plugin installed at .opencode/plugins/lux-plugin.ts",
-            None,
-            false,
-        )
     } else {
         check(
-            "opencode-plugin",
+            "bridge",
             DoctorStatus::Warning,
-            "OpenCode plugin missing; session toasts and Lux context injection are unavailable",
-            hint("Run: lux init, or manually copy adapters/opencode/lux-plugin.ts"),
+            "Unity bridge not installed in Assets/Editor/LuxBridge",
+            Some(format!(
+                "Run: lux bridge install --project-path {}",
+                project_path.display()
+            )),
             true,
         )
     }
@@ -610,9 +602,6 @@ fn fix_prompt(check: &DoctorCheck, project_path: &Path) -> Option<String> {
         )),
         "bridge" => Some(format!(
             "Install the Unity bridge for the Lux project at {path}. Run `lux bridge install --project-path {path}`."
-        )),
-        "opencode-plugin" => Some(format!(
-            "Install the Lux OpenCode plugin for the project at {path}. Run `lux init --project-path {path}` again or copy adapters/opencode/lux-plugin.ts to .opencode/plugins/lux-plugin.ts."
         )),
         "agents-skills" => Some(format!(
             "Install Lux workflow skills for the project at {path}. Run `lux agents-install --project-path {path}`."

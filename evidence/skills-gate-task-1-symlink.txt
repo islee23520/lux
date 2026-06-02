@@ -1,4 +1,0 @@
-120114194        0 lrwxr-xr-x    1 ilseoblee        staff                  47 May 29 16:42 Skills/skills/ldp-decision-protocol/SKILL.md -> /Users/ilseoblee/workspace/linalab/ldp/SKILL.md
-
-absolute_symlink_targets:
-Skills/skills/ldp-decision-protocol/SKILL.md -> /Users/ilseoblee/workspace/linalab/ldp/SKILL.md

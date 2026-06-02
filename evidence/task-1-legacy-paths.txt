@@ -1,1 +1,0 @@
-legacy path check passed: seeds/plugins/bridge-threejs absent

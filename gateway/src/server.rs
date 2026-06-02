@@ -23,7 +23,6 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex, RwLock};
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
@@ -48,6 +47,7 @@ use crate::{
     lux_verification::{self, VerificationResult},
     protocol::{EventEnvelope, PROTOCOL_VERSION},
     session,
+    skill_adapter::discovery,
 };
 use serde_json::{json, Value};
 
@@ -611,10 +611,30 @@ struct LuxAmbiguityResponse {
 
 #[derive(Debug, Serialize)]
 struct ProgressSummaryResponse {
+    spec_path: String,
+    decision_count: usize,
+    engine_capabilities: EngineCapabilitySummary,
+    current_next_goal: Option<Value>,
+    evidence_status: EvidenceStatusSummary,
     spec: SpecProgressSummary,
     kanban: KanbanProgressSummary,
     #[serde(rename = "loop")]
     loop_summary: LoopProgressSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct EngineCapabilitySummary {
+    inventory_path: String,
+    engines: Vec<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct EvidenceStatusSummary {
+    latest_present: bool,
+    accepted_count: usize,
+    missing_count: usize,
+    blocker_count: usize,
+    state: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -858,7 +878,6 @@ impl GatewayState {
 }
 
 pub fn router(state: GatewayState) -> Router {
-    let ui_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     let kanban_router = Router::new()
         .route("/tickets", get(list_tickets).post(create_ticket))
         .route("/tickets/:id", get(get_ticket).put(update_ticket))
@@ -1021,10 +1040,6 @@ pub fn router(state: GatewayState) -> Router {
         .nest("/api/lux", lux_router)
         .nest("/api/addons", crate::addon_routes::routes())
         .nest("/api/unity", crate::unity_launch::routes())
-        .nest_service(
-            "/ui",
-            ServeDir::new(&ui_dir).append_index_html_on_directories(true),
-        )
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1594,13 +1609,9 @@ async fn get_spec_ambiguity(
     let spec =
         lux_spec::lux_load_or_init(Path::new(&query.project_path)).map_err(internal_error)?;
     let mut domains = HashMap::new();
-    collect_domain_ambiguity(&mut domains, spec.domains.design.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.architecture.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.art_style.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.audio.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.narrative.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.levels.as_ref());
-    collect_domain_ambiguity(&mut domains, spec.domains.ui_ux.as_ref());
+    for domain in canonical_spec_domains(&spec) {
+        collect_domain_ambiguity(&mut domains, Some(domain));
+    }
     domains.extend(
         spec.domains
             .custom
@@ -1608,12 +1619,18 @@ async fn get_spec_ambiguity(
             .map(|domain| (domain.name.clone(), domain.ambiguity_score)),
     );
     for domain in [
-        "design",
-        "architecture",
+        "gdd",
+        "mechanics",
+        "controls",
+        "camera",
         "art-style",
         "audio",
         "narrative",
         "levels",
+        "technical-architecture",
+        "engine",
+        "testing",
+        "build-release",
         "ui-ux",
     ] {
         domains
@@ -1632,7 +1649,14 @@ async fn get_progress_summary(
     Query(query): Query<LuxProjectQuery>,
 ) -> Result<(StatusCode, Json<ProgressSummaryResponse>), Response> {
     let project_path = Path::new(&query.project_path);
-    if !project_path.join(".lux/spec.json").is_file() {
+    let spec_paths = [
+        ("canonical", project_path.join(".lux/specs/spec.json")),
+        (
+            "compatibility fallback",
+            project_path.join(".lux/spec.json"),
+        ),
+    ];
+    if !spec_paths.iter().any(|(_, path)| path.is_file()) {
         return Ok((StatusCode::NOT_FOUND, Json(default_progress_summary())));
     }
 
@@ -1650,6 +1674,14 @@ async fn get_progress_summary(
     Ok((
         StatusCode::OK,
         Json(ProgressSummaryResponse {
+            spec_path: project_path
+                .join(".lux/specs/spec.json")
+                .display()
+                .to_string(),
+            decision_count: decision_count(project_path).map_err(internal_error)?,
+            engine_capabilities: engine_capability_summary(project_path).map_err(internal_error)?,
+            current_next_goal: current_next_goal(project_path).map_err(internal_error)?,
+            evidence_status: evidence_status_summary(project_path).map_err(internal_error)?,
             spec: spec_progress_summary(&spec),
             kanban: kanban_progress_summary(&tickets),
             loop_summary: loop_progress_summary(loop_snapshot),
@@ -1954,7 +1986,7 @@ async fn answer_spec_loop_question(
         &request.answer,
     )
     .map(Json)
-    .map_err(internal_error)
+    .map_err(bad_request)
 }
 
 async fn approve_spec_loop_proposal(
@@ -1973,7 +2005,7 @@ async fn approve_spec_loop_proposal(
         })?;
     lux_spec_loop::approve(&project_path, &request.run_id, &request.proposal_id)
         .map(Json)
-        .map_err(internal_error)
+        .map_err(bad_request)
 }
 
 async fn reject_spec_loop_proposal(
@@ -1992,7 +2024,7 @@ async fn reject_spec_loop_proposal(
         })?;
     lux_spec_loop::reject(&project_path, &request.run_id, &request.proposal_id)
         .map(Json)
-        .map_err(internal_error)
+        .map_err(bad_request)
 }
 
 async fn apply_spec_loop_proposals(
@@ -2011,7 +2043,7 @@ async fn apply_spec_loop_proposals(
         })?;
     lux_spec_loop::apply_approved(&project_path, &request.run_id)
         .map(Json)
-        .map_err(internal_error)
+        .map_err(bad_request)
 }
 
 async fn pause_lux_loop(State(state): State<GatewayState>) -> Result<Json<LoopSnapshot>, Response> {
@@ -2502,6 +2534,20 @@ fn kanban_progress_summary(tickets: &[Ticket]) -> KanbanProgressSummary {
 
 fn default_progress_summary() -> ProgressSummaryResponse {
     ProgressSummaryResponse {
+        spec_path: ".lux/specs/spec.json".to_string(),
+        decision_count: 0,
+        engine_capabilities: EngineCapabilitySummary {
+            inventory_path: ".lux/engines/capabilities.json".to_string(),
+            engines: Vec::new(),
+        },
+        current_next_goal: None,
+        evidence_status: EvidenceStatusSummary {
+            latest_present: false,
+            accepted_count: 0,
+            missing_count: 0,
+            blocker_count: 0,
+            state: "missing".to_string(),
+        },
         spec: SpecProgressSummary {
             overall_ambiguity: 1.0,
             domains: HashMap::new(),
@@ -2512,6 +2558,74 @@ fn default_progress_summary() -> ProgressSummaryResponse {
             iteration: None,
         },
     }
+}
+
+fn decision_count(project_path: &Path) -> anyhow::Result<usize> {
+    let path = project_path.join(".lux/specs/decisions.jsonl");
+    if !path.is_file() {
+        return Ok(0);
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count())
+}
+
+fn engine_capability_summary(project_path: &Path) -> anyhow::Result<EngineCapabilitySummary> {
+    let inventory = crate::project::detect_engine_capabilities(project_path)?;
+    let engines = inventory
+        .engines
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<serde_json::Result<Vec<_>>>()?;
+    Ok(EngineCapabilitySummary {
+        inventory_path: inventory.path.display().to_string(),
+        engines,
+    })
+}
+
+fn current_next_goal(project_path: &Path) -> anyhow::Result<Option<Value>> {
+    let path = project_path.join(".lux/goals/current.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_str(&content)
+        .map(Some)
+        .with_context(|| format!("failed to parse {}", path.display()))
+}
+
+fn evidence_status_summary(project_path: &Path) -> anyhow::Result<EvidenceStatusSummary> {
+    let Some(latest) = lux_verification::get_latest_verification(project_path)? else {
+        return Ok(EvidenceStatusSummary {
+            latest_present: false,
+            accepted_count: 0,
+            missing_count: 0,
+            blocker_count: 0,
+            state: "missing".to_string(),
+        });
+    };
+    let accepted_count = latest.checks.iter().filter(|check| check.passed).count();
+    let missing_count = latest.checks.len().saturating_sub(accepted_count);
+    let blocker_count = latest.blocker_ticket_ids.len();
+    let state = if blocker_count > 0 {
+        "blocker"
+    } else if missing_count > 0 {
+        "missing"
+    } else {
+        "accepted"
+    }
+    .to_string();
+    Ok(EvidenceStatusSummary {
+        latest_present: true,
+        accepted_count,
+        missing_count,
+        blocker_count,
+        state,
+    })
 }
 
 fn loop_progress_summary(loop_snapshot: Option<LoopSnapshot>) -> LoopProgressSummary {
@@ -2525,20 +2639,30 @@ fn loop_progress_summary(loop_snapshot: Option<LoopSnapshot>) -> LoopProgressSum
 }
 
 fn spec_domain_refs(spec: &SpecProject) -> Vec<&lux_spec::DomainSpec> {
-    let mut domains = [
-        spec.domains.design.as_ref(),
-        spec.domains.architecture.as_ref(),
+    let mut domains = canonical_spec_domains(spec);
+    domains.extend(spec.domains.custom.values());
+    domains
+}
+
+fn canonical_spec_domains(spec: &SpecProject) -> Vec<&lux_spec::DomainSpec> {
+    [
+        spec.domains.gdd.as_ref(),
+        spec.domains.mechanics.as_ref(),
+        spec.domains.controls.as_ref(),
+        spec.domains.camera.as_ref(),
         spec.domains.art_style.as_ref(),
         spec.domains.audio.as_ref(),
         spec.domains.narrative.as_ref(),
         spec.domains.levels.as_ref(),
+        spec.domains.technical_architecture.as_ref(),
+        spec.domains.engine.as_ref(),
+        spec.domains.testing.as_ref(),
+        spec.domains.build_release.as_ref(),
         spec.domains.ui_ux.as_ref(),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>();
-    domains.extend(spec.domains.custom.values());
-    domains
+    .collect()
 }
 
 fn domain_ambiguities(domains: &[&lux_spec::DomainSpec]) -> HashMap<String, f64> {
@@ -3938,9 +4062,10 @@ fn parse_skill_scope(scope: &str) -> Result<&'static str, Response> {
         "core" => Ok("core"),
         "project" => Ok("project"),
         "global" => Ok("global"),
+        "plugin" => Ok("plugin"),
         _ => Err((
             StatusCode::BAD_REQUEST,
-            "scope must be core, project, or global",
+            "scope must be core, project, global, or plugin",
         )
             .into_response()),
     }
@@ -3950,111 +4075,27 @@ fn discover_skills_for_api(
     project_root: Option<&Path>,
     scope_filter: Option<&str>,
 ) -> anyhow::Result<Vec<SkillDiscoveryEntry>> {
-    let mut entries = Vec::new();
-    for (scope, root) in skill_scope_roots(project_root) {
-        if scope_filter.is_some_and(|filter| filter != scope) {
-            continue;
-        }
-        scan_skill_scope_for_api(&root, scope, &mut entries)?;
-    }
-    entries.sort_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then_with(|| left.scope.cmp(&right.scope))
-    });
-    Ok(entries)
-}
-
-fn skill_scope_roots(project_root: Option<&Path>) -> Vec<(&'static str, PathBuf)> {
-    let mut roots = vec![(
-        "core",
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("Skills")
-            .join("skills"),
-    )];
-    if let Some(project_root) = project_root {
-        roots.push(("project", project_root.join(".lux").join("skills")));
-    }
-    if let Some(home) = home_dir() {
-        roots.push(("global", home.join(".lux").join("skills")));
-    }
-    roots
-}
-
-fn scan_skill_scope_for_api(
-    root: &Path,
-    scope: &str,
-    entries: &mut Vec<SkillDiscoveryEntry>,
-) -> anyhow::Result<()> {
-    let read_dir = match fs::read_dir(root) {
-        Ok(read_dir) => read_dir,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to read skills directory {}", root.display()))
-        }
-    };
-    for dir_entry in read_dir {
-        let dir_entry = match dir_entry {
-            Ok(dir_entry) => dir_entry,
-            Err(error) => {
-                eprintln!("Warning: failed to read skill directory entry: {error}");
-                continue;
-            }
-        };
-        let directory_path = dir_entry.path();
-        if !directory_path.is_dir() {
-            continue;
-        }
-        let manifest_path = directory_path.join("manifest.json");
-        let manifest = match fs::read_to_string(&manifest_path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        {
-            Some(manifest) => manifest,
-            None => continue,
-        };
-        let name = manifest
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                directory_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(str::to_string)
+    discovery::discover_skills(project_root)?
+        .into_iter()
+        .filter(|entry| {
+            scope_filter
+                .map(|filter| filter == entry.scope.as_str())
+                .unwrap_or(true)
+        })
+        .map(|entry| {
+            let manifest = serde_json::to_value(&entry.manifest)
+                .context("failed to serialize skill manifest")?;
+            Ok(SkillDiscoveryEntry {
+                name: entry.manifest.name,
+                version: Some(entry.manifest.version),
+                description: Some(entry.manifest.description),
+                skill_type: Some(entry.manifest.skill_type),
+                scope: entry.scope,
+                directory_path: cross_platform::display_path(&entry.directory_path),
+                manifest,
             })
-            .unwrap_or_else(|| "unknown".to_string());
-        entries.push(SkillDiscoveryEntry {
-            name,
-            version: manifest
-                .get("version")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            description: manifest
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            skill_type: manifest
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            scope: scope.to_string(),
-            directory_path: cross_platform::display_path(&directory_path),
-            manifest,
-        });
-    }
-    Ok(())
-}
-
-fn home_dir() -> Option<PathBuf> {
-    if cfg!(windows) {
-        std::env::var("USERPROFILE").ok()
-    } else {
-        std::env::var("HOME").ok()
-    }
-    .map(PathBuf::from)
+        })
+        .collect()
 }
 
 fn chrono_like_now() -> String {
@@ -4317,7 +4358,9 @@ mod tests {
     async fn start_test_server(
         state: GatewayState,
     ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
         let address = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
             axum::serve(listener, router(state)).await.unwrap();
@@ -4568,16 +4611,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ui_serves_index_html() {
+    async fn ui_route_returns_not_found() {
         let response = test_app()
             .oneshot(Request::builder().uri("/ui/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-        let html = std::str::from_utf8(&body).unwrap();
-        assert!(html.contains("<html") || html.contains("<!DOCTYPE") || !html.is_empty());
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -5611,6 +5651,45 @@ mod tests {
 
         let invalid = authenticated_get(app, "/api/skills?scope=invalid").await;
         assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn skills_endpoint_lists_plugin_scope_from_env() {
+        let project_root = temp_project_root("skills-api-plugin");
+        let plugin_root = temp_project_root("skills-api-plugin-root");
+        let skill_dir = plugin_root.join("skills/programming");
+        fs::create_dir_all(skill_dir.join("references/rust")).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            concat!(
+                "---\n",
+                "name: programming\n",
+                "description: Strict language-specific programming discipline.\n",
+                "category: programming\n",
+                "---\n",
+                "# Programming\n",
+                "\n",
+                "Use this skill for strict Rust work.\n",
+            ),
+        )
+        .unwrap();
+        fs::write(skill_dir.join("references/rust/README.md"), "# Rust\n").unwrap();
+
+        std::env::set_var("LUX_SKILL_PLUGIN_ROOTS", &plugin_root);
+        let app = test_app_with_project(project_root);
+        let response = authenticated_get(app, "/api/skills?scope=plugin").await;
+        std::env::remove_var("LUX_SKILL_PLUGIN_ROOTS");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let skills = response_json(response).await;
+        let skills = skills.as_array().unwrap();
+        let programming = skills
+            .iter()
+            .find(|skill| skill["name"] == "programming")
+            .expect("programming plugin skill should be discovered");
+        assert_eq!(programming["scope"], "plugin");
+        assert_eq!(programming["manifest"]["category"], "programming");
+        assert_eq!(programming["manifest"]["lazyLoad"], true);
     }
 
     #[tokio::test]

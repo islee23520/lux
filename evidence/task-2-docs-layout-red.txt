@@ -1,2 +1,0 @@
-README.md:519:- ❌ WebRTC / 원격 비디오 스트리밍 (실험적, `experimental_flags.remote_webrtc=true`로 게이트)
-red-exit=0

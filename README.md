@@ -1,28 +1,44 @@
-# LUX — Local-first Multi-engine AI Harness & Evidence Loop
+# LUX — Local-first Server/MCP Evidence Loop for Game Automation
 
 **LUX** = **L**inalab **U**nity **X**
 
-LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Its game-development direction is **context-first**: LUX turns game intent, project structure, engine state, scene hierarchy, object properties, coordinates, logs, screenshots, and verification results into stable AI-readable evidence before any agent claims progress. Unity remains the primary public-beta verified engine; Three.js and Godot are supported through explicit capability maturity tiers so AI tools do not confuse planned or external-adapter capabilities with verified LUX commands.
+LUX is a local-first server/MCP evidence-gated automation control plane for game projects. It supports Unity, Three.js, and Godot projects through explicit capability tiers.
+Its game-development direction is **context-first**: LUX turns game intent, project structure, engine state, scene hierarchy, object properties, coordinates, logs, screenshots, and verification results into stable AI-readable evidence before any agent claims progress. Unity remains the primary public-beta verified engine.
+Three.js and Godot use explicit capability maturity tiers so AI tools do not confuse planned, partial, or adapter-only capabilities with verified LUX commands.
 
-AI 코딩 도구가 Unity Editor와 Godot/Three.js 프로젝트 상태를 안전하게 확인하고 증거 기반으로 다음 행동을 결정하게 하는 **독립형 로컬 자동화 툴킷**입니다. LUX의 게임 플러그인 계층은 비전 모델만을 전제로 하지 않고, 먼저 씬/오브젝트/컴포넌트/좌표계/카메라/UI/콘솔 로그를 텍스트와 JSON 컨텍스트로 고정한 뒤 필요한 경우 스크린샷·비전 피드백을 연결합니다.
+The implementation is split across core Rust packages, gateway wiring, bridge sources, and bundled skills. The current docs describe that split as a repository docs projection of the live repository shape, not a claim that autonomous game-development milestones are already complete.
+
+AI 코딩 도구가 Unity Editor와 Godot/Three.js 프로젝트 상태를 안전하게 확인하고 증거 기반으로 다음 행동을 결정하게 하는 **독립형 서버/MCP 자동화 컨트롤 플레인**입니다. LUX는 비전 모델이나 UI 대시보드를 제품 중심에 두지 않고, 먼저 씬/오브젝트/컴포넌트/좌표계/카메라/UI/콘솔 로그를 텍스트와 JSON 컨텍스트로 고정한 뒤 필요한 경우 스크린샷·비전 피드백을 보조 증거로 연결합니다.
 
 > **"Local-first"** — 모든 기능은 `localhost`에서 작동합니다. 보안과 성능을 위해 원격 스트리밍이나 외부 클라우드 의존성을 최소화합니다.
 
 ## LUX가 무엇인가요?
 
-LUX는 **Unity 패키지가 아닌 독립형 애플리케이션**으로, AI 코딩 어시스턴트(Claude Code, OpenCode, OpenAI Codex 등)와 Unity Editor 사이의 간극을 메웁니다.
+LUX는 **Unity 패키지가 아닌 독립형 로컬 서버/MCP 애플리케이션**으로, AI 코딩 어시스턴트와 엔진 프로젝트 사이의 간극을 메웁니다.
 
 기존 AI 코딩 도구는 코드는 이해하지만 Unity Editor의 GUI 상태(현재 선택된 오브젝트, PlayMode 상태, 콘솔 로그, 빌드 결과 등)를 직접 알 수 없습니다. LUX는 이 문제를 다음과 같이 해결합니다:
 
 1. **Unity 프로젝트에 브릿지 어댑터 설치** — C# TCP 서버가 Editor 내부 상태를 수집
 2. **Rust 기반 게이트웨이 서버 실행** — HTTP/WebSocket API로 외부에 노출
-3. **CLI + HTTP/WebSocket API 제공** — AI 어시스턴트가 Unity를 제어
-4. **로컬 웹 대시보드** — 브라우저에서 컴파일, 테스트, 로그, 칸반 등을 시각화
+3. **CLI + HTTP/WebSocket/MCP API 제공** — AI 어시스턴트가 Unity를 제어
 
-모든 상태는 프로젝트의 `.lux/` 디렉토리에 저장되어 **단일 소스 오브 트루스(SSoT)**를 유지합니다.
+모든 런타임 상태는 프로젝트의 `.lux/` 디렉토리에 저장되어 **단일 소스 오브 트루스(SSoT)**를 유지합니다. 게임 의도와 GDD 도메인은 `.lux/specs`가 정식 소스이며, README와 `docs/` 문서는 사용자가 읽기 쉬운 repository docs projection입니다.
+
+## Repository Layering
+
+LUX keeps the runtime truth in `.lux/`, the executable control plane in `gateway/`, the engine bridge in `bridge/`, and bundled skill sources in `Skills/skills/`. The verification and game-context flows are projected from those layers, not the other way around.
 
 
 ## Engine Capability Snapshot
+
+Engine support uses capability routing, not equal verification maturity. Unity is the primary verified path.
+Three.js and Godot entries expose only the commands and evidence levels that are actually supported.
+
+| Engine | Public maturity | Notes |
+| --- | --- | --- |
+| Unity | verified | Primary public-beta path for bridge, status, compile/test/run evidence. |
+| Godot | partial | Detection, bridge install, status, and workflow skill projection only; build/run/test stay unsupported. |
+| Three.js | planned | Runtime harness is absent in this repository snapshot. |
 
 | Capability | Unity | Three.js | Godot |
 | --- | --- | --- | --- |
@@ -54,20 +70,14 @@ flowchart LR
             CLI["lux CLI"]
             HTTP["Axum HTTP API<br/>40+ 엔드포인트"]
             WS["WebSocket<br/>이벤트 스트림"]
+            MCP["MCP Server"]
             Tools["도구 실행 계층"]
             Skills["Skill Adapter<br/>20개 스킬"]
         end
 
-        subgraph Dashboard["React 19 대시보드"]
-            Panels["Compile / Test / Log / Skill"]
-            SpecUI["Spec Viewer"]
-            KanbanUI["Kanban Board"]
-            TerminalUI["Terminal / Player"]
-        end
-
         subgraph State[".lux Workspace — SSoT"]
-            Spec["spec.json"]
-            Domains["9 Domain Markdown Specs"]
+            Spec[".lux/specs/spec.json"]
+            Domains["Canonical Game Domain Markdown Specs"]
             Tickets["Tickets / Kanban"]
             Events["Event Logs / Sessions"]
             Builds["Builds / Verification"]
@@ -88,11 +98,11 @@ flowchart LR
     Claude -->|"CLI / 쉘"| CLI
     Codex -->|"CLI / HTTP"| CLI
     Other -->|"HTTP / WS"| HTTP
+    Other -->|"MCP"| MCP
 
     CLI --> HTTP
+    MCP --> Tools
     HTTP --> Tools
-    Dashboard -->|"REST"| HTTP
-    Dashboard -->|"WS"| WS
 
     Tools --> State
     Skills --> Tools
@@ -108,7 +118,6 @@ flowchart LR
     Editor --> Bridge
     Bridge -->|"events/context/results"| Tools
     Tools -->|"broadcast"| WS
-    WS --> Dashboard
 ```
 
 ### 통신 흐름
@@ -143,17 +152,18 @@ LUX는 다음 관측 단위를 표준 컨텍스트로 잠급니다:
 | Console and compile logs | 코드 변경 후 실패 원인을 증거로 연결 |
 | PlayMode and input trace | 실행 상태, 입력 재현, 런타임 루프 검증 |
 | Screenshot / vision evidence | 텍스트 컨텍스트로 설명되지 않는 시각 결과를 보조 증거로 연결 |
+| Ticket / run / capability links | 관측 결과를 `.lux/specs`, 실행 티켓, run evidence, 엔진 capability 상태에 연결 |
 
-이 계층의 목표는 단순한 자동 클릭이나 원격 제어가 아니라, **AI가 게임 상태를 읽고 변경하고 검증할 수 있는 관측 표준**을 제공하는 것입니다. 스크린샷과 비전 피드백은 중요하지만, 먼저 좌표·컴포넌트·로그·씬 상태가 텍스트/JSON으로 재현 가능해야 합니다.
+이 계층의 목표는 단순한 자동 클릭이나 원격 제어가 아니라, **AI가 게임 상태를 읽고 변경하고 검증할 수 있는 관측 표준**을 제공하는 것입니다. CLI, HTTP/WebSocket, MCP 표면은 ambiguity, decisions, capabilities, next goal, evidence status를 `.lux/` 런타임 상태에서 읽어 evidence-gated 상태로 노출하며, 스크린샷과 비전 피드백은 먼저 좌표·컴포넌트·로그·씬 상태가 텍스트/JSON으로 재현 가능할 때 보조 증거가 됩니다.
 
 ### 1. AI 어시스턴트 통합
 
 | 기능 | 설명 |
 |------|------|
-| **HTTP/WS API** | 40+ 엔드포인트를 통해 AI 어시스턴트가 Unity를 제어. Claude Code, OpenCode, Codex 등과 연동 |
-| **멀티 AI 지원** | OpenCode(권장), Claude Code, Codex 동시 사용 가능 |
+| **HTTP/WS API** | 40+ 엔드포인트를 통해 AI 어시스턴트가 Unity 상태와 `.lux/` 증거를 조회/요청 |
+| **MCP 표면** | `lux mcp`가 JSON-RPC stdio 클라이언트에 bounded game-development loop와 bridge/game tools를 노출 |
 | **이벤트 브로드캐스트** | WebSocket(`/events`)으로 실시간 JSONL 이벤트 스트리밍 |
-| **OpenCode 플러그인** | 세션 상태 토스트, 컨텍스트 주입, 스톱폴러/스태그네이션 감지 |
+| **워크플로우 스킬** | `Skills/skills/`의 manifest-backed skill을 CLI/API와 target-project projection으로 사용 |
 
 ### 2. Unity Editor 제어 — CLI/API 도구
 
@@ -205,7 +215,6 @@ lux bridge install -p ./MyProject   # Unity 프로젝트에 브릿지 설치
 lux serve                   # HTTP/WS 게이트웨이 서버 시작
 lux serve --port 17340     # 커스텀 포트
 lux serve --idle-timeout 30 # 30분 유휴 시 자동 종료
-lux gui                     # 데스크탑 대시보드 실행 (브라우저 열기)
 
 # Unity 작업
 lux unity status           # Unity 프로젝트 상태 확인
@@ -222,7 +231,7 @@ lux unity install-uloop    # uloop(Unity CLI passthrough) 설치 (ralph/start-wo
 
 # Spec & 계획
 lux spec                   # Spec 상태 보기
-lux spec edit design       # 도메인 Spec을 $EDITOR로 편집
+lux spec edit gdd          # 도메인 Spec을 $EDITOR로 편집
 lux spec validate          # spec.json 유효성 검사
 lux roadmap status         # 로드맵 상태 보기
 lux kanban                 # 칸반 보드 표시
@@ -259,29 +268,9 @@ lux status                 # 서버 및 프로젝트 상태
 lux schema                 # 이벤트 스키마 예시 표시
 lux completion zsh         # 쉘 자동완성 생성
 
-# 대화형 TUI
-lux tui                    # 대화형 터미널 UI 실행
 ```
 
-### 4. 웹 대시보드 (React 19 SPA)
-
-| 패널 | 상태 | 설명 |
-|------|------|------|
-| **Dashboard** | ✅ | 개요, 루프 상태, 퀵 액션 |
-| **Compile** | ✅ | 배치 컴파일 실행 및 결과 |
-| **Test** | ✅ | EditMode/PlayMode 테스트 실행 |
-| **AI Log** | ✅ | 시스템/AI 로그 조회 (필터/검색/자동스크롤) |
-| **Skill** | ✅ | 설치된 스킬 탐색/검색/로드 |
-| **Project** | ✅ | Unity 프로젝트 상태 및 컨텍스트 |
-| **Build** | ✅ | WebGL 빌드 큐 및 로그 |
-| **Kanban** | ✅ | 티켓 칸반 보드 |
-| **Terminal** | ✅ | 웹 기반 터미널 세션 |
-| **Play** | ✅ | WebGL 플레이어 |
-| **Loop Control** | ✅ | Lux 루프 제어 |
-| **Progress** | ✅ | 진행 차트 |
-| **Workbench** | ✅ | Spec 뷰어 |
-
-### 5. 이벤트 시스템
+### 4. 이벤트 시스템
 
 WebSocket(`/events`)을 통해 실시간 구조화 이벤트:
 
@@ -290,7 +279,7 @@ WebSocket(`/events`)을 통해 실시간 구조화 이벤트:
   "schema_version": 1,
   "event_id": "uuid",
   "category": "tool|playmode|scene|log|input|screenshot|hierarchy",
-  "source": "unity-editor|cli|web-dashboard",
+  "source": "unity-editor|cli",
   "session_id": "session-uuid",
   "captured_at_utc": "2026-04-30T00:00:00.000Z",
   "payload": { }
@@ -299,23 +288,27 @@ WebSocket(`/events`)을 통해 실시간 구조화 이벤트:
 
 카테고리: `playmode`, `scene`, `log`, `tool`, `input`, `screenshot`, `hierarchy`
 
-### 6. 9-도메인 Spec 시스템
+### 5. `.lux/specs` 게임 Spec 시스템
 
-프로젝트는 9개 도메인의 표준 spec(`spec.json`)을 사용합니다:
+게임 GDD와 도메인 의도는 `.lux/specs/` 아래에 저장되며, README와 `docs/`는 그 상태를 설명하는 repository docs projection입니다. 실제 게임 요구사항 변경은 `.lux/specs/spec.json`, `.lux/specs/gdd.md`, `.lux/specs/domains/*.md`, `.lux/specs/decisions.jsonl` write path를 통해 기록되어야 합니다.
 
 | 도메인 | 목적 |
 |--------|------|
-| `design` | 게임 디자인 스펙 |
-| `architecture` | 시스템 아키텍처 |
+| `gdd` | 게임 의도와 플레이어 약속 |
+| `mechanics` | 핵심 규칙과 상호작용 |
+| `controls` | 입력, 조작, 접근성 |
+| `camera` | 시점, 추적, 화면 좌표 |
+| `levels` | 레벨 구조와 진행 |
 | `art-style` | 비주얼 아트 디렉션 |
 | `audio` | 오디오 디자인 |
 | `narrative` | 스토리 및 대화 |
-| `levels` | 레벨 디자인 |
 | `ui-ux` | UI/UX 스펙 |
-| `packages` | 패키지/의존성 관리 |
-| `testing` | 테스팅 전략 |
+| `technical-architecture` | 시스템 아키텍처 |
+| `engine` | Unity/Godot/Three.js capability routing |
+| `testing` | 테스트와 수동 QA 전략 |
+| `build-release` | 빌드, 릴리스, 배포 |
 
-각 도메인은 모호도 점수(ambiguity score), 완성도 비율, 목표, 요구사항, 수락 기준을 추적합니다.
+각 도메인은 ambiguity score, 결정 이력, 목표, 요구사항, 수락 기준, evidence status를 추적합니다. CLI/API/MCP와 문서가 보여주는 값은 evidence-gated projection이며, full autonomous completion이나 모든 엔진 검증 완료를 의미하지 않습니다.
 
 ---
 
@@ -440,30 +433,29 @@ Lux/
 │   │   ├── lux_*.rs                # Lux 코어 모듈 (spec, ticket, build, loop, 등)
 │   │   ├── uloop_*.rs              # Unity CLI passthrough
 │   │   ├── skill_adapter/          # 스킬 로딩, 어댑테이션
-│   │   ├── templates/              # OpenCode 플러그인 템플릿
+│   │   ├── templates/              # gateway-managed agent/MCP templates
 │   │   └── lib.rs                  # 라이브러리 익스포트
-│   ├── ui-src/                     # React 19 SPA 대시보드
 │   ├── tests/                      # 통합 테스트
-│   ├── ui/                         # 빌드 산출물, 정적 리소스
 │   ├── build.rs
 │   ├── update-manifest.json
 │   └── Cargo.toml                  # Rust 의존성
+│
+├── crates/                         # gateway에서 분리한 Rust core package
+│   ├── lux-core/
+│   ├── lux-ai-core/
+│   ├── lux-bridge-core/
+│   ├── lux-project/
+│   ├── lux-run-core/
+│   ├── lux-spec-core/
+│   └── lux-verification-core/
 │
 ├── bridge/                         # 엔진 브릿지 어댑터
 │   ├── unity/                      # Unity C# 브릿지
 │   ├── godot/                      # Godot 브릿지
 │   └── threejs/                    # Three.js 브릿지
 │
-├── adapters/                       # AI 툴 어댑터 (소스)
-│   ├── opencode/                   # OpenCode 어댑터 (검증됨, adapters/opencode)
-│   │   └── lux-plugin.ts           # 세션 토스트, 컨텍스트 주입
-│   ├── codex/                      # OpenAI Codex (스캐폴드)
-│   ├── claude/                     # Claude Code (스캐폴드)
-│   ├── pi-agent/                   # Pi-Agent (스캐폴드)
-│   └── README.md
-│
-├── Skills/                         # 스킬 federation 소스
-│   ├── skills/                     # 31개 curated skill source (Skills/skills)
+├── Skills/                         # 스킬 source tree
+│   ├── skills/                     # 46 total SKILL.md files, 20 manifest-backed built-in skills
 │   │   ├── game-dev/
 │   │   ├── lux-unity/
 │   │   ├── unity-cs-reference/
@@ -496,7 +488,7 @@ Lux/
 ## 로드맵
 
 > [!IMPORTANT]
-> LUX 제품 로드맵/마일스톤 상태의 정식 상태(SSoT)는 `.lux/roadmap.json` 파일에서 관리됩니다. 사용자/게임 요구사항, 실행 티켓, 활성 실행 상태는 각각 ADR-003의 도메인 파일(`.lux/spec.json`, `.lux/tickets/*.json`, `.lux/run-state.json`)이 정식 소스입니다. 본 문서는 가독성을 위한 투영(Projection)입니다. 마일스톤 푸시(Milestone Push)는 **T3 Unity 검증**(배치 모드 컴파일 600초 + 씬 스모크 300초)을 통과해야 하며, Unity 환경을 사용할 수 없는 경우 푸시가 차단됩니다.
+> LUX 제품 로드맵/마일스톤 상태의 정식 상태(SSoT)는 `.lux/roadmap.json` 파일에서 관리됩니다. 사용자/게임 요구사항, 실행 티켓, 활성 실행 상태는 각각 ADR-003의 도메인 파일(`.lux/specs/spec.json`, `.lux/specs/domains/*.md`, `.lux/tickets/*.json`, `.lux/run-state.json`)이 정식 소스입니다. 본 문서는 가독성을 위한 투영(Projection)입니다. 마일스톤 푸시(Milestone Push)는 **T3 Unity 검증**(배치 모드 컴파일 600초 + 씬 스모크 300초)을 통과해야 하며, Unity 환경을 사용할 수 없는 경우 푸시가 차단됩니다.
 
 > [!WARNING]
 > 레거시 `.lux/continuation-state.json`은 더 이상 사용되지 않으며(Deprecated), 새로운 버전의 게이트웨이 실행 시 자동으로 마이그레이션됩니다.
@@ -505,9 +497,9 @@ Lux/
 |-------|------|------|------|
 | **A** | Core Gateway & CLI | ✅ 완료 | Rust Gateway, CLI, 브릿지 어댑터 통합 |
 | **B** | AI Event System | ✅ 완료 | 이벤트 로깅, JSONL, 세션 API |
-| **C** | Local Web Dashboard | ✅ 완료 | React SPA 대시보드 (16개 패널) |
-| **D** | Multi-AI Skill Dispatch | 🏗️ 스캐폴드 | Claude/Codex/OpenCode 통합 스킬 디스패치 |
-| **E** | OpenCode Native Integration | ✅ 기능 완료 | HTTP/WS API, 자동 등록, 플러그인 |
+| **C** | Server and MCP Control Plane | ✅ 완료 | Rust CLI, HTTP/WS API, MCP 서버 |
+| **D** | Agent Workflow Skill Projection | 부분 구현 | `Skills/skills/` manifest inventory와 target-project skill 설치 |
+| **E** | Ticket-driven Agent Execution | 계획/스캐폴드 | legacy adapter root 없이 gateway/MCP evidence path를 통해 진행 |
 
 ### 향후 마일스톤
 
@@ -516,7 +508,7 @@ Lux/
 | **M1** | Game Context Schema & Defaults — GDD/spec, 도메인, 씬/좌표/UI/카메라 관측 단위 표준화 |
 | **M2** | 모호도 수렴 & 소크라테스 루프 (≤ 0.02) |
 | **M3** | 실행 등급 티켓 스키마 |
-| **M4** | 티켓 기반 OpenCode Hook 실행기 + 엔진 상태 컨텍스트 주입 |
+| **M4** | 티켓 기반 agent execution + 엔진 상태 컨텍스트 주입 |
 | **M5** | 블로커 자동 해결 그래프 |
 | **M6 / Autonomous** | Spec → Ticket → OpenCode → 엔진 관측/검증 완전 자율 파이프라인 (계획됨) |
 
@@ -536,7 +528,6 @@ Lux/
 
 - **Unity 6000.0+** (Unity 6.x)
 - **Rust toolchain** (`rustup` + `cargo`)
-- **Node.js 22+** (웹 UI 개발 시)
 - **macOS** (Unity 브릿지 통합에 필요)
 
 ### 설치
@@ -561,8 +552,8 @@ lux init
 
 # 자동 수행:
 # - .lux/ 디렉토리 생성 (SSoT)
-# - adapters/opencode/lux-plugin.ts를 .opencode/plugins/lux-plugin.ts로 설치
-# - OpenCode에서 lux_* 도구 사용 가능
+# - MCP/HTTP/WS 게이트웨이에서 사용할 spec, roadmap, engine capability 상태 생성
+# - Lux workflow skills 설치 준비
 ```
 
 ### 실행
@@ -570,12 +561,6 @@ lux init
 ```bash
 # 게이트웨이 서버 시작
 lux serve
-
-# 대화형 TUI 실행
-lux tui
-
-# 웹 대시보드 열기
-lux gui
 
 # Unity 상태 확인
 lux unity status
@@ -608,10 +593,8 @@ lux unity status
 
 ```bash
 # Rust
-cd gateway && cargo build && cargo test
-
-# TypeScript
-cd gateway/ui-src && npx tsc --noEmit
+cargo build --workspace
+cargo test --workspace
 
 # CLI 도움말
 cd gateway && cargo run -- bridge install --help

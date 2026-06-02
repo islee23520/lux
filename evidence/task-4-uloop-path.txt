@@ -1,5 +1,0 @@
-23:pub const BUNDLED_MANIFEST_PATH: &str = "gateway/assets/uloop-manifest.json";
-210:                format!("failed to parse bundled uloop manifest at {BUNDLED_MANIFEST_PATH}")
-218:    use super::{UloopManifest, BUNDLED_MANIFEST_JSON, BUNDLED_MANIFEST_PATH};
-223:        assert_eq!(BUNDLED_MANIFEST_PATH, "gateway/assets/uloop-manifest.json");
-manifest parses

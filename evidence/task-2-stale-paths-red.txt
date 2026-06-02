@@ -1,2 +1,0 @@
-README.md:474:├── seeds/                      # YAML 시드 데이터 & 패치 (120+ 항목)
-red-exit=0

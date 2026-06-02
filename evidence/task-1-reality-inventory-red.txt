@@ -1,5 +1,0 @@
-040000 tree cf95715817b8802dc00663144d252772ce618fb2	Skills
-160000 commit 9ec5b65832882e68a0dc7bb305209348363fb2b7	bridge
--9ec5b65832882e68a0dc7bb305209348363fb2b7 bridge
-16:| OpenCode prompt injection | `gateway/src/templates/plugin/` includes `continuation-injector.ts`, `prompt-builder.ts`, and `next-action-generator.ts`; `adapters/opencode/lux-plugin.ts` integrates prompt/context injection. | Ticket-driven OpenCode hook execution until milestone. | Prompt injection is scaffolded and template-backed; ticket-driven execution provenance is not complete. | High | Guardrail remains: prompt injection without ticket provenance is not completion evidence. |
-68:- `seeds/` directory does not exist in the current codebase reality used for this lock.

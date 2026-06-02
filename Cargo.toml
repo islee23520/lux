@@ -1,5 +1,12 @@
 [workspace]
 members = [
+  "crates/lux-ai-core",
+  "crates/lux-bridge-core",
+  "crates/lux-core",
+  "crates/lux-project",
+  "crates/lux-run-core",
+  "crates/lux-spec-core",
+  "crates/lux-verification-core",
   "gateway",
 ]
 resolver = "2"

@@ -1,2 +1,0 @@
-FAIL: skills-root - /Users/ilseoblee/workspace/linalab/Lux/Skills/.claude/skills does not exist
-exit=1

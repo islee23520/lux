@@ -1,23 +1,24 @@
 # Lux Spec Orchestrator
 
-OpenCode plugin for spec-driven Unity game development orchestration.
+Legacy OpenCode template bundle for spec-driven Unity game development orchestration.
 
 ## What It Does
 
 - Monitors OpenCode session idle events
-- Evaluates current project state against `.lux/spec.json`
+- Evaluates current project state against canonical `.lux/specs/spec.json`
+- Uses `.lux/spec.json` only as a legacy compatibility fallback
 - Injects continuation messages to keep development aligned with specs
 - Auto-manages project glossary
 
 ## Installation
 
-This legacy template bundle is not the default OpenCode runtime install target. The verified source adapter is `adapters/opencode/lux-plugin.ts`, installed by Lux into `.opencode/plugins/lux-plugin.ts`.
+This legacy template bundle is not the default runtime integration target. The server/MCP gateway is the supported control surface.
 
 ## Configuration
 
 Default configuration:
 - `maxContinuations`: 50 (per-session continuation limit)
-- `specPath`: `.lux/spec.json`
+- `specPath`: `.lux/specs/spec.json`
 - `glossaryPath`: `.lux/glossary.md`
 
 > [!NOTE]

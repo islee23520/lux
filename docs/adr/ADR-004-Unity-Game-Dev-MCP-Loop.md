@@ -11,7 +11,8 @@ evidence, update `.lux`, and stop.
 
 The repository already separates durable state under `.lux/`:
 
-- `.lux/spec.json` for project/game requirements.
+- `.lux/specs/spec.json` for project/game requirements.
+- `.lux/spec.json` as a compatibility mirror / legacy read fallback.
 - `.lux/tickets/*.json` for execution tasks.
 - `.lux/run-state.json` for active run lifecycle.
 - `.lux/roadmap.json` for Lux product roadmap state.

@@ -68,12 +68,18 @@ fn make_domain(name: &str) -> DomainSpec {
 }
 
 fn make_spec_complete(spec: &mut SpecProject) {
-    spec.domains.design = Some(make_domain("design"));
-    spec.domains.architecture = Some(make_domain("architecture"));
+    spec.domains.gdd = Some(make_domain("gdd"));
+    spec.domains.mechanics = Some(make_domain("mechanics"));
+    spec.domains.controls = Some(make_domain("controls"));
+    spec.domains.camera = Some(make_domain("camera"));
     spec.domains.art_style = Some(make_domain("art_style"));
     spec.domains.audio = Some(make_domain("audio"));
     spec.domains.narrative = Some(make_domain("narrative"));
     spec.domains.levels = Some(make_domain("levels"));
+    spec.domains.technical_architecture = Some(make_domain("technical_architecture"));
+    spec.domains.engine = Some(make_domain("engine"));
+    spec.domains.testing = Some(make_domain("testing"));
+    spec.domains.build_release = Some(make_domain("build_release"));
     spec.domains.ui_ux = Some(make_domain("ui_ux"));
     spec.schell_evaluation.phase1_experience.status = PillarStatus::Strong;
     spec.schell_evaluation.phase2_tetrad.mechanics.status = PillarStatus::Strong;
@@ -88,12 +94,18 @@ fn make_spec_complete(spec: &mut SpecProject) {
 
 fn create_domain_files(project_path: &Path) {
     for name in [
-        "design",
-        "architecture",
+        "gdd",
+        "mechanics",
+        "controls",
+        "camera",
         "art_style",
         "audio",
         "narrative",
         "levels",
+        "technical_architecture",
+        "engine",
+        "testing",
+        "build_release",
         "ui_ux",
     ] {
         let path = project_path.join(format!(".lux/domains/{name}.md"));
@@ -396,7 +408,7 @@ fn lux_verification_check_spec_completeness_passes_with_valid_spec() {
 fn lux_verification_check_spec_completeness_fails_with_missing_fields() {
     let project = TestProject::new("missing-fields");
     let mut spec = project.init_with_complete_spec();
-    spec.domains.design.as_mut().unwrap().fields.clear();
+    spec.domains.gdd.as_mut().unwrap().fields.clear();
 
     let check = check_spec_completeness(Some(&spec));
 
@@ -405,7 +417,7 @@ fn lux_verification_check_spec_completeness_fails_with_missing_fields() {
     assert!(detail(&check, "required_missing")
         .as_array()
         .unwrap()
-        .contains(&json!("design")));
+        .contains(&json!("gdd")));
 }
 
 #[test]
@@ -449,7 +461,7 @@ fn lux_verification_check_implementation_exists_fails_with_missing_files() {
     assert!(!check.passed);
     assert_eq!(check.score, 0.0);
     assert!(check.message.contains("Missing implementation evidence"));
-    assert_eq!(detail(&check, "domains").as_array().unwrap().len(), 7);
+    assert_eq!(detail(&check, "domains").as_array().unwrap().len(), 13);
 }
 
 #[test]

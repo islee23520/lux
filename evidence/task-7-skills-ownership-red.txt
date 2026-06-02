@@ -1,4 +1,0 @@
-040000 tree cf95715817b8802dc00663144d252772ce618fb2	Skills
-submodule.Skills.path Skills
-submodule.Skills.url https://github.com/islee23520/lux-skills-repos.git
-skills-submodule-exit=0

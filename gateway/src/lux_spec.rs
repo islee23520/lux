@@ -12,12 +12,54 @@ use uuid::Uuid;
 use crate::lux_ambiguity::{self, TargetedQuestion};
 use crate::lux_roadmap;
 use crate::project::{self, UnityProjectDetection};
+pub use lux_spec_core::SpecStatus;
 
 #[path = "lux_specs.rs"]
 mod lux_specs;
 
 pub const SUPPORTED_SPEC_MAJOR_VERSION: &str = "1";
 pub const SUPPORTED_SPEC_SCHEMA_MAJOR_VERSION: &str = "2";
+
+fn specs_root(project_path: &Path) -> PathBuf {
+    project_path.join(".lux/specs")
+}
+
+fn canonical_domains_root(project_path: &Path) -> PathBuf {
+    specs_root(project_path).join("domains")
+}
+
+fn canonical_spec_path(project_path: &Path) -> PathBuf {
+    specs_root(project_path).join("spec.json")
+}
+
+fn legacy_spec_path(project_path: &Path) -> PathBuf {
+    project_path.join(".lux/spec.json")
+}
+
+fn legacy_domains_root(project_path: &Path) -> PathBuf {
+    project_path.join(".lux/domains")
+}
+
+fn canonical_domain_path(project_path: &Path, domain: &str) -> PathBuf {
+    canonical_domains_root(project_path).join(format!("{}.md", canonical_domain_file_stem(domain)))
+}
+
+fn legacy_domain_path(project_path: &Path, domain: &str) -> PathBuf {
+    legacy_domains_root(project_path).join(format!("{}.md", legacy_domain_file_stem(domain)))
+}
+
+fn atomic_write_text(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let tmp_path = path.with_extension("md.tmp");
+    fs::write(&tmp_path, content)
+        .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("failed to atomically replace {}", path.display()))
+}
 
 fn default_schema_version() -> String {
     "2.0".to_string()
@@ -124,7 +166,7 @@ pub fn lux_init_interactive(
     io: &mut dyn SpecQuestionIo,
     options: LuxInitInteractiveOptions,
 ) -> Result<PathBuf> {
-    let existing_spec = project_path.join(".lux/spec.json").is_file();
+    let existing_spec = canonical_spec_path(project_path).is_file();
     let lux_path = lux_init(project_path)?;
     let mut spec = lux_load(project_path)?;
 
@@ -201,19 +243,13 @@ pub fn lux_init_interactive(
 }
 
 fn count_defined_domains(spec: &SpecProject) -> usize {
-    let built_in_count = [
-        spec.domains.design.as_ref(),
-        spec.domains.architecture.as_ref(),
-        spec.domains.art_style.as_ref(),
-        spec.domains.audio.as_ref(),
-        spec.domains.narrative.as_ref(),
-        spec.domains.levels.as_ref(),
-        spec.domains.ui_ux.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|domain| domain.defined)
-    .count();
+    let built_in_count = spec
+        .domains
+        .built_in_domains()
+        .into_iter()
+        .flatten()
+        .filter(|domain| domain.defined)
+        .count();
 
     built_in_count
         + spec
@@ -483,21 +519,22 @@ impl SpecProject {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SpecStatus {
-    Draft,
-    Active,
-    Deprecated,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpecDomains {
     pub design: Option<DomainSpec>,
     pub architecture: Option<DomainSpec>,
+    pub gdd: Option<DomainSpec>,
+    pub mechanics: Option<DomainSpec>,
+    pub controls: Option<DomainSpec>,
+    pub camera: Option<DomainSpec>,
     pub art_style: Option<DomainSpec>,
     pub audio: Option<DomainSpec>,
     pub narrative: Option<DomainSpec>,
     pub levels: Option<DomainSpec>,
+    pub technical_architecture: Option<DomainSpec>,
+    pub engine: Option<DomainSpec>,
+    pub testing: Option<DomainSpec>,
+    pub build_release: Option<DomainSpec>,
     pub ui_ux: Option<DomainSpec>,
     pub custom: HashMap<String, DomainSpec>,
 }
@@ -507,10 +544,18 @@ impl Default for SpecDomains {
         Self {
             design: None,
             architecture: None,
+            gdd: None,
+            mechanics: None,
+            controls: None,
+            camera: None,
             art_style: None,
             audio: None,
             narrative: None,
             levels: None,
+            technical_architecture: None,
+            engine: None,
+            testing: None,
+            build_release: None,
             ui_ux: None,
             custom: HashMap::new(),
         }
@@ -518,18 +563,28 @@ impl Default for SpecDomains {
 }
 
 impl SpecDomains {
-    pub fn validate(&self) -> Result<(), String> {
-        let built_in = [
+    pub fn built_in_domains(&self) -> [Option<&DomainSpec>; 15] {
+        [
             self.design.as_ref(),
             self.architecture.as_ref(),
+            self.gdd.as_ref(),
+            self.mechanics.as_ref(),
+            self.controls.as_ref(),
+            self.camera.as_ref(),
             self.art_style.as_ref(),
             self.audio.as_ref(),
             self.narrative.as_ref(),
             self.levels.as_ref(),
+            self.technical_architecture.as_ref(),
+            self.engine.as_ref(),
+            self.testing.as_ref(),
+            self.build_release.as_ref(),
             self.ui_ux.as_ref(),
-        ];
+        ]
+    }
 
-        for domain in built_in.into_iter().flatten() {
+    pub fn validate(&self) -> Result<(), String> {
+        for domain in self.built_in_domains().into_iter().flatten() {
             domain.validate()?;
         }
 
@@ -1269,10 +1324,11 @@ fn clamp_score(value: f64) -> f64 {
 
 pub fn lux_init(project_path: &Path) -> Result<PathBuf> {
     let lux_path = project_path.join(".lux");
-    let spec_path = lux_path.join("spec.json");
+    let canonical_path = canonical_spec_path(project_path);
+    let spec_path = legacy_spec_path(project_path);
     let domains_path = ensure_lux_directories(project_path)?;
 
-    if !spec_path.exists() {
+    if !canonical_path.exists() {
         let now = Utc::now().to_rfc3339();
         let mut spec: SpecProject = serde_json::from_str(&get_default_spec_json()?)
             .context("failed to parse default spec template")?;
@@ -1285,9 +1341,18 @@ pub fn lux_init(project_path: &Path) -> Result<PathBuf> {
         spec.created_at = now.clone();
         spec.updated_at = now;
 
-        let spec_json = serde_json::to_string_pretty(&spec).context("failed to serialize spec")?;
-        fs::write(&spec_path, spec_json)
-            .with_context(|| format!("failed to write {}", spec_path.display()))?;
+        crate::lux_io::atomic_write_json(&canonical_path, &spec)
+            .with_context(|| format!("failed to write {}", canonical_path.display()))?;
+    }
+
+    if !spec_path.exists() {
+        fs::copy(&canonical_path, &spec_path).with_context(|| {
+            format!(
+                "failed to mirror {} to {}",
+                canonical_path.display(),
+                spec_path.display()
+            )
+        })?;
     }
 
     lux_roadmap::init_or_load(project_path)?;
@@ -1367,14 +1432,18 @@ pub fn lux_reinit(project_path: &Path) -> Result<PathBuf> {
 }
 
 pub fn lux_load_or_init(project_path: &Path) -> Result<SpecProject> {
-    if !project_path.join(".lux/spec.json").is_file() {
+    if !canonical_spec_path(project_path).is_file() && !legacy_spec_path(project_path).is_file() {
         lux_init(project_path)?;
     }
     lux_load(project_path)
 }
 
 pub fn lux_load(project_path: &Path) -> Result<SpecProject> {
-    let spec_path = project_path.join(".lux/spec.json");
+    let spec_path = if canonical_spec_path(project_path).is_file() {
+        canonical_spec_path(project_path)
+    } else {
+        legacy_spec_path(project_path)
+    };
     let content = fs::read_to_string(&spec_path)
         .with_context(|| format!("failed to read {}", spec_path.display()))?;
 
@@ -1398,6 +1467,8 @@ pub fn lux_load(project_path: &Path) -> Result<SpecProject> {
                 spec_path.display()
             )
         })?;
+    let mut spec = spec;
+    sync_legacy_domain_aliases(&mut spec);
 
     spec.validate()
         .map_err(|error| anyhow::anyhow!("Validation error: {error}"))?;
@@ -1437,14 +1508,39 @@ fn normalize_spec_value(value: &mut Value) -> bool {
     }
 
     if let Some(domains) = object.get_mut("domains") {
+        repaired |= migrate_legacy_domain_alias(domains, "design", "gdd", "gdd", "gdd.md");
+        repaired |= migrate_legacy_domain_alias(
+            domains,
+            "architecture",
+            "technical_architecture",
+            "technical-architecture",
+            "technical-architecture.md",
+        );
+        repaired |= migrate_legacy_domain_alias(
+            domains,
+            "art_style",
+            "art_style",
+            "art_style",
+            "art-style.md",
+        );
+        repaired |= migrate_legacy_domain_alias(domains, "ui_ux", "ui_ux", "ui_ux", "ui-ux.md");
+
         let kind_map: HashMap<&str, &str> = [
-            ("design", "Experience"),
-            ("architecture", "Technology"),
+            ("gdd", "Production"),
+            ("mechanics", "Mechanics"),
+            ("controls", "Experience"),
+            ("camera", "Experience"),
+            ("levels", "Content"),
             ("art_style", "Content"),
             ("audio", "Content"),
             ("narrative", "Content"),
-            ("levels", "Content"),
             ("ui_ux", "Experience"),
+            ("technical_architecture", "Technology"),
+            ("engine", "Technology"),
+            ("testing", "Quality"),
+            ("build_release", "Production"),
+            ("design", "Experience"),
+            ("architecture", "Technology"),
         ]
         .iter()
         .cloned()
@@ -1502,6 +1598,60 @@ fn normalize_spec_value(value: &mut Value) -> bool {
     }
 
     repaired
+}
+
+fn migrate_legacy_domain_alias(
+    domains: &mut Value,
+    legacy_key: &str,
+    canonical_key: &str,
+    canonical_name: &str,
+    canonical_content_path: &str,
+) -> bool {
+    let Some(domains_object) = domains.as_object_mut() else {
+        return false;
+    };
+
+    let Some(legacy_domain) = domains_object.get(legacy_key).cloned() else {
+        return false;
+    };
+
+    let canonical_missing = domains_object.get(canonical_key).is_none_or(Value::is_null);
+
+    if canonical_missing {
+        let mut migrated_domain = legacy_domain.clone();
+        if let Some(domain_object) = migrated_domain.as_object_mut() {
+            domain_object.insert(
+                "name".to_string(),
+                Value::String(canonical_name.to_string()),
+            );
+            domain_object.insert(
+                "content_path".to_string(),
+                Value::String(canonical_content_path.to_string()),
+            );
+        }
+        domains_object.insert(canonical_key.to_string(), migrated_domain);
+    } else if let Some(canonical_domain) = domains_object.get_mut(canonical_key) {
+        if let (Some(legacy_object), Some(canonical_object)) =
+            (legacy_domain.as_object(), canonical_domain.as_object_mut())
+        {
+            for (key, value) in legacy_object {
+                canonical_object
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            canonical_object
+                .entry("name".to_string())
+                .or_insert_with(|| Value::String(canonical_name.to_string()));
+            canonical_object
+                .entry("content_path".to_string())
+                .or_insert_with(|| Value::String(canonical_content_path.to_string()));
+        }
+    }
+    if legacy_key != canonical_key {
+        domains_object.remove(legacy_key);
+    }
+
+    true
 }
 
 fn repair_struct_array_field<F>(
@@ -1632,6 +1782,20 @@ fn normalize_requirement_object(object: &mut serde_json::Map<String, Value>) -> 
         reasons.push("filled missing text".to_string());
     }
 
+    if let Some(Value::String(priority)) = object.get_mut("priority") {
+        let normalized = match priority.as_str() {
+            "Critical" | "High" => Some("Must"),
+            "Medium" => Some("Should"),
+            "Low" => Some("Could"),
+            "Must" | "Should" | "Could" | "Wont" => None,
+            _ => None,
+        };
+        if let Some(normalized) = normalized {
+            *priority = normalized.to_string();
+            reasons.push("normalized legacy priority".to_string());
+        }
+    }
+
     reasons
 }
 
@@ -1674,7 +1838,8 @@ fn json_value_kind(value: &Value) -> &'static str {
 
 pub fn lux_save(project_path: &Path, spec: &SpecProject) -> Result<()> {
     let lux_path = project_path.join(".lux");
-    let spec_path = lux_path.join("spec.json");
+    let spec_path = canonical_spec_path(project_path);
+    let legacy_path = legacy_spec_path(project_path);
     let backups_path = lux_path.join("backups");
     fs::create_dir_all(&backups_path)
         .with_context(|| format!("failed to create {}", backups_path.display()))?;
@@ -1692,25 +1857,50 @@ pub fn lux_save(project_path: &Path, spec: &SpecProject) -> Result<()> {
     }
 
     let mut updated = spec.clone();
+    sync_legacy_domain_aliases(&mut updated);
     updated.updated_at = Utc::now().to_rfc3339();
-    let spec_json = serde_json::to_string_pretty(&updated).context("failed to serialize spec")?;
-    fs::write(&spec_path, spec_json)
-        .with_context(|| format!("failed to write {}", spec_path.display()))
+    crate::lux_io::atomic_write_json(&spec_path, &updated)
+        .with_context(|| format!("failed to write {}", spec_path.display()))?;
+    crate::lux_io::atomic_write_json(&legacy_path, &updated).with_context(|| {
+        format!(
+            "failed to mirror {} to {}",
+            spec_path.display(),
+            legacy_path.display()
+        )
+    })
 }
 
 pub fn lux_load_domain(project_path: &Path, domain: &str) -> Result<String> {
-    let path = project_path
-        .join(".lux/domains")
-        .join(format!("{domain}.md"));
+    let canonical_path = canonical_domain_path(project_path, domain);
+    let path = if canonical_path.is_file() {
+        canonical_path
+    } else {
+        legacy_domain_path(project_path, domain)
+    };
     fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))
 }
 
 pub fn lux_save_domain(project_path: &Path, domain: &str, content: &str) -> Result<()> {
-    let domains_path = project_path.join(".lux/domains");
-    fs::create_dir_all(&domains_path)
-        .with_context(|| format!("failed to create {}", domains_path.display()))?;
-    let path = domains_path.join(format!("{domain}.md"));
-    fs::write(&path, content).with_context(|| format!("failed to write {}", path.display()))
+    let canonical_path = canonical_domain_path(project_path, domain);
+    let legacy_path = legacy_domain_path(project_path, domain);
+    atomic_write_text(&canonical_path, content)
+        .with_context(|| format!("failed to write {}", canonical_path.display()))?;
+    atomic_write_text(&legacy_path, content)
+        .with_context(|| format!("failed to mirror {}", legacy_path.display()))
+}
+
+fn custom_domain_has_provenance(spec: &SpecProject, domain: &str) -> bool {
+    spec.dialectic.decisions.iter().any(|decision| {
+        decision.domain.as_deref() == Some(domain)
+            && decision
+                .rationale
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+            && decision
+                .source_question
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+    })
 }
 
 pub fn lux_update_domain_field(
@@ -1720,18 +1910,46 @@ pub fn lux_update_domain_field(
     value: Value,
 ) -> Result<SpecProject> {
     let mut spec = lux_load(project_path)?;
-    let normalized = domain.replace('-', "_");
-    let content_path = format!("{}.md", domain.replace('_', "-"));
+    let normalized = canonical_domain_name(domain);
+    let content_path = format!("{}.md", normalized.replace('_', "-"));
+    let is_builtin_domain = matches!(
+        normalized.as_str(),
+        "gdd"
+            | "mechanics"
+            | "controls"
+            | "camera"
+            | "technical_architecture"
+            | "art_style"
+            | "audio"
+            | "narrative"
+            | "levels"
+            | "engine"
+            | "testing"
+            | "build_release"
+            | "ui_ux"
+    );
+    let custom_has_provenance = is_builtin_domain || custom_domain_has_provenance(&spec, domain);
 
     let domain_spec = match normalized.as_str() {
-        "design" => spec
+        "gdd" => spec
             .domains
-            .design
-            .get_or_insert_with(|| DomainSpec::new("design", "design.md", 1.0)),
-        "architecture" => spec
+            .gdd
+            .get_or_insert_with(|| DomainSpec::new("gdd", "gdd.md", 1.0)),
+        "mechanics" => spec
             .domains
-            .architecture
-            .get_or_insert_with(|| DomainSpec::new("architecture", "architecture.md", 1.0)),
+            .mechanics
+            .get_or_insert_with(|| DomainSpec::new("mechanics", "mechanics.md", 1.0)),
+        "controls" => spec
+            .domains
+            .controls
+            .get_or_insert_with(|| DomainSpec::new("controls", "controls.md", 1.0)),
+        "camera" => spec
+            .domains
+            .camera
+            .get_or_insert_with(|| DomainSpec::new("camera", "camera.md", 1.0)),
+        "technical_architecture" => spec.domains.technical_architecture.get_or_insert_with(|| {
+            DomainSpec::new("technical_architecture", "technical-architecture.md", 1.0)
+        }),
         "art_style" => spec
             .domains
             .art_style
@@ -1748,21 +1966,90 @@ pub fn lux_update_domain_field(
             .domains
             .levels
             .get_or_insert_with(|| DomainSpec::new("levels", "levels.md", 1.0)),
+        "engine" => spec
+            .domains
+            .engine
+            .get_or_insert_with(|| DomainSpec::new("engine", "engine.md", 1.0)),
+        "testing" => spec
+            .domains
+            .testing
+            .get_or_insert_with(|| DomainSpec::new("testing", "testing.md", 1.0)),
+        "build_release" => spec
+            .domains
+            .build_release
+            .get_or_insert_with(|| DomainSpec::new("build_release", "build-release.md", 1.0)),
         "ui_ux" => spec
             .domains
             .ui_ux
             .get_or_insert_with(|| DomainSpec::new("ui_ux", "ui-ux.md", 1.0)),
-        _ => spec
-            .domains
-            .custom
-            .entry(domain.to_string())
-            .or_insert_with(|| DomainSpec::new(domain, content_path, 1.0)),
+        _ => {
+            if !custom_has_provenance {
+                bail!(
+                    "custom domain '{domain}' requires a decision-ledger entry with rationale and source_question"
+                );
+            }
+            spec.domains
+                .custom
+                .entry(canonical_domain_file_stem(domain))
+                .or_insert_with(|| DomainSpec::new(domain, content_path, 1.0))
+        }
     };
 
     domain_spec.fields.insert(key.to_string(), value);
     domain_spec.defined = true;
+    sync_legacy_domain_aliases(&mut spec);
     lux_save(project_path, &spec)?;
     lux_load(project_path)
+}
+
+fn sync_legacy_domain_aliases(spec: &mut SpecProject) {
+    if spec.domains.gdd.is_none() {
+        spec.domains.gdd = spec.domains.design.clone();
+    }
+    if spec.domains.design.is_none() {
+        spec.domains.design = spec.domains.gdd.clone();
+    }
+
+    if spec.domains.technical_architecture.is_none() {
+        spec.domains.technical_architecture = spec.domains.architecture.clone();
+    }
+    if spec.domains.architecture.is_none() {
+        spec.domains.architecture = spec.domains.technical_architecture.clone();
+    }
+}
+
+fn canonical_domain_name(domain: &str) -> String {
+    match domain {
+        "design" => "gdd".to_string(),
+        "architecture" => "technical_architecture".to_string(),
+        "packages" => "engine".to_string(),
+        "art-style" => "art_style".to_string(),
+        "build-release" => "build_release".to_string(),
+        "ui-ux" => "ui_ux".to_string(),
+        other => other.replace('-', "_"),
+    }
+}
+
+fn canonical_domain_file_stem(domain: &str) -> String {
+    match canonical_domain_name(domain).as_str() {
+        "art_style" => "art-style".to_string(),
+        "technical_architecture" => "technical-architecture".to_string(),
+        "build_release" => "build-release".to_string(),
+        "ui_ux" => "ui-ux".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn legacy_domain_file_stem(domain: &str) -> String {
+    match domain {
+        "art_style" => "art-style".to_string(),
+        "technical_architecture" | "architecture" => "architecture".to_string(),
+        "engine" | "packages" => "packages".to_string(),
+        "build_release" => "build-release".to_string(),
+        "ui_ux" => "ui-ux".to_string(),
+        "gdd" | "design" => "design".to_string(),
+        other => other.replace('_', "-"),
+    }
 }
 
 pub fn get_default_spec_json() -> Result<String> {
@@ -1774,6 +2061,10 @@ pub fn render_markdown_template(
     vars: &HashMap<String, String>,
 ) -> Result<String> {
     let mut rendered = match template_name {
+        "gdd" | "gdd.md" => include_str!("templates/gdd.md").to_string(),
+        "mechanics" | "mechanics.md" => include_str!("templates/mechanics.md").to_string(),
+        "controls" | "controls.md" => include_str!("templates/controls.md").to_string(),
+        "camera" | "camera.md" => include_str!("templates/camera.md").to_string(),
         "design" | "design.md" => include_str!("templates/design.md").to_string(),
         "architecture" | "architecture.md" => include_str!("templates/architecture.md").to_string(),
         "art-style" | "art_style" | "art-style.md" | "art_style.md" => {
@@ -1785,8 +2076,18 @@ pub fn render_markdown_template(
         "ui-ux" | "ui_ux" | "ui-ux.md" | "ui_ux.md" => {
             include_str!("templates/ui-ux.md").to_string()
         }
-        "packages" | "packages.md" => include_str!("templates/packages.md").to_string(),
+        "technical-architecture"
+        | "technical_architecture"
+        | "technical-architecture.md"
+        | "technical_architecture.md" => {
+            include_str!("templates/technical-architecture.md").to_string()
+        }
+        "engine" | "engine.md" => include_str!("templates/engine.md").to_string(),
         "testing" | "testing.md" => include_str!("templates/testing.md").to_string(),
+        "build-release" | "build_release" | "build-release.md" | "build_release.md" => {
+            include_str!("templates/build-release.md").to_string()
+        }
+        "packages" | "packages.md" => include_str!("templates/engine.md").to_string(),
         _ => bail!("unknown markdown template: {template_name}"),
     };
 
@@ -1797,17 +2098,27 @@ pub fn render_markdown_template(
     Ok(rendered)
 }
 
-fn domain_templates() -> [(&'static str, &'static str); 9] {
+fn domain_templates() -> [(&'static str, &'static str); 16] {
     [
-        ("design", include_str!("templates/design.md")),
-        ("architecture", include_str!("templates/architecture.md")),
+        ("gdd", include_str!("templates/gdd.md")),
+        ("mechanics", include_str!("templates/mechanics.md")),
+        ("controls", include_str!("templates/controls.md")),
+        ("camera", include_str!("templates/camera.md")),
         ("art-style", include_str!("templates/art-style.md")),
         ("audio", include_str!("templates/audio.md")),
         ("narrative", include_str!("templates/narrative.md")),
         ("levels", include_str!("templates/levels.md")),
         ("ui-ux", include_str!("templates/ui-ux.md")),
-        ("packages", include_str!("templates/packages.md")),
+        (
+            "technical-architecture",
+            include_str!("templates/technical-architecture.md"),
+        ),
+        ("engine", include_str!("templates/engine.md")),
         ("testing", include_str!("templates/testing.md")),
+        ("build-release", include_str!("templates/build-release.md")),
+        ("design", include_str!("templates/design.md")),
+        ("architecture", include_str!("templates/architecture.md")),
+        ("packages", include_str!("templates/packages.md")),
     ]
 }
 

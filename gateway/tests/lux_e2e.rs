@@ -85,6 +85,21 @@ fn lux_e2e_phase_2_ai_session_generates_spec() {
         .is_some_and(|domain| domain.defined));
     assert!(spec
         .domains
+        .mechanics
+        .as_ref()
+        .is_some_and(|domain| domain.defined));
+    assert!(spec
+        .domains
+        .controls
+        .as_ref()
+        .is_some_and(|domain| domain.defined));
+    assert!(spec
+        .domains
+        .camera
+        .as_ref()
+        .is_some_and(|domain| domain.defined));
+    assert!(spec
+        .domains
         .art_style
         .as_ref()
         .is_some_and(|domain| domain.defined));
@@ -105,11 +120,16 @@ fn lux_e2e_phase_2_ai_session_generates_spec() {
         .is_some_and(|domain| domain.defined));
     assert!(spec
         .domains
+        .testing
+        .as_ref()
+        .is_some_and(|domain| domain.defined));
+    assert!(spec
+        .domains
         .ui_ux
         .as_ref()
         .is_some_and(|domain| domain.defined));
     assert!(spec.overall_ambiguity < 0.5);
-    assert_eq!(report.domain_scores.len(), 7);
+    assert_eq!(report.domain_scores.len(), 11);
     assert!(report.completion_ratio > 0.9);
 }
 
@@ -123,8 +143,8 @@ fn lux_e2e_phase_3_kanban_tickets_created_from_spec() {
         .list(TicketFilter::default())
         .expect("tickets should list");
 
-    assert_eq!(tickets.len(), 7);
-    assert_eq!(listed.len(), 7);
+    assert_eq!(tickets.len(), 11);
+    assert_eq!(listed.len(), 11);
     assert!(listed
         .iter()
         .all(|ticket| ticket.status == TicketStatus::Backlog));
@@ -138,7 +158,7 @@ fn lux_e2e_phase_3_kanban_tickets_created_from_spec() {
             .read_dir()
             .unwrap()
             .count()
-            >= 7
+            >= 11
     );
 }
 
@@ -240,7 +260,7 @@ fn lux_e2e_full_ouroboros_loop() {
     assert!(spec.overall_ambiguity < 0.5);
 
     let tickets = create_kanban_tickets_from_spec(project.path(), &spec);
-    assert_eq!(tickets.len(), 7);
+    assert_eq!(tickets.len(), 11);
 
     let (manager, build_id, artifact_path) = run_mock_webgl_build(project.path());
     assert_eq!(
@@ -358,6 +378,26 @@ fn complete_spec(project_path: &Path) -> SpecProject {
                 "architecture",
                 &["engine", "platform", "networking", "data_storage"],
             )),
+            mechanics: Some(domain(
+                project_path,
+                "mechanics",
+                &["movement", "combat", "resource", "progression"],
+            )),
+            controls: Some(domain(
+                project_path,
+                "controls",
+                &[
+                    "input_scheme",
+                    "rebinding",
+                    "device_support",
+                    "accessibility",
+                ],
+            )),
+            camera: Some(domain(
+                project_path,
+                "camera",
+                &["perspective", "tracking", "collision", "shake"],
+            )),
             art_style: Some(domain(
                 project_path,
                 "art_style",
@@ -388,12 +428,18 @@ fn complete_spec(project_path: &Path) -> SpecProject {
                 "levels",
                 &["level_count", "difficulty_curve", "level_generation"],
             )),
+            testing: Some(domain(
+                project_path,
+                "testing",
+                &["test_plan", "automation", "acceptance", "regression"],
+            )),
             ui_ux: Some(domain(
                 project_path,
                 "ui_ux",
                 &["hud_layout", "menu_flow", "accessibility", "input_mapping"],
             )),
             custom: HashMap::new(),
+            ..SpecDomains::default()
         },
         dialectic: lux::lux_spec::DialecticState::default(),
         roadmap: lux::lux_spec::RoadmapSpec::default(),
@@ -445,10 +491,14 @@ fn domain_markdown(name: &str) -> String {
     let keywords = match name {
         "design" => "genre mechanic loop player win",
         "architecture" => "engine platform network storage system",
+        "mechanics" => "movement combat resource progression balance",
+        "controls" => "input rebinding device accessibility mapping",
+        "camera" => "perspective tracking collision shake framing",
         "art_style" => "visual color resolution animation style",
         "audio" => "music sfx ambient dynamic sound",
         "narrative" => "story character dialogue world arc",
         "levels" => "level difficulty procedural handcrafted curve",
+        "testing" => "test automation acceptance regression coverage",
         "ui_ux" => "hud menu accessibility input flow",
         _ => "custom",
     };
@@ -504,10 +554,14 @@ fn all_spec_domains(spec: &SpecProject) -> Vec<(&'static str, &DomainSpec)> {
     vec![
         ("design", spec.domains.design.as_ref().unwrap()),
         ("architecture", spec.domains.architecture.as_ref().unwrap()),
+        ("mechanics", spec.domains.mechanics.as_ref().unwrap()),
+        ("controls", spec.domains.controls.as_ref().unwrap()),
+        ("camera", spec.domains.camera.as_ref().unwrap()),
         ("art_style", spec.domains.art_style.as_ref().unwrap()),
         ("audio", spec.domains.audio.as_ref().unwrap()),
         ("narrative", spec.domains.narrative.as_ref().unwrap()),
         ("levels", spec.domains.levels.as_ref().unwrap()),
+        ("testing", spec.domains.testing.as_ref().unwrap()),
         ("ui_ux", spec.domains.ui_ux.as_ref().unwrap()),
     ]
 }

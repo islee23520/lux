@@ -39,3 +39,5 @@ RustGateway~/target/
 [Rr]elease/
 x64/
 x86/
+evidence/
+.tmux-tmp/

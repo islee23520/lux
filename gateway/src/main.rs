@@ -17,6 +17,7 @@ pub mod lux_bridge_lease;
 pub mod lux_build;
 pub mod lux_continuation_state;
 pub mod lux_doctor;
+pub mod lux_engines;
 pub mod lux_event_log;
 pub mod lux_events;
 pub mod lux_hooks;
@@ -25,6 +26,10 @@ pub mod lux_lock;
 pub mod lux_loop;
 pub mod lux_mcp;
 pub mod lux_metrics;
+mod lux_next_goal;
+mod lux_next_goal_evidence;
+mod lux_next_goal_helpers;
+mod lux_next_goal_types;
 pub mod lux_roadmap;
 pub mod lux_run;
 pub mod lux_run_recover;
@@ -63,23 +68,13 @@ use std::{
 use anyhow::{bail, Context};
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{generate, shells::Shell};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use protocol::EventEnvelope;
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
-    Frame, Terminal,
-};
 use serde_json::{json, Value};
 
 use crate::bridge_types::BridgeKind;
+use skill_adapter::discovery::{
+    discover_skills, read_skill_md_preview, read_skill_references, SkillEntry, SkillManifest,
+};
 
 static CONFIG_PATH_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -110,6 +105,7 @@ enum Command {
     Init(LuxInitArgs),
     /// Inspect, edit, and validate Lux game specs
     Spec(LuxSpecArgs),
+    SpecLoop(LuxSpecLoopArgs),
     /// Inspect the canonical .lux roadmap reality file
     Roadmap(LuxRoadmapArgs),
     /// Show Lux kanban board status
@@ -126,8 +122,6 @@ enum Command {
     Run(lux_run::RunArgs),
     /// Run the Lux stdio MCP server
     Mcp(McpArgs),
-    /// Interactive REPL shell
-    Tui(TuiArgs),
     Serve(ServeArgs),
     Unity(UnityArgs),
     /// Inspect and operate Godot project harness support
@@ -144,8 +138,6 @@ enum Command {
     Install(InstallArgs),
     Addon(AddonArgs),
     Config(ConfigArgs),
-    /// Launch the Lux desktop dashboard
-    Gui,
     /// Show server and project status as JSON
     Status(StatusArgs),
     Schema,
@@ -279,18 +271,11 @@ fn parse_bridge_kind(value: &str) -> anyhow::Result<BridgeKind> {
 }
 
 #[derive(Parser, Debug)]
-struct TuiArgs {
-    /// Unity project root used by project-bound TUI actions
-    #[arg(long)]
-    project_path: Option<PathBuf>,
-}
-
-#[derive(Parser, Debug)]
 struct LuxSpecArgs {
     #[command(subcommand)]
     action: Option<LuxSpecAction>,
     /// Unity project root containing the .lux directory
-    #[arg(long)]
+    #[arg(long, global = true)]
     project_path: Option<PathBuf>,
 }
 
@@ -298,7 +283,6 @@ struct LuxSpecArgs {
 enum LuxSpecAction {
     /// Open a domain markdown spec in $EDITOR, or print its path when no editor is set
     Edit(LuxSpecEditArgs),
-    /// Validate .lux/spec.json and report any spec errors
     Validate,
 }
 
@@ -306,6 +290,54 @@ enum LuxSpecAction {
 struct LuxSpecEditArgs {
     /// Domain name, such as design, architecture, art-style, audio, narrative, levels, or ui-ux
     domain: String,
+}
+
+#[derive(Parser, Debug)]
+struct LuxSpecLoopArgs {
+    #[command(subcommand)]
+    action: LuxSpecLoopAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum LuxSpecLoopAction {
+    Start(LuxSpecLoopStartArgs),
+    Status(LuxSpecLoopRunArgs),
+    Answer(LuxSpecLoopAnswerArgs),
+    Approve(LuxSpecLoopProposalArgs),
+    Reject(LuxSpecLoopProposalArgs),
+    Apply(LuxSpecLoopRunArgs),
+}
+
+#[derive(Parser, Debug)]
+struct LuxSpecLoopStartArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    #[arg(long)]
+    max_iterations: Option<u32>,
+}
+
+#[derive(Parser, Debug)]
+struct LuxSpecLoopRunArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    run_id: String,
+}
+
+#[derive(Parser, Debug)]
+struct LuxSpecLoopAnswerArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    run_id: String,
+    question_id: String,
+    answer: String,
+}
+
+#[derive(Parser, Debug)]
+struct LuxSpecLoopProposalArgs {
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    run_id: String,
+    proposal_id: String,
 }
 
 #[derive(Parser, Debug)]
@@ -481,6 +513,7 @@ enum SkillScope {
     Core,
     Project,
     Global,
+    Plugin,
 }
 
 impl SkillScope {
@@ -489,6 +522,7 @@ impl SkillScope {
             SkillScope::Core => "core",
             SkillScope::Project => "project",
             SkillScope::Global => "global",
+            SkillScope::Plugin => "plugin",
         }
     }
 }
@@ -1289,13 +1323,6 @@ async fn main() -> anyhow::Result<()> {
     let config = load_active_config()?;
     let config = config::merge_with_cli(&config, &cli);
 
-    if let Command::Tui(args) = &cli.command {
-        return run_tui(TuiArgs {
-            project_path: args.project_path.clone(),
-        })
-        .await;
-    }
-
     execute_cli_command(cli, &config).await
 }
 
@@ -1303,6 +1330,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
     match cli.command {
         Command::Init(args) => run_lux_init_command(args),
         Command::Spec(args) => run_lux_spec_command(args),
+        Command::SpecLoop(args) => run_lux_spec_loop_command(args),
         Command::Roadmap(args) => run_lux_roadmap_command(args),
         Command::Kanban(args) => run_lux_kanban_command(args),
         Command::Triage(args) => lux_triage::run_triage_command(&args),
@@ -1317,7 +1345,6 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Verify(args) => run_lux_verify_command(args),
         Command::Run(args) => lux_run::run_command(&args),
         Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path.as_deref()),
-        Command::Tui(_) => Ok(()),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Godot(args) => run_lux_godot_command(args),
@@ -1346,7 +1373,6 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Install(args) => run_install_command(args),
         Command::Addon(args) => run_addon_command(args),
         Command::Config(args) => run_config_command(args, &config),
-        Command::Gui => run_gui_command(),
         Command::Status(args) => run_status_command(args, config),
         Command::Schema => {
             println!(
@@ -1365,519 +1391,6 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Doctor(args) => lux_doctor::run_doctor_command(args),
         Command::AgentsInstall(args) => lux_agents_install::run_agents_install_command(args),
         Command::Autonomous(args) => run_autonomous_command(args),
-    }
-}
-
-const TUI_COMMANDS: &[&str] = &[
-    "dashboard",
-    "workbench",
-    "workbench validate",
-    "workbench edit design",
-    "kanban",
-    "progress",
-    "compile",
-    "build webgl",
-    "play host",
-    "bridge install",
-    "tests",
-    "status",
-    "ai-log recent",
-    "ai-log tail",
-    "skills",
-    "sessions timeline",
-    "sessions report",
-    "unity status",
-    "unity context refresh",
-    "unity logs",
-    "unity run status",
-    "screenshot",
-    "serve gui",
-    "gui",
-    "help",
-    "exit",
-    "quit",
-];
-
-async fn run_tui(args: TuiArgs) -> anyhow::Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let result = run_ratatui_loop(&mut terminal, args.project_path).await;
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    result
-}
-
-async fn run_ratatui_loop(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    project_path: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    let mut input = String::new();
-    let mut selected = 0usize;
-    let mut log = vec![
-        "Welcome to Lux TUI".to_string(),
-        "Type a command, press Tab to cycle suggestions, Enter to run.".to_string(),
-        "Commands run on the normal terminal screen, then return here.".to_string(),
-        "Play is hosted through the web build server; games are not embedded in TUI.".to_string(),
-    ];
-
-    loop {
-        terminal.draw(|frame| draw_lux_tui(frame, &input, selected, &log))?;
-
-        if !event::poll(Duration::from_millis(250))? {
-            continue;
-        }
-
-        let Event::Key(KeyEvent {
-            code, modifiers, ..
-        }) = event::read()?
-        else {
-            continue;
-        };
-
-        match (code, modifiers) {
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Esc, _) => break,
-            (KeyCode::Tab, _) | (KeyCode::Down, _) => {
-                selected = (selected + 1) % TUI_COMMANDS.len();
-                input = TUI_COMMANDS[selected].to_string();
-            }
-            (KeyCode::BackTab, _) | (KeyCode::Up, _) => {
-                selected = selected.checked_sub(1).unwrap_or(TUI_COMMANDS.len() - 1);
-                input = TUI_COMMANDS[selected].to_string();
-            }
-            (KeyCode::Enter, _) => {
-                let command = input.trim().to_string();
-                if command.is_empty() {
-                    continue;
-                }
-                if command == "exit" || command == "quit" {
-                    break;
-                }
-                if command == "help" {
-                    log.push("GUI surface: dashboard, workbench, kanban, progress, compile, tests, AI log, skills, sessions, Unity status, web build host.".to_string());
-                    log.push(format!("Available: {}", TUI_COMMANDS.join(", ")));
-                    input.clear();
-                    continue;
-                }
-
-                log.push(format!("$ lux {command}"));
-                terminal.clear()?;
-                disable_raw_mode()?;
-                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                execute_tui_command(&command, project_path.as_ref()).await;
-                println!("\nPress Enter to return to Lux TUI...");
-                let mut wait = String::new();
-                let _ = std::io::stdin().read_line(&mut wait);
-                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                enable_raw_mode()?;
-                log.push("command finished".to_string());
-                input.clear();
-            }
-            (KeyCode::Backspace, _) => {
-                input.pop();
-            }
-            (KeyCode::Char(ch), _) => input.push(ch),
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
-fn draw_lux_tui(frame: &mut Frame<'_>, input: &str, selected: usize, log: &[String]) {
-    let area = frame.area();
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
-
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            "LUX OS",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  recursive game harness  "),
-        Span::styled(
-            env!("CARGO_PKG_VERSION"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]))
-    .block(Block::default().borders(Borders::ALL).title(" Gateway "));
-    frame.render_widget(header, vertical[0]);
-
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(30), Constraint::Min(30)])
-        .split(vertical[1]);
-
-    draw_tui_commands(frame, body[0], selected);
-    draw_tui_log(frame, body[1], log);
-
-    let input_panel = Paragraph::new(format!("lux> {input}"))
-        .style(Style::default().fg(Color::Green))
-        .block(Block::default().borders(Borders::ALL).title(" Command "))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input_panel, vertical[2]);
-
-    let footer = Paragraph::new(
-        "Tab/↑/↓ select · Enter run · Esc/Ctrl-C quit · Commands execute with the normal Lux CLI",
-    )
-    .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, vertical[3]);
-}
-
-fn draw_tui_commands(frame: &mut Frame<'_>, area: Rect, selected: usize) {
-    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
-    let start = if selected >= visible_rows {
-        selected + 1 - visible_rows
-    } else {
-        0
-    };
-    let items = TUI_COMMANDS
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-        .map(|(index, command)| {
-            let style = if index == selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            ListItem::new(*command).style(style)
-        });
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" Commands "));
-    frame.render_widget(list, area);
-}
-
-fn draw_tui_log(frame: &mut Frame<'_>, area: Rect, log: &[String]) {
-    let visible_lines = area.height.saturating_sub(2) as usize;
-    let start = log.len().saturating_sub(visible_lines);
-    let text = log[start..].join("\n");
-    let paragraph = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" Session "))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
-}
-
-async fn execute_tui_command(line: &str, project_path: Option<&PathBuf>) {
-    let Ok(config) = load_active_config() else {
-        eprintln!("\u{1b}[31mfailed to load Lux config\u{1b}[0m");
-        return;
-    };
-    let mut args = split_tui_command(line);
-    if args.is_empty() {
-        return;
-    }
-    args = normalize_tui_command_args(args, project_path);
-
-    let cli_args = std::iter::once("lux".to_string()).chain(args);
-    match Cli::try_parse_from(cli_args) {
-        Ok(cli) => {
-            if matches!(cli.command, Command::Tui(_)) {
-                eprintln!("\u{1b}[31m`tui` cannot be started from inside the REPL\u{1b}[0m");
-                return;
-            }
-            if let Err(err) = execute_cli_command(cli, &config).await {
-                eprintln!("\u{1b}[31m{err}\u{1b}[0m");
-            }
-        }
-        Err(err) => eprintln!("\u{1b}[31m{err}\u{1b}[0m"),
-    }
-}
-
-fn normalize_tui_command_args(
-    mut args: Vec<String>,
-    project_path: Option<&PathBuf>,
-) -> Vec<String> {
-    if args.is_empty() {
-        return args;
-    }
-
-    match args.as_slice() {
-        [command] if command == "dashboard" => args = vec!["status".to_string()],
-        [command] if command == "workbench" => args = vec!["spec".to_string()],
-        [command, action] if command == "workbench" && action == "validate" => {
-            args = vec!["spec".to_string(), "validate".to_string()];
-        }
-        [command, action, domain] if command == "workbench" && action == "edit" => {
-            args = vec!["spec".to_string(), "edit".to_string(), domain.clone()];
-        }
-        [command] if command == "progress" => args = vec!["verify".to_string()],
-        [command] if command == "tests" || command == "test" => {
-            args = vec!["run-tests".to_string()]
-        }
-        [command, target] if command == "build" && target == "webgl" => {
-            args = vec![
-                "build".to_string(),
-                "--target".to_string(),
-                "web-gl".to_string(),
-            ];
-        }
-        [command, action] if command == "play" && action == "host" => {
-            args = vec![
-                "serve".to_string(),
-                "--port".to_string(),
-                "3456".to_string(),
-            ];
-        }
-        [command, action] if command == "serve" && action == "gui" => {
-            args = vec![
-                "serve".to_string(),
-                "--port".to_string(),
-                "3456".to_string(),
-            ];
-        }
-        [command] if command == "skills" => args = vec!["skill".to_string(), "list".to_string()],
-        [command, action] if command == "sessions" && action == "timeline" => {
-            args = vec!["session".to_string(), "timeline".to_string()];
-        }
-        [command, action] if command == "sessions" && action == "report" => {
-            args = vec!["session".to_string(), "report".to_string()];
-        }
-        [command, action] if command == "ai-log" && action == "recent" => {
-            args = vec!["ai-log".to_string(), "recent".to_string()];
-        }
-        [command, action] if command == "ai-log" && action == "tail" => {
-            args = vec!["ai-log".to_string(), "tail".to_string()];
-        }
-        [command, action] if command == "unity" && action == "logs" => {
-            args = vec!["unity".to_string(), "get-logs".to_string()];
-        }
-        [command, action, refresh]
-            if command == "unity" && action == "context" && refresh == "refresh" =>
-        {
-            args = vec![
-                "unity".to_string(),
-                "context".to_string(),
-                "--refresh".to_string(),
-            ];
-        }
-        [command, area, action] if command == "unity" && area == "run" && action == "status" => {
-            args = vec![
-                "unity".to_string(),
-                "control-play-mode".to_string(),
-                "status".to_string(),
-            ];
-        }
-        _ => {}
-    }
-
-    append_tui_project_path(&mut args, project_path);
-    args
-}
-
-fn append_tui_project_path(args: &mut Vec<String>, project_path: Option<&PathBuf>) {
-    let Some(project_path) = project_path else {
-        return;
-    };
-    if args.iter().any(|arg| arg == "--project-path") {
-        return;
-    }
-    if !tui_command_accepts_project_path(args) {
-        return;
-    }
-    args.push("--project-path".to_string());
-    args.push(project_path.display().to_string());
-}
-
-fn tui_command_accepts_project_path(args: &[String]) -> bool {
-    match args {
-        [command, ..]
-            if matches!(
-                command.as_str(),
-                "spec"
-                    | "kanban"
-                    | "build"
-                    | "verify"
-                    | "compile"
-                    | "run-tests"
-                    | "status"
-                    | "screenshot"
-                    | "serve"
-            ) =>
-        {
-            true
-        }
-        [command, action, ..]
-            if command == "bridge" && matches!(action.as_str(), "install" | "watch") =>
-        {
-            true
-        }
-        [command, action, ..]
-            if command == "ai-log"
-                && matches!(
-                    action.as_str(),
-                    "recent" | "tail" | "context" | "compact" | "work-step"
-                ) =>
-        {
-            true
-        }
-        [command, action, ..]
-            if command == "session"
-                && matches!(
-                    action.as_str(),
-                    "record" | "stop" | "replay" | "timeline" | "report"
-                ) =>
-        {
-            true
-        }
-        [command, action, ..]
-            if command == "unity"
-                && matches!(
-                    action.as_str(),
-                    "status"
-                        | "context"
-                        | "backend-status"
-                        | "backend-list-commands"
-                        | "get-logs"
-                        | "clear-console"
-                        | "focus-window"
-                        | "launch"
-                        | "scene-smoke"
-                        | "screenshot"
-                        | "control-play-mode"
-                ) =>
-        {
-            true
-        }
-        _ => false,
-    }
-}
-
-fn split_tui_command(line: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut chars = line.chars().peekable();
-    let mut quote = None;
-
-    while let Some(ch) = chars.next() {
-        match (ch, quote) {
-            ('\\', _) => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
-            }
-            ('\'' | '"', None) => quote = Some(ch),
-            ('\'' | '"', Some(active)) if ch == active => quote = None,
-            (ch, None) if ch.is_whitespace() => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-            (ch, _) => current.push(ch),
-        }
-    }
-
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
-}
-
-#[cfg(test)]
-mod tui_command_tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_gui_surface_aliases_with_project_path() {
-        let project_path = PathBuf::from("/tmp/lux project");
-
-        assert_eq!(
-            normalize_tui_command_args(vec!["dashboard".to_string()], Some(&project_path)),
-            vec![
-                "status".to_string(),
-                "--project-path".to_string(),
-                "/tmp/lux project".to_string(),
-            ]
-        );
-        assert_eq!(
-            normalize_tui_command_args(
-                vec!["workbench".to_string(), "validate".to_string()],
-                Some(&project_path),
-            ),
-            vec![
-                "spec".to_string(),
-                "validate".to_string(),
-                "--project-path".to_string(),
-                "/tmp/lux project".to_string(),
-            ]
-        );
-        assert_eq!(
-            normalize_tui_command_args(
-                vec!["build".to_string(), "webgl".to_string()],
-                Some(&project_path),
-            ),
-            vec![
-                "build".to_string(),
-                "--target".to_string(),
-                "web-gl".to_string(),
-                "--project-path".to_string(),
-                "/tmp/lux project".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn normalizes_play_to_web_host_without_gameplay_embedding() {
-        let project_path = PathBuf::from("/tmp/lux-project");
-
-        assert_eq!(
-            normalize_tui_command_args(
-                vec!["play".to_string(), "host".to_string()],
-                Some(&project_path),
-            ),
-            vec![
-                "serve".to_string(),
-                "--port".to_string(),
-                "3456".to_string(),
-                "--project-path".to_string(),
-                "/tmp/lux-project".to_string(),
-            ]
-        );
-    }
-}
-
-fn run_gui_command() -> anyhow::Result<()> {
-    let port = 3456u16;
-    let url = format!("http://localhost:{port}/ui/");
-
-    let mut child = ProcessCommand::new("lux")
-        .arg("serve")
-        .arg("--port")
-        .arg(port.to_string())
-        .spawn()
-        .with_context(|| "failed to spawn lux serve for GUI")?;
-
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
-    println!("Lux dashboard: {url}");
-
-    open::that(&url).ok();
-
-    let status = child
-        .wait()
-        .with_context(|| "failed to wait for lux serve")?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("Lux GUI exited with status {status}")
     }
 }
 
@@ -1908,10 +1421,11 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
     }
     let lux_path = lux_spec::lux_init_interactive(&project_root, &mut io, options)?;
     eprintln!("Initialized Lux at {}", lux_path.display());
-
-    if let Err(err) = install_opencode_plugin(&project_root) {
-        eprintln!("⚠️  Could not install Lux OpenCode plugin: {err:#}");
-    }
+    let _capabilities = lux_engines::write_engine_capability_snapshot(
+        &project_root,
+        lux_project::EngineKind::Unity,
+    )
+    .context("failed to write engine capability snapshot")?;
 
     let agents_skills_dir = project_root.join(".agents").join("skills");
     let has_existing_lux_skills = agents_skills_dir.is_dir()
@@ -2053,12 +1567,88 @@ fn validate_lux_spec(project_root: &Path) -> anyhow::Result<()> {
         Ok(()) => {
             println!(
                 "Lux spec is valid: {}",
-                project_root.join(".lux/spec.json").display()
+                project_root.join(".lux/specs/spec.json").display()
             );
             Ok(())
         }
         Err(error) => bail!("Lux spec validation failed: {error}"),
     }
+}
+
+fn run_lux_spec_loop_command(args: LuxSpecLoopArgs) -> anyhow::Result<()> {
+    match args.action {
+        LuxSpecLoopAction::Start(start_args) => {
+            let project_root = resolve_lux_project_root(&start_args.project_path)?;
+            let run = lux_spec_loop::start(&project_root, start_args.max_iterations)?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+        LuxSpecLoopAction::Status(run_args) => {
+            let project_root = resolve_lux_project_root(&run_args.project_path)?;
+            let run = lux_spec_loop::load(&project_root, &run_args.run_id)?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+        LuxSpecLoopAction::Answer(answer_args) => {
+            let project_root = resolve_lux_project_root(&answer_args.project_path)?;
+            let run = lux_spec_loop::answer(
+                &project_root,
+                &answer_args.run_id,
+                &answer_args.question_id,
+                &answer_args.answer,
+            )?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+        LuxSpecLoopAction::Approve(proposal_args) => {
+            let project_root = resolve_lux_project_root(&proposal_args.project_path)?;
+            let run = lux_spec_loop::approve(
+                &project_root,
+                &proposal_args.run_id,
+                &proposal_args.proposal_id,
+            )?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+        LuxSpecLoopAction::Reject(proposal_args) => {
+            let project_root = resolve_lux_project_root(&proposal_args.project_path)?;
+            let run = lux_spec_loop::reject(
+                &project_root,
+                &proposal_args.run_id,
+                &proposal_args.proposal_id,
+            )?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+        LuxSpecLoopAction::Apply(run_args) => {
+            let project_root = resolve_lux_project_root(&run_args.project_path)?;
+            let run = lux_spec_loop::apply_approved(&project_root, &run_args.run_id)?;
+            print_spec_loop_run(&run);
+            Ok(())
+        }
+    }
+}
+
+fn print_spec_loop_run(run: &lux_spec_loop::SpecLoopRun) {
+    println!("run_id={}", run.id);
+    println!("state={:?}", run.state);
+    if let Some(question) = run
+        .questions
+        .iter()
+        .find(|question| question.answer.is_none())
+    {
+        println!("question_id={}", question.id);
+        println!("question_domain={}", question.domain);
+    }
+    if let Some(proposal) = run.proposals.iter().find(|proposal| {
+        proposal.status == lux_spec_loop::SpecProposalStatus::Pending
+            || proposal.status == lux_spec_loop::SpecProposalStatus::Approved
+    }) {
+        println!("proposal_id={}", proposal.id);
+        println!("proposal_status={:?}", proposal.status);
+    }
+    println!("questions={}", run.questions.len());
+    println!("proposals={}", run.proposals.len());
 }
 
 fn run_lux_roadmap_command(args: LuxRoadmapArgs) -> anyhow::Result<()> {
@@ -2288,14 +1878,23 @@ fn run_lux_verify_command(args: LuxProjectArgs) -> anyhow::Result<()> {
 
 fn lux_spec_domain_rows(
     spec: &lux_spec::SpecProject,
-) -> [(&'static str, Option<&lux_spec::DomainSpec>); 7] {
+) -> [(&'static str, Option<&lux_spec::DomainSpec>); 13] {
     [
-        ("design", spec.domains.design.as_ref()),
-        ("architecture", spec.domains.architecture.as_ref()),
+        ("gdd", spec.domains.gdd.as_ref()),
+        ("mechanics", spec.domains.mechanics.as_ref()),
+        ("controls", spec.domains.controls.as_ref()),
+        ("camera", spec.domains.camera.as_ref()),
         ("art-style", spec.domains.art_style.as_ref()),
         ("audio", spec.domains.audio.as_ref()),
         ("narrative", spec.domains.narrative.as_ref()),
         ("levels", spec.domains.levels.as_ref()),
+        (
+            "technical-architecture",
+            spec.domains.technical_architecture.as_ref(),
+        ),
+        ("engine", spec.domains.engine.as_ref()),
+        ("testing", spec.domains.testing.as_ref()),
+        ("build-release", spec.domains.build_release.as_ref()),
         ("ui-ux", spec.domains.ui_ux.as_ref()),
     ]
 }
@@ -2597,43 +2196,6 @@ fn edit_config_file() -> anyhow::Result<()> {
         .status()
         .with_context(|| format!("failed to open config file {}", path.display()))?;
     Ok(())
-}
-
-fn install_opencode_plugin(project_root: &Path) -> anyhow::Result<()> {
-    let plugin_dir = project_root.join(".opencode").join("plugins");
-    fs::create_dir_all(&plugin_dir)
-        .with_context(|| format!("failed to create {}", plugin_dir.display()))?;
-
-    let builtin_plugin = resolve_lux_install_root()
-        .join("adapters")
-        .join("opencode")
-        .join("lux-plugin.ts");
-    if !builtin_plugin.is_file() {
-        eprintln!(
-            "  Skipping OpenCode plugin install: {} not found",
-            builtin_plugin.display()
-        );
-        return Ok(());
-    }
-
-    let dest = plugin_dir.join("lux-plugin.ts");
-    let content = fs::read_to_string(&builtin_plugin)
-        .with_context(|| format!("failed to read {}", builtin_plugin.display()))?;
-    fs::write(&dest, &content).with_context(|| format!("failed to write {}", dest.display()))?;
-    eprintln!("  Installed Lux OpenCode plugin at {}", dest.display());
-    Ok(())
-}
-
-fn resolve_lux_install_root() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = parent.join("lib").join("lux");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
 // ---------------------------------------------------------------------------
@@ -2951,53 +2513,6 @@ fn ai_log_filter_from_recent(args: &AiLogRecentArgs) -> ai_log::AiLogFilter {
 // lux skill
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct SkillManifest {
-    name: String,
-    version: String,
-    description: String,
-    #[serde(rename = "displayName")]
-    display_name: Option<String>,
-    #[serde(rename = "luxVersion")]
-    lux_version: Option<String>,
-    author: Option<SkillAuthor>,
-    keywords: Option<Vec<String>>,
-    #[serde(rename = "type")]
-    skill_type: String,
-    source: Option<String>,
-    dependencies: Option<Value>,
-    #[serde(default, rename = "requiredPackages")]
-    required_packages: Option<Vec<String>>,
-    #[serde(default, rename = "compatibleRenderPipelines")]
-    compatible_render_pipelines: Option<Vec<String>>,
-    #[serde(default, rename = "contextSlimRules")]
-    context_slim_rules: Option<SkillContextSlimRules>,
-}
-
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct SkillAuthor {
-    name: String,
-    email: Option<String>,
-    url: Option<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
-struct SkillContextSlimRules {
-    #[serde(default, rename = "maxReferences")]
-    max_references: Option<usize>,
-    #[serde(default, rename = "maxSkillMdLines")]
-    max_skill_md_lines: Option<usize>,
-    #[serde(default, rename = "excludeTags")]
-    exclude_tags: Option<Vec<String>>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct SkillEntry {
-    manifest: SkillManifest,
-    directory_path: PathBuf,
-    scope: String,
-}
-
 #[derive(Debug, serde::Serialize)]
 struct SkillInfo<'a> {
     manifest: &'a SkillManifest,
@@ -3019,7 +2534,7 @@ fn run_skill_command(args: SkillArgs) -> anyhow::Result<()> {
 }
 
 fn print_skill_list(args: SkillListArgs) -> anyhow::Result<()> {
-    let entries: Vec<_> = discover_skills()?
+    let entries: Vec<_> = discover_skills(None)?
         .into_iter()
         .filter(|entry| {
             args.scope
@@ -3050,7 +2565,7 @@ fn print_skill_list(args: SkillListArgs) -> anyhow::Result<()> {
 }
 
 fn print_skill_info(args: SkillInfoArgs) -> anyhow::Result<()> {
-    let entries = discover_skills()?;
+    let entries = discover_skills(None)?;
     let Some(entry) = entries
         .iter()
         .find(|entry| entry.manifest.name == args.name)
@@ -3141,7 +2656,7 @@ fn install_skill(args: SkillInstallArgs) -> anyhow::Result<()> {
     if args.adapt && target_scope != WritableSkillScope::Project {
         fail_skill_install(args.json, "--adapt requires --project");
     }
-    if discover_skills()?
+    if discover_skills(None)?
         .iter()
         .any(|entry| entry.scope == "core" && entry.manifest.name == args.name)
     {
@@ -3224,7 +2739,7 @@ fn remove_skill(args: SkillRemoveArgs) -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    if discover_skills()?
+    if discover_skills(None)?
         .iter()
         .any(|entry| entry.scope == "core" && entry.manifest.name == args.name)
     {
@@ -3263,7 +2778,7 @@ fn remove_skill(args: SkillRemoveArgs) -> anyhow::Result<()> {
 }
 
 fn update_skill(args: SkillUpdateArgs) -> anyhow::Result<()> {
-    let entries = discover_skills()?;
+    let entries = discover_skills(None)?;
     let Some(entry) = find_skill_for_update(&entries, &args.name, args.scope) else {
         eprintln!("Error: skill '{}' not found", args.name);
         std::process::exit(1);
@@ -3354,6 +2869,21 @@ fn writable_scope_dir(scope: WritableSkillScope) -> anyhow::Result<PathBuf> {
             global_skills_dir().context("failed to determine global skills directory")
         }
     }
+}
+
+fn project_skills_dir() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .map(|directory| directory.join(".agents").join("skills"))
+}
+
+fn global_skills_dir() -> Option<PathBuf> {
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").ok()
+    } else {
+        std::env::var("HOME").ok()
+    };
+    home.map(|directory| PathBuf::from(directory).join(".agents").join("skills"))
 }
 
 fn validate_skill_name(name: &str) -> Result<(), String> {
@@ -3529,144 +3059,6 @@ fn download_skill_file(
     Ok(())
 }
 
-fn discover_skills() -> anyhow::Result<Vec<SkillEntry>> {
-    let mut entries = Vec::new();
-
-    scan_skill_scope(&core_skills_dir(), "core", &mut entries)?;
-    if let Some(skills_dir) = project_skills_dir() {
-        scan_skill_scope(&skills_dir, "project", &mut entries)?;
-    }
-    if let Some(skills_dir) = global_skills_dir() {
-        scan_skill_scope(&skills_dir, "global", &mut entries)?;
-    }
-
-    entries.sort_by(|left, right| {
-        left.manifest
-            .name
-            .cmp(&right.manifest.name)
-            .then_with(|| left.scope.cmp(&right.scope))
-    });
-    Ok(entries)
-}
-
-fn scan_skill_scope(
-    skills_dir: &Path,
-    scope: &str,
-    entries: &mut Vec<SkillEntry>,
-) -> anyhow::Result<()> {
-    let read_dir = match fs::read_dir(&skills_dir) {
-        Ok(read_dir) => read_dir,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to read skills directory {}", skills_dir.display())
-            })
-        }
-    };
-
-    for dir_entry in read_dir {
-        let dir_entry = match dir_entry {
-            Ok(dir_entry) => dir_entry,
-            Err(error) => {
-                eprintln!("Warning: failed to read skill directory entry: {error}");
-                continue;
-            }
-        };
-        let directory_path = dir_entry.path();
-        if !directory_path.is_dir() {
-            continue;
-        }
-
-        let manifest_path = directory_path.join("manifest.json");
-        let manifest_json = match fs::read_to_string(&manifest_path) {
-            Ok(manifest_json) => manifest_json,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                eprintln!(
-                    "Warning: missing manifest.json for skill directory {}",
-                    directory_path.display()
-                );
-                continue;
-            }
-            Err(error) => {
-                eprintln!(
-                    "Warning: failed to read {}: {error}",
-                    manifest_path.display()
-                );
-                continue;
-            }
-        };
-
-        let manifest = match serde_json::from_str::<SkillManifest>(&manifest_json) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                eprintln!(
-                    "Warning: failed to parse {}: {error}",
-                    manifest_path.display()
-                );
-                continue;
-            }
-        };
-
-        entries.push(SkillEntry {
-            manifest,
-            directory_path,
-            scope: scope.to_string(),
-        });
-    }
-
-    Ok(())
-}
-
-fn core_skills_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../Skills/skills")
-}
-
-fn project_skills_dir() -> Option<PathBuf> {
-    std::env::current_dir()
-        .ok()
-        .map(|d| d.join(".agents").join("skills"))
-}
-
-fn global_skills_dir() -> Option<PathBuf> {
-    let home = if cfg!(windows) {
-        std::env::var("USERPROFILE").ok()
-    } else {
-        std::env::var("HOME").ok()
-    };
-    home.map(|h| PathBuf::from(h).join(".agents").join("skills"))
-}
-
-fn read_skill_references(directory_path: &Path) -> Vec<String> {
-    let references_dir = directory_path.join("references");
-    let read_dir = match fs::read_dir(&references_dir) {
-        Ok(read_dir) => read_dir,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut references = Vec::new();
-    for dir_entry in read_dir.flatten() {
-        let path = dir_entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
-            continue;
-        }
-        if let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str()) {
-            references.push(file_name.to_string());
-        }
-    }
-    references.sort();
-    references
-}
-
-fn read_skill_md_preview(directory_path: &Path) -> Vec<String> {
-    let skill_md_path = directory_path.join("SKILL.md");
-    let content = match fs::read_to_string(&skill_md_path) {
-        Ok(content) => content,
-        Err(_) => return Vec::new(),
-    };
-
-    content.lines().take(10).map(str::to_string).collect()
-}
-
 fn read_skill_adaptation_metadata(directory_path: &Path) -> Option<Value> {
     skill_adapter::read_adaptation_file(directory_path)
 }
@@ -3687,6 +3079,13 @@ fn print_lux_godot_status(args: GodotStatusArgs) -> anyhow::Result<()> {
     let detection = project_godot::detect_godot_project(&project_root);
     let gopeak = gopeak_manifest::sync_manifest(&project_root)?;
     let detected = detection.is_some();
+    let _capabilities = lux_engines::write_engine_capability_snapshot(
+        &project_root,
+        lux_project::EngineKind::Godot,
+    )?;
+    let capability_blockers = lux_project::recommended_capability_blockers(
+        detected.then_some(lux_project::EngineKind::Godot),
+    );
     let supported_commands = if detected {
         vec!["godot status", "bridge install --type godot"]
     } else {
@@ -3699,7 +3098,6 @@ fn print_lux_godot_status(args: GodotStatusArgs) -> anyhow::Result<()> {
         "godot scene inspect",
         "godot screenshot",
     ];
-
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -3720,6 +3118,7 @@ fn print_lux_godot_status(args: GodotStatusArgs) -> anyhow::Result<()> {
             "lux": {
                 "supported_commands": supported_commands,
                 "unsupported_commands": unsupported_commands,
+                "capability_blockers": capability_blockers,
             },
             "message": if detected {
                 "Godot 4 project detected"
@@ -4716,8 +4115,6 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
         bridge_target.display()
     );
 
-    install_opencode_plugin(&project_root)?;
-
     // Install OpenCode command files (.opencode/commands/)
     let opencode_dir = project_root.join(".opencode");
     let commands_dir = opencode_dir.join("commands");
@@ -5018,6 +4415,8 @@ fn print_lux_unity_status(args: UnityStatusArgs) -> anyhow::Result<()> {
             settings_path.display()
         )
     })?;
+    let _capabilities =
+        lux_project::persist_engine_capabilities(&project_root, lux_project::EngineKind::Unity)?;
 
     println!(
         "{}",

@@ -6,37 +6,11 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
+pub use lux_run_core::RunStatus;
 use serde::{Deserialize, Serialize};
 
 /// Schema version for run-state.json format migrations.
 pub const RUN_STATE_SCHEMA_VERSION: u32 = 1;
-
-/// Active run status values — exhaustive, no "other" variant.
-/// These map to LoopState transitions but are persisted, not in-memory.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RunStatus {
-    Idle,
-    Planning,
-    Planned,
-    DispatchReady,
-    Executing,
-    AwaitingApproval,
-    AwaitingEvidence,
-    ExecutingTicket,
-    Verifying,
-    AwaitingPlayStart,
-    AwaitingFeedback,
-    Paused,
-    Blocked,
-    RetryReady,
-    Resumed,
-    Completed,
-    Failed,
-    Interrupted,
-    Recovering,
-    Quarantined,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
@@ -104,33 +78,6 @@ impl Default for ContinuationRunConfig {
     }
 }
 
-impl fmt::Display for RunStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Idle => "Idle",
-            Self::Planning => "Planning",
-            Self::Planned => "planned",
-            Self::DispatchReady => "dispatch_ready",
-            Self::Executing => "executing",
-            Self::AwaitingApproval => "AwaitingApproval",
-            Self::AwaitingEvidence => "AwaitingEvidence",
-            Self::ExecutingTicket => "ExecutingTicket",
-            Self::Verifying => "Verifying",
-            Self::AwaitingPlayStart => "AwaitingPlayStart",
-            Self::AwaitingFeedback => "AwaitingFeedback",
-            Self::Paused => "Paused",
-            Self::Blocked => "Blocked",
-            Self::RetryReady => "retry_ready",
-            Self::Resumed => "resumed",
-            Self::Completed => "Completed",
-            Self::Failed => "Failed",
-            Self::Interrupted => "Interrupted",
-            Self::Recovering => "Recovering",
-            Self::Quarantined => "Quarantined",
-        })
-    }
-}
-
 /// Approval gate type — what kind of human approval is pending?
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,7 +115,7 @@ pub struct ResumeCheckpoint {
 }
 
 /// The canonical active-run state. Written ONLY by gateway.
-/// Read by CLI, dashboard, plugin (via gateway API).
+/// Read by CLI, MCP/API clients, and plugins through the gateway API.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunState {
@@ -616,35 +563,6 @@ fn map_legacy_continuation_status(
             "unknown legacy ContinuationStatus: {}",
             other
         )),
-    }
-}
-
-impl std::str::FromStr for RunStatus {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Idle" => Ok(Self::Idle),
-            "Planning" => Ok(Self::Planning),
-            "planned" | "Planned" => Ok(Self::Planned),
-            "dispatch_ready" | "DispatchReady" => Ok(Self::DispatchReady),
-            "executing" | "Executing" => Ok(Self::Executing),
-            "AwaitingApproval" => Ok(Self::AwaitingApproval),
-            "AwaitingEvidence" => Ok(Self::AwaitingEvidence),
-            "ExecutingTicket" => Ok(Self::ExecutingTicket),
-            "Verifying" => Ok(Self::Verifying),
-            "AwaitingPlayStart" => Ok(Self::AwaitingPlayStart),
-            "AwaitingFeedback" => Ok(Self::AwaitingFeedback),
-            "Paused" => Ok(Self::Paused),
-            "Blocked" => Ok(Self::Blocked),
-            "retry_ready" | "RetryReady" => Ok(Self::RetryReady),
-            "resumed" | "Resumed" => Ok(Self::Resumed),
-            "Completed" => Ok(Self::Completed),
-            "Failed" => Ok(Self::Failed),
-            "Interrupted" => Ok(Self::Interrupted),
-            "Recovering" => Ok(Self::Recovering),
-            "Quarantined" => Ok(Self::Quarantined),
-            other => Err(anyhow::anyhow!("unknown RunStatus: {}", other)),
-        }
     }
 }
 

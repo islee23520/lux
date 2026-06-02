@@ -26,7 +26,8 @@ pub fn temp_dir_unique(prefix: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tid = std::thread::current().id();
-    let dir = std::env::temp_dir().join(format!("lux-test-{prefix}-{tid:?}-{id}"));
+    let pid = std::process::id();
+    let dir = std::env::temp_dir().join(format!("lux-test-{prefix}-{pid}-{tid:?}-{id}"));
     fs::create_dir_all(&dir).unwrap();
     dir
 }

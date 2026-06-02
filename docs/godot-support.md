@@ -1,6 +1,10 @@
 # Godot Harness Support
 
-LUX is a local-first multi-engine AI harness and evidence loop for Unity, Three.js, and Godot projects. Unity remains the primary public-beta verified engine; Godot is a first-class target category with explicit capability status so unsupported operations are not silently advertised as working.
+LUX is a local-first server/MCP evidence-gated automation control plane for Unity, Three.js, and Godot game projects.
+Unity remains the primary public-beta verified engine.
+Godot is a first-class target category with explicit capability status so unsupported operations are not silently advertised as working.
+
+Public maturity labels: Unity is verified, Godot is partial, and Three.js is planned. Godot's partial status covers detection, bridge install, status reporting, and workflow skill projection only.
 
 ## Godot Capability Matrix
 

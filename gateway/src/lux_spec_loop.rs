@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -6,6 +7,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
@@ -159,6 +161,19 @@ pub fn answer(
     run.state = SpecLoopState::AwaitingApproval;
     touch_run(project_path, &mut run)?;
     save_proposals(project_path, &run.proposals)?;
+    append_decision_ledger_event(
+        project_path,
+        json!({
+            "event": "question_answered",
+            "run_id": run.id,
+            "question_id": answered_question.id,
+            "domain": answered_question.domain,
+            "phase": answered_question.phase,
+            "question": answered_question.question,
+            "answer": answered_question.answer,
+            "created_at": Utc::now().to_rfc3339(),
+        }),
+    )?;
     if let Ok(mut spec) = lux_spec::lux_load(project_path) {
         spec.dialectic.questions.push(lux_spec::SpecQuestion {
             id: answered_question.id,
@@ -274,7 +289,7 @@ fn proposals_for_answer(run_id: &str, question: &SpecLoopQuestion) -> Vec<SpecPr
             summary: format!("Add clarification to {} spec", question.domain),
             rationale: "User answer reduces ambiguity and should be preserved in the domain markdown before the next roadmap derivation.".to_string(),
             domain: Some(question.domain.clone()),
-            spec_refs: vec![format!(".lux/domains/{}.md", question.domain)],
+            spec_refs: vec![format!(".lux/specs/domains/{}.md", question.domain)],
             changes: vec![format!(
                 "## Recursive Clarifications\n\n### {}\nQuestion: {}\nAnswer: {}\n",
                 question.phase, question.question, answer
@@ -290,7 +305,7 @@ fn proposals_for_answer(run_id: &str, question: &SpecLoopQuestion) -> Vec<SpecPr
             summary: format!("Organize {} implementation references", question.domain),
             rationale: "The recursive loop needs explicit tools, assets, and references before it can safely turn the clarified spec into work.".to_string(),
             domain: Some(question.domain.clone()),
-            spec_refs: vec![format!(".lux/domains/{}.md", question.domain)],
+            spec_refs: vec![format!(".lux/specs/domains/{}.md", question.domain)],
             changes: vec![format!(
                 "Create roadmap ticket for {}: collect required tools, Unity assets, reference docs, and constraints related to '{}'.",
                 question.domain, question.question
@@ -316,7 +331,10 @@ fn roadmap_proposal(run_id: &str, ambiguity: &AmbiguityReport) -> SpecProposal {
         summary: "Derive next roadmap slice from current ambiguity".to_string(),
         rationale: "Roadmap order should follow the highest remaining spec ambiguity rather than unrelated logs or tooling tasks.".to_string(),
         domain: Some(priority.clone()),
-        spec_refs: vec![".lux/spec.json".to_string(), format!(".lux/domains/{priority}.md")],
+        spec_refs: vec![
+            ".lux/specs/spec.json".to_string(),
+            format!(".lux/specs/domains/{priority}.md"),
+        ],
         changes: vec![format!(
             "Prioritize {priority} until ambiguity drops below {:.0}%.",
             ambiguity.overall_score * 100.0
@@ -342,8 +360,11 @@ fn update_proposal_status(
     };
     proposal.status = status;
     proposal.updated_at = Utc::now().to_rfc3339();
+    let ledger_proposal = proposal.clone();
+    let run_id = run.id.clone();
     touch_run(project_path, &mut run)?;
     save_proposals(project_path, &run.proposals)?;
+    append_ledger_for_proposal(project_path, &run_id, &ledger_proposal)?;
     Ok(run)
 }
 
@@ -386,6 +407,18 @@ fn apply_proposal(project_path: &Path, proposal: &SpecProposal) -> Result<()> {
             })?;
         }
     }
+    append_decision_ledger_event(
+        project_path,
+        json!({
+            "event": "proposal_applied",
+            "proposal_id": proposal.id,
+            "run_id": proposal.run_id,
+            "kind": proposal.kind,
+            "domain": proposal.domain,
+            "summary": proposal.summary,
+            "created_at": Utc::now().to_rfc3339(),
+        }),
+    )?;
     Ok(())
 }
 
@@ -445,10 +478,229 @@ fn save_proposals(project_path: &Path, proposals: &[SpecProposal]) -> Result<()>
     Ok(())
 }
 
+fn decisions_path(project_path: &Path) -> PathBuf {
+    project_path.join(".lux/specs/decisions.jsonl")
+}
+
+fn preferences_path(project_path: &Path) -> PathBuf {
+    project_path.join(".lux/specs/preferences.json")
+}
+
+fn append_decision_ledger_event(project_path: &Path, event: Value) -> Result<()> {
+    crate::lux_io::append_jsonl(&decisions_path(project_path), &event)?;
+    update_preferences_from_ledger(project_path)
+}
+
+fn append_ledger_for_proposal(
+    project_path: &Path,
+    run_id: &str,
+    proposal: &SpecProposal,
+) -> Result<()> {
+    let event = match proposal.status {
+        SpecProposalStatus::Approved => "proposal_approved",
+        SpecProposalStatus::Rejected => "proposal_rejected",
+        SpecProposalStatus::Applied => "proposal_applied",
+        SpecProposalStatus::Pending => "proposal_pending",
+    };
+    append_decision_ledger_event(
+        project_path,
+        json!({
+            "event": event,
+            "proposal_id": proposal.id,
+            "run_id": run_id,
+            "kind": proposal.kind,
+            "domain": proposal.domain,
+            "summary": proposal.summary,
+            "created_at": Utc::now().to_rfc3339(),
+        }),
+    )
+}
+
+fn update_preferences_from_ledger(project_path: &Path) -> Result<()> {
+    let mut grouped = BTreeMap::<String, Vec<Value>>::new();
+    for event in crate::lux_io::read_jsonl::<Value>(&decisions_path(project_path))? {
+        if event["event"] != "question_answered" {
+            continue;
+        }
+        let domain = event["domain"].as_str().unwrap_or("unknown");
+        let question = event["question"].as_str().unwrap_or_default();
+        let key = format!(
+            "{}::{}",
+            domain.trim().to_lowercase(),
+            question.trim().to_lowercase()
+        );
+        grouped.entry(key).or_default().push(event);
+    }
+
+    let mut explicit = Vec::new();
+    let mut inferred = Vec::new();
+    let mut conflicts = Vec::new();
+
+    for (key, events) in grouped {
+        let Some(last_event) = events.last() else {
+            continue;
+        };
+        let domain = last_event["domain"].as_str().unwrap_or_default();
+        let question = last_event["question"].as_str().unwrap_or_default();
+        let answer = last_event["answer"].as_str().unwrap_or_default();
+        let created_at = last_event["created_at"].as_str().unwrap_or_default();
+
+        explicit.push(json!({
+            "key": key.clone(),
+            "domain": domain,
+            "question": question,
+            "answer": answer,
+            "last_seen_at": created_at,
+        }));
+
+        let mut answer_counts = BTreeMap::<String, usize>::new();
+        for event in &events {
+            let answer_text = event["answer"].as_str().unwrap_or_default().trim();
+            if answer_text.is_empty() {
+                continue;
+            }
+            *answer_counts.entry(answer_text.to_string()).or_insert(0) += 1;
+        }
+
+        for (answer_text, occurrences) in &answer_counts {
+            if *occurrences >= 2 {
+                inferred.push(json!({
+                    "key": key.clone(),
+                    "domain": domain,
+                    "question": question,
+                    "preferred_answer": answer_text,
+                    "occurrences": occurrences,
+                }));
+            }
+        }
+
+        if answer_counts.len() > 1 {
+            conflicts.push(json!({
+                "key": key.clone(),
+                "domain": domain,
+                "question": question,
+                "answers": answer_counts.keys().cloned().collect::<Vec<_>>(),
+            }));
+        }
+    }
+
+    crate::lux_io::atomic_write_json(
+        &preferences_path(project_path),
+        &json!({
+            "inferred": inferred,
+            "explicit": explicit,
+            "conflicts": conflicts,
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn answer_does_not_append_decisions_ledger_yet() {
+        let dir = tempdir().unwrap();
+        lux_spec::lux_init(dir.path()).unwrap();
+        start(dir.path(), Some(3)).unwrap();
+
+        let decisions_before =
+            std::fs::read_to_string(dir.path().join(".lux/specs/decisions.jsonl")).unwrap();
+        assert!(decisions_before.trim().is_empty());
+    }
+
+    #[test]
+    fn answer_appends_question_answered_event_to_decisions_ledger() {
+        let dir = tempdir().unwrap();
+        lux_spec::lux_init(dir.path()).unwrap();
+        let run = start(dir.path(), Some(3)).unwrap();
+        let question_id = run.questions[0].id.clone();
+
+        answer(
+            dir.path(),
+            &run.id,
+            &question_id,
+            "The loop is scout, dash, collect, upgrade.",
+        )
+        .unwrap();
+
+        let decisions =
+            std::fs::read_to_string(dir.path().join(".lux/specs/decisions.jsonl")).unwrap();
+        assert!(
+            decisions.contains("\"event\":\"question_answered\""),
+            "decision ledger should append a question_answered event"
+        );
+    }
+
+    #[test]
+    fn approve_reject_and_apply_append_distinct_decision_events() {
+        let dir = tempdir().unwrap();
+        lux_spec::lux_init(dir.path()).unwrap();
+        let first_run = start(dir.path(), Some(3)).unwrap();
+        let first_question_id = first_run.questions[0].id.clone();
+        let first_answered = answer(
+            dir.path(),
+            &first_run.id,
+            &first_question_id,
+            "The first decision is route choice.",
+        )
+        .unwrap();
+        let approved_proposal_id = first_answered
+            .proposals
+            .iter()
+            .find(|proposal| proposal.kind == SpecProposalKind::DomainDocPatch)
+            .unwrap()
+            .id
+            .clone();
+        approve(dir.path(), &first_run.id, &approved_proposal_id).unwrap();
+        apply_approved(dir.path(), &first_run.id).unwrap();
+
+        let second_run = start(dir.path(), Some(3)).unwrap();
+        let second_question_id = second_run.questions[0].id.clone();
+        let second_answered = answer(
+            dir.path(),
+            &second_run.id,
+            &second_question_id,
+            "The second decision is checkpoint pacing.",
+        )
+        .unwrap();
+        let rejected_proposal_id = second_answered.proposals[0].id.clone();
+        reject(dir.path(), &second_run.id, &rejected_proposal_id).unwrap();
+
+        let decisions =
+            std::fs::read_to_string(dir.path().join(".lux/specs/decisions.jsonl")).unwrap();
+        assert!(decisions.contains("\"event\":\"proposal_approved\""));
+        assert!(decisions.contains("\"event\":\"proposal_rejected\""));
+        assert!(decisions.contains("\"event\":\"proposal_applied\""));
+    }
+
+    #[test]
+    fn repeated_answers_infer_preference_and_conflict() {
+        let dir = tempdir().unwrap();
+        lux_spec::lux_init(dir.path()).unwrap();
+
+        for answer_text in [
+            "Players prefer short traversal loops.",
+            "Players prefer short traversal loops.",
+            "Players prefer long traversal loops.",
+        ] {
+            let run = start(dir.path(), Some(3)).unwrap();
+            let question_id = run.questions[0].id.clone();
+            answer(dir.path(), &run.id, &question_id, answer_text).unwrap();
+        }
+
+        let preferences =
+            std::fs::read_to_string(dir.path().join(".lux/specs/preferences.json")).unwrap();
+        assert!(
+            preferences.contains("\"inferred\"") && preferences.contains("short traversal loops"),
+            "preferences should infer repeated user preference"
+        );
+        assert!(
+            preferences.contains("\"conflicts\"") && preferences.contains("long traversal loops"),
+            "preferences should record contradiction"
+        );
+    }
 
     #[test]
     fn answers_create_pending_proposals_without_mutating_domain_doc() {

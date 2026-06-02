@@ -1,9 +1,9 @@
 ---
-description: Validate the Lux spec.json and report any issues
+description: Validate the Lux specs contract and report any issues
 subtask: true
 ---
 
-Validate the current `.lux/spec.json` configuration and report any spec errors or missing fields.
+Validate the current `.lux/specs/spec.json` configuration and report any spec errors or missing fields. Treat `.lux/spec.json` only as a legacy compatibility fallback.
 
 Execute:
 

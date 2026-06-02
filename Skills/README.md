@@ -1,65 +1,61 @@
-# Lux Skills Federation
-
-A consolidated game development skills repository for AI coding assistants (OpenCode and Claude Code).
+# Lux Skills
 
 ## Overview
 
-This repo curates and federates game development skills from multiple sources into one reusable library. It follows the architectural patterns established by [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) (CCGS), adapting them for the Linalab toolchain.
+Lux ships a tracked skill source tree for local AI workflows. The Gateway can expose manifest-backed built-in skills through CLI/API surfaces and can project installed workflow skills into target projects.
 
 ## What's Inside
 
-### Skills (31 total)
+### Skills Inventory
 
-| Category | Count | Description |
+Current tree count: 46 total `SKILL.md` files under `Skills/skills`, including 20 manifest-backed built-in skills.
+
+| Group | Count | Description |
 |----------|-------|-------------|
-| Unity Design Patterns | 21 | Reference skills for Unity/C# design patterns (adapter, builder, command, observer, etc.) |
-| Lux Workflow | 5 | Runtime skills for Unity AI tooling (game-dev, lux-unity, unity-cs-reference, core-invariants, ldp-decision-protocol) |
-| Studio Management | 5 | Adapted from CCGS for OpenCode (brainstorm, code-review, sprint-plan, gate-check, help) |
+| Manifest-backed built-in skills | 20 | Runtime and workflow skills with `manifest.json` plus `SKILL.md`; validated by `Skills/tools/validate-skills.sh`. |
+| Reference-only SKILL.md docs | 26 | Unity pattern and studio reference skills kept as reusable documentation; not all are release manifests. |
+| Total SKILL.md files | 46 | All skill documents currently tracked under `Skills/skills`. |
 
 ### Additional Resources
-- **Genre Seeds**: Action-RPG, Narrative, Roguelike game genre templates
 - **Design Templates**: Narrative, Levels, Art-Style, Audio, Architecture, UI/UX, Testing docs
-- **Federation Catalog**: Pointers to 100+ additional skills available on-demand from donor repos
+- **Catalog Metadata**: Inventory files for skill discovery and validation
 
 ## Quick Start
 
-### For OpenCode Users
+### Validate Built-In Skills
 ```bash
-# Clone this repo
-git clone https://github.com/islee23520/lux-skills-repos.git ~/workspace/linalab/lux-skills-repos
-
-# Skills are ready in .claude/skills/ and .opencode/skills/
-# Point your OpenCode config at this repo's skills
+SKILLS_ROOT=Skills/skills bash Skills/tools/validate-skills.sh
 ```
 
-### For Claude Code Users
+### Install Into A Target Project
 ```bash
-# Clone and symlink into your .claude/skills
-git clone https://github.com/islee23520/lux-skills-repos.git
-ln -s $(pwd)/lux-skills-repos/.claude/skills/* ~/.claude/skills/
+cd gateway
+cargo run -- agents-install --project-path /path/to/project
 ```
 
 ## Architecture
 
-This repo uses a **Federation** approach rather than a monorepo:
-- **Canonical skills** are directly included (31 curated skills)
-- **Federation pointers** reference additional skills in their source repos
-- **Projection tools** generate Claude Code / OpenCode compatible structures
+This repo uses a tracked-source plus projection model:
+- **Manifest-backed built-in skills** are direct Gateway/CLI inventory entries.
+- **Reference-only skills** remain useful `SKILL.md` documents without being forced into release manifests.
+- **Projection tools** install selected skills into target-project agent directories.
 
 ### Canonical Skill Format
 
-Every skill follows the SKILL-SCHEMA.md specification:
+Manifest-backed built-in skills follow the SKILL-SCHEMA.md specification:
 - YAML frontmatter (name, description, category, source)
 - Structured markdown body
 - Under 500 lines per skill
+
+Reference-only skill documents may lack `manifest.json`; this cleanup intentionally does not force them into the manifest-backed release set.
 
 ## Sources
 
 | Source | Type | Skills Used |
 |--------|------|-------------|
-| [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) | Reference | 5 adapted studio skills |
-| unity-design-patterns-skills | Donor | 21 design pattern skills |
-| Lux (Linalab Unity X) | Donor | 5 workflow skills |
+| [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) | Reference | Studio reference skills |
+| unity-design-patterns-skills | Donor | Unity design pattern reference skills |
+| Lux (Linalab Unity X) | Local | Manifest-backed workflow skills |
 | Chronos | Donor | Federation pointer |
 
 ## License

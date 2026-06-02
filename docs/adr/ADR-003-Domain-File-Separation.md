@@ -3,6 +3,11 @@
 ## Status
 Accepted (Phase 1, 2026-05-14)
 
+Superseded in part by the current specs contract: `.lux/specs/spec.json` is the
+canonical game spec path.
+`.lux/spec.json` remains only as a compatibility mirror and legacy read fallback
+for older projects and tests.
+
 ## Context
 README claimed `.lux/roadmap.json` as universal SSoT. But roadmap, spec, tickets, and run-state were conflated:
 - `lux goal` wanted roadmap.active_milestone_id for game milestones
@@ -14,7 +19,8 @@ Canonical homes by domain:
 
 | File | Domain | Owner | Writer |
 |------|--------|-------|--------|
-| `.lux/spec.json` | Target project goals, game/design assumptions, requirements | User/AI | lux_spec save/load |
+| `.lux/specs/spec.json` | Target project goals, game/design assumptions, requirements | User/AI | lux_spec save/load |
+| `.lux/spec.json` | Compatibility mirror / legacy read fallback for older projects | Gateway | lux_spec compatibility write/read |
 | `.lux/tickets/*.json` | Execution tasks derived from spec/goals | Gateway | Ticket CRUD |
 | `.lux/run-state.json` | Active run lifecycle state | Gateway ONLY | State machine |
 | `.lux/roadmap.json` | LUX implementation milestones (M1-M5) ONLY | lux_roadmap init/load |

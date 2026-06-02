@@ -303,13 +303,22 @@ impl TaskDAG {
 fn domain_specs(spec: &SpecProject) -> Vec<(String, &DomainSpec)> {
     let mut domains = Vec::new();
     for (name, domain) in [
-        ("design", spec.domains.design.as_ref()),
-        ("architecture", spec.domains.architecture.as_ref()),
+        ("gdd", spec.domains.gdd.as_ref()),
+        ("mechanics", spec.domains.mechanics.as_ref()),
+        ("controls", spec.domains.controls.as_ref()),
+        ("camera", spec.domains.camera.as_ref()),
+        ("levels", spec.domains.levels.as_ref()),
         ("art-style", spec.domains.art_style.as_ref()),
         ("audio", spec.domains.audio.as_ref()),
         ("narrative", spec.domains.narrative.as_ref()),
-        ("levels", spec.domains.levels.as_ref()),
         ("ui-ux", spec.domains.ui_ux.as_ref()),
+        (
+            "technical-architecture",
+            spec.domains.technical_architecture.as_ref(),
+        ),
+        ("engine", spec.domains.engine.as_ref()),
+        ("testing", spec.domains.testing.as_ref()),
+        ("build-release", spec.domains.build_release.as_ref()),
     ] {
         if let Some(domain) = domain {
             domains.push((name.to_string(), domain));

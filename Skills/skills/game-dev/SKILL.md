@@ -17,6 +17,9 @@ Treat LUX game development as **context-first, vision-supplemented**.
 - Use screenshots or vision feedback as supporting evidence, not as a standalone completion signal.
 - When a visual symptom is mentioned, connect it back to a GameObject, component, coordinate value, camera/UI state, log entry, or explicit engine capability blocker.
 - If the current engine surface cannot provide the needed observation, report a blocker instead of pretending the game state was verified.
+- Treat README/usage/dashboard projections as read-only views over canonical `.lux` evidence; do not treat them as proof that autonomous verification or remote streaming is complete.
+- Treat game-harness run status as evidence-gated. The expected event names are `game_harness.plan.started`, `game_harness.plan.completed`, `game_harness.step.started`, `game_harness.step.completed`, `game_harness.step.failed`, `game_harness.iteration.started`, and `game_harness.iteration.completed`; event presence alone is not completion evidence without linked context, command, screenshot, or blocker artifacts.
+- Use engine capability routing when judging observations. Unity, Godot, and Three.js must be assessed by adapter-supported evidence and their documented maturity tier.
 
 ## Passive Loading Rule
 

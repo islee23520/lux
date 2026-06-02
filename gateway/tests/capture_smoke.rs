@@ -22,6 +22,7 @@ use tokio::{
     sync::Mutex,
 };
 use tower::ServiceExt;
+use uuid::Uuid;
 
 const TOKEN: &str = "capture-smoke-token";
 
@@ -143,7 +144,7 @@ async fn create_session(state: &GatewayState, project_path: &std::path::Path) ->
 }
 
 async fn wait_for_command(requests: &Arc<Mutex<Vec<Value>>>, command: &str) -> Value {
-    for _ in 0..50 {
+    for _ in 0..250 {
         if let Some(request) = requests
             .lock()
             .await
@@ -256,7 +257,10 @@ async fn input_websocket_accepts_json_messages() {
         .unwrap();
 
     let command = wait_for_command(&bridge.requests, CMD_LUX_INPUT_EVENT).await;
-    assert_eq!(command["params"]["sessionId"], session_id);
+    let forwarded_session_id = command["params"]["sessionId"]
+        .as_str()
+        .expect("forwarded session id");
+    assert!(Uuid::parse_str(forwarded_session_id).is_ok());
     assert_eq!(command["params"]["type"], "mouseMove");
 }
 

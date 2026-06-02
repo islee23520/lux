@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::lux_spec::{DomainSpec, SpecProject};
 
-const BUILT_IN_DOMAIN_COUNT: usize = 7;
+const BUILT_IN_DOMAIN_COUNT: usize = 11;
 const COMPLETION_WEIGHT: f64 = 0.40;
 const AI_EVAL_WEIGHT: f64 = 0.35;
 const AST_WEIGHT: f64 = 0.25;
@@ -89,7 +89,11 @@ pub fn calculate_ambiguity(spec: &SpecProject) -> AmbiguityReport {
             / (BUILT_IN_DOMAIN_COUNT as f64 + 1.0),
     );
     let completion_ratio = clamp_score(defined_count as f64 / BUILT_IN_DOMAIN_COUNT as f64);
-    let recommendations = build_recommendations(&domain_scores, &schell_phase_scores);
+    let contradictions = contradiction_recommendations(spec);
+    let contradiction_score = if contradictions.is_empty() { 0.0 } else { 0.1 };
+    let overall_score = clamp_score(overall_score.max(contradiction_score));
+    let recommendations =
+        build_recommendations(&domain_scores, &schell_phase_scores, contradictions);
 
     AmbiguityReport {
         overall_score,
@@ -291,10 +295,14 @@ fn built_in_domains(
     [
         ("design", spec.domains.design.as_ref()),
         ("architecture", spec.domains.architecture.as_ref()),
+        ("mechanics", spec.domains.mechanics.as_ref()),
+        ("controls", spec.domains.controls.as_ref()),
+        ("camera", spec.domains.camera.as_ref()),
         ("art_style", spec.domains.art_style.as_ref()),
         ("audio", spec.domains.audio.as_ref()),
         ("narrative", spec.domains.narrative.as_ref()),
         ("levels", spec.domains.levels.as_ref()),
+        ("testing", spec.domains.testing.as_ref()),
         ("ui_ux", spec.domains.ui_ux.as_ref()),
     ]
 }
@@ -472,7 +480,17 @@ fn calculate_schell_phase_scores(
     let mut scores = HashMap::new();
     scores.insert(
         "phase1_experience".to_string(),
-        average_domains(domain_scores, &["design", "art_style", "audio", "ui_ux"]),
+        average_domains(
+            domain_scores,
+            &[
+                "design",
+                "controls",
+                "camera",
+                "art_style",
+                "audio",
+                "ui_ux",
+            ],
+        ),
     );
     scores.insert(
         "phase2_tetrad".to_string(),
@@ -483,7 +501,17 @@ fn calculate_schell_phase_scores(
     );
     scores.insert(
         "phase3_core_loop".to_string(),
-        average_domains(domain_scores, &["design", "levels", "ui_ux"]),
+        average_domains(
+            domain_scores,
+            &[
+                "design",
+                "mechanics",
+                "controls",
+                "camera",
+                "levels",
+                "ui_ux",
+            ],
+        ),
     );
     scores.insert(
         "phase4_motivation".to_string(),
@@ -493,7 +521,7 @@ fn calculate_schell_phase_scores(
         "phase5_assessment".to_string(),
         average_domains(
             domain_scores,
-            &["design", "architecture", "levels", "ui_ux"],
+            &["design", "architecture", "testing", "levels", "ui_ux"],
         ),
     );
     scores
@@ -513,6 +541,7 @@ fn average_domains(domain_scores: &HashMap<String, DomainAmbiguity>, domains: &[
 fn build_recommendations(
     domain_scores: &HashMap<String, DomainAmbiguity>,
     schell_phase_scores: &HashMap<String, f64>,
+    contradictions: Vec<String>,
 ) -> Vec<String> {
     let mut recommendations = domain_scores
         .values()
@@ -530,9 +559,43 @@ fn build_recommendations(
             recommendations.push(format!("Reduce {phase} ambiguity before implementation."));
         }
     }
+    recommendations.extend(contradictions);
 
     recommendations.sort();
     recommendations.dedup();
+    recommendations
+}
+
+fn contradiction_recommendations(spec: &SpecProject) -> Vec<String> {
+    let mut grouped = HashMap::<String, Vec<String>>::new();
+    for decision in &spec.dialectic.decisions {
+        let Some(source_question) = decision.source_question.as_ref() else {
+            continue;
+        };
+        let domain = decision.domain.as_deref().unwrap_or("spec");
+        let key = format!(
+            "{}::{}",
+            domain.trim().to_lowercase(),
+            source_question.trim().to_lowercase()
+        );
+        grouped.entry(key).or_default().push(decision.text.clone());
+    }
+
+    let mut recommendations = Vec::new();
+    for (key, answers) in grouped {
+        let mut unique_answers = answers
+            .into_iter()
+            .map(|answer| answer.trim().to_lowercase())
+            .filter(|answer| !answer.is_empty())
+            .collect::<Vec<_>>();
+        unique_answers.sort();
+        unique_answers.dedup();
+        if unique_answers.len() > 1 {
+            recommendations.push(format!(
+                "Resolve contradiction in {key} before reducing ambiguity."
+            ));
+        }
+    }
     recommendations
 }
 
@@ -555,6 +618,19 @@ fn expected_fields(name: &str) -> Vec<&'static str> {
             "win_condition",
         ],
         "architecture" => vec!["engine", "platform", "networking", "data_storage"],
+        "mechanics" => vec![
+            "movement_model",
+            "interaction_rules",
+            "resource_rules",
+            "progression_rules",
+        ],
+        "controls" => vec!["input_devices", "action_map", "rebinding", "accessibility"],
+        "camera" => vec![
+            "camera_mode",
+            "follow_rules",
+            "framing",
+            "occlusion_strategy",
+        ],
         "art_style" => vec![
             "visual_style",
             "color_palette",
@@ -569,6 +645,12 @@ fn expected_fields(name: &str) -> Vec<&'static str> {
             "world_building",
         ],
         "levels" => vec!["level_count", "difficulty_curve", "level_generation"],
+        "testing" => vec![
+            "editmode_coverage",
+            "playmode_smoke",
+            "manual_qa_channel",
+            "evidence_gate",
+        ],
         "ui_ux" => vec!["hud_layout", "menu_flow", "accessibility", "input_mapping"],
         _ => Vec::new(),
     }
@@ -578,10 +660,20 @@ fn domain_keywords(name: &str) -> Vec<&'static str> {
     match name {
         "design" => vec!["genre", "mechanic", "loop", "player", "win"],
         "architecture" => vec!["engine", "platform", "network", "storage", "system"],
+        "mechanics" => vec![
+            "movement",
+            "interaction",
+            "resource",
+            "progression",
+            "combat",
+        ],
+        "controls" => vec!["input", "action", "rebinding", "accessibility", "device"],
+        "camera" => vec!["camera", "follow", "framing", "occlusion", "viewport"],
         "art_style" => vec!["visual", "color", "resolution", "animation", "style"],
         "audio" => vec!["music", "sfx", "ambient", "dynamic", "sound"],
         "narrative" => vec!["story", "character", "dialogue", "world", "arc"],
         "levels" => vec!["level", "difficulty", "procedural", "handcrafted", "curve"],
+        "testing" => vec!["editmode", "playmode", "manual", "evidence", "qa"],
         "ui_ux" => vec!["hud", "menu", "accessibility", "input", "flow"],
         _ => Vec::new(),
     }
@@ -633,6 +725,48 @@ fn question_templates(name: &str) -> HashMap<&'static str, &'static str> {
                 "Where is the technical architecture markdown?",
             ),
         ]),
+        "mechanics" => HashMap::from([
+            (
+                "movement_model",
+                "What movement model defines player traversal?",
+            ),
+            (
+                "interaction_rules",
+                "What interaction rules govern player actions?",
+            ),
+            ("resource_rules", "Which resources can change during play?"),
+            (
+                "progression_rules",
+                "How does the mechanics progression unlock or scale?",
+            ),
+            ("content_path", "Where is the mechanics markdown?"),
+        ]),
+        "controls" => HashMap::from([
+            ("input_devices", "Which input devices must be supported?"),
+            (
+                "action_map",
+                "What action map connects controls to mechanics?",
+            ),
+            ("rebinding", "Which controls must be rebindable?"),
+            (
+                "accessibility",
+                "Which control accessibility requirements are mandatory?",
+            ),
+            ("content_path", "Where is the controls markdown?"),
+        ]),
+        "camera" => HashMap::from([
+            ("camera_mode", "What camera mode should the game use?"),
+            (
+                "follow_rules",
+                "How should the camera follow the player or focus target?",
+            ),
+            ("framing", "What framing rules keep gameplay readable?"),
+            (
+                "occlusion_strategy",
+                "How should the camera handle occlusion?",
+            ),
+            ("content_path", "Where is the camera markdown?"),
+        ]),
         "art_style" => HashMap::from([
             ("visual_style", "What visual style should the game use?"),
             ("color_palette", "What color palette defines the mood?"),
@@ -678,6 +812,22 @@ fn question_templates(name: &str) -> HashMap<&'static str, &'static str> {
             ),
             ("content_path", "Where is the level design markdown?"),
         ]),
+        "testing" => HashMap::from([
+            ("editmode_coverage", "Which EditMode tests are required?"),
+            (
+                "playmode_smoke",
+                "Which PlayMode smoke path proves the core loop?",
+            ),
+            (
+                "manual_qa_channel",
+                "Which manual QA channel proves engine behavior?",
+            ),
+            (
+                "evidence_gate",
+                "What evidence must block completion when missing?",
+            ),
+            ("content_path", "Where is the testing strategy markdown?"),
+        ]),
         "ui_ux" => HashMap::from([
             ("hud_layout", "What information belongs on the HUD?"),
             (
@@ -707,6 +857,21 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
             "Which platforms must be supported?",
             "Does the game require networking or online services?",
         ],
+        "mechanics" => vec![
+            "What movement model defines player traversal?",
+            "What interaction rules govern player actions?",
+            "How does the mechanics progression unlock or scale?",
+        ],
+        "controls" => vec![
+            "Which input devices must be supported?",
+            "What action map connects controls to mechanics?",
+            "Which controls must be rebindable?",
+        ],
+        "camera" => vec![
+            "What camera mode should the game use?",
+            "How should the camera follow the player or focus target?",
+            "What framing rules keep gameplay readable?",
+        ],
         "art_style" => vec![
             "What visual style should the game use?",
             "What color palette defines the mood?",
@@ -727,6 +892,11 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
             "How should difficulty progress over time?",
             "Are levels procedural, handcrafted, or hybrid?",
         ],
+        "testing" => vec![
+            "Which EditMode tests are required?",
+            "Which PlayMode smoke path proves the core loop?",
+            "Which manual QA channel proves engine behavior?",
+        ],
         "ui_ux" => vec![
             "What information belongs on the HUD?",
             "What is the menu flow from launch to gameplay?",
@@ -738,7 +908,7 @@ fn fallback_questions(name: &str) -> Vec<&'static str> {
 
 fn primary_schell_phase(name: &str) -> &'static str {
     match name {
-        "design" | "levels" | "ui_ux" => "phase3_core_loop",
+        "design" | "mechanics" | "controls" | "camera" | "levels" | "ui_ux" => "phase3_core_loop",
         "architecture" | "art_style" | "narrative" => "phase2_tetrad",
         "audio" => "phase1_experience",
         _ => "phase5_assessment",

@@ -130,6 +130,27 @@ pub fn route_verification(
     if policy == "unity_t3" {
         return route_unity_t3(policy, opts);
     }
+    if policy == "unity_uloop" {
+        return route_unity_uloop(policy, ticket, opts);
+    }
+    if policy == "godot_cli" {
+        return route_godot_cli(policy, ticket, opts);
+    }
+    if policy == "threejs_browser" {
+        return route_threejs_browser(policy, ticket, opts);
+    }
+    if policy == "engine_blocker" {
+        return route_engine_blocker(
+            policy,
+            opts,
+            "engine verification blocker requested",
+            json!({
+                "mode": "router",
+                "verification_basis": "engine_blocker",
+                "policy": policy,
+            }),
+        );
+    }
     if let Some(command_list) = policy.strip_prefix("command_suite:") {
         let commands = parse_policy_commands(command_list);
         if commands.is_empty() {
@@ -154,23 +175,16 @@ pub fn route_verification(
         bail!("VerificationMode::Live is not supported in M6");
     }
 
-    Ok(policy_result(
-        VerificationStatus::Unsupported,
+    route_engine_blocker(
         policy,
-        Vec::new(),
-        vec![check(
-            "Verification Policy Router",
-            CheckCategory::SpecCompleteness,
-            false,
-            0.0,
-            &format!("Unsupported verification_policy: {policy}"),
-            Some(json!({
-                "mode": "router",
-                "verification_basis": "verification_policy_dispatch",
-                "policy": policy,
-            })),
-        )],
-    ))
+        opts,
+        &format!("Unsupported verification_policy: {policy}"),
+        json!({
+            "mode": "router",
+            "verification_basis": "verification_policy_dispatch",
+            "policy": policy,
+        }),
+    )
 }
 
 fn route_unity_t3(policy: &str, opts: &VerificationOpts) -> Result<RoutedVerificationResult> {
@@ -194,6 +208,244 @@ fn route_unity_t3(policy: &str, opts: &VerificationOpts) -> Result<RoutedVerific
     let evidence_paths = vec![write_verification_evidence(opts, 1, &evidence_text)?];
     let status = verification_status_for_passed(checks.iter().all(|check| check.passed));
     Ok(policy_result(status, policy, evidence_paths, checks))
+}
+
+fn route_unity_uloop(
+    policy: &str,
+    ticket: &Ticket,
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let commands = ticket.command_allowlist.clone().unwrap_or_default();
+    if commands.len() < 3 {
+        return route_engine_blocker(
+            policy,
+            opts,
+            "unity_uloop requires compile, run-tests, and screenshot commands",
+            json!({
+                "mode": "router",
+                "verification_basis": "unity_uloop",
+                "policy": policy,
+                "required_evidence": ["compile", "run-tests", "screenshot"],
+            }),
+        );
+    }
+    run_labeled_commands(
+        policy,
+        &[
+            ("compile", commands[0].clone()),
+            ("test", commands[1].clone()),
+            ("screenshot", commands[2].clone()),
+        ],
+        opts,
+    )
+}
+
+fn route_godot_cli(
+    policy: &str,
+    ticket: &Ticket,
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let configured = ticket
+        .command_allowlist
+        .as_ref()
+        .and_then(|commands| commands.first())
+        .map_or("godot", String::as_str);
+    if executable_in_path(configured).is_none() {
+        return route_engine_blocker(
+            policy,
+            opts,
+            &format!("missing CLI: {configured}"),
+            json!({
+                "mode": "router",
+                "verification_basis": "godot_cli",
+                "policy": policy,
+                "required_binary": configured,
+            }),
+        );
+    }
+    run_labeled_commands(
+        policy,
+        &[("godot-version", format!("{configured} --version"))],
+        opts,
+    )
+}
+
+fn route_threejs_browser(
+    policy: &str,
+    ticket: &Ticket,
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let commands = ticket.command_allowlist.clone().unwrap_or_default();
+    if commands.is_empty() {
+        return route_engine_blocker(
+            policy,
+            opts,
+            "threejs_browser requires an explicit browser QA command",
+            json!({
+                "mode": "router",
+                "verification_basis": "threejs_browser",
+                "policy": policy,
+                "required_surface": "browser_qa_command",
+            }),
+        );
+    }
+    let labeled = commands
+        .into_iter()
+        .enumerate()
+        .map(|(index, command)| (format!("browser-{}", index + 1), command))
+        .collect::<Vec<_>>();
+    let borrowed = labeled
+        .iter()
+        .map(|(label, command)| (label.as_str(), command.clone()))
+        .collect::<Vec<_>>();
+    run_labeled_commands(policy, &borrowed, opts)
+}
+
+fn route_engine_blocker(
+    policy: &str,
+    opts: &VerificationOpts,
+    reason: &str,
+    details: Value,
+) -> Result<RoutedVerificationResult> {
+    let check = check(
+        "Engine Verification Router",
+        CheckCategory::ImplementationExists,
+        false,
+        0.0,
+        reason,
+        Some(details.clone()),
+    );
+    let evidence = format!(
+        "policy={policy}\nunsupported_reason={reason}\ndetails={}\n",
+        serde_json::to_string(&details)?
+    );
+    let evidence_paths = vec![write_verification_evidence_named(
+        opts,
+        "engine-blocker",
+        &evidence,
+    )?];
+    let store = FileTicketStore::new(&opts.working_dir);
+    create_or_update_blocker(
+        &store,
+        "engine-verification",
+        policy,
+        Some(VERIFICATION_BLOCKER_SPEC_REF),
+        format!("Engine verification blocker: {policy}"),
+        format!("{reason}\n\nEvidence: {}", evidence_paths[0]),
+        TicketPriority::High,
+        vec![
+            "verification".to_string(),
+            "engine-blocker".to_string(),
+            policy.to_string(),
+        ],
+    )?;
+    Ok(policy_result(
+        VerificationStatus::Unsupported,
+        policy,
+        evidence_paths,
+        vec![check],
+    ))
+}
+
+fn run_labeled_commands(
+    policy: &str,
+    commands: &[(&str, String)],
+    opts: &VerificationOpts,
+) -> Result<RoutedVerificationResult> {
+    let mut checks = Vec::new();
+    let mut evidence_paths = Vec::new();
+
+    for (index, (label, command_text)) in commands.iter().enumerate() {
+        let command_number = index + 1;
+        let argv = parse_command_argv(command_text)?;
+        let output = ProcessCommand::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(&opts.working_dir)
+            .stdin(Stdio::null())
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code();
+                let passed = output.status.success();
+                let evidence_text = format!(
+                    "phase={}\n{}",
+                    verification_phase_label(label),
+                    command_evidence_text(
+                        policy,
+                        command_number,
+                        command_text,
+                        exit_code,
+                        &stdout,
+                        &stderr,
+                        None,
+                    )
+                );
+                evidence_paths.push(write_verification_evidence_named(
+                    opts,
+                    label,
+                    &evidence_text,
+                )?);
+                checks.push(command_result_check(
+                    command_number,
+                    command_text,
+                    passed,
+                    exit_code,
+                    None,
+                ));
+                if !passed {
+                    return Ok(policy_result(
+                        VerificationStatus::Failed,
+                        policy,
+                        evidence_paths,
+                        checks,
+                    ));
+                }
+            }
+            Err(error) => {
+                let evidence_text = format!(
+                    "phase={}\n{}",
+                    verification_phase_label(label),
+                    command_evidence_text(
+                        policy,
+                        command_number,
+                        command_text,
+                        None,
+                        "",
+                        "",
+                        Some(&error.to_string()),
+                    )
+                );
+                evidence_paths.push(write_verification_evidence_named(
+                    opts,
+                    label,
+                    &evidence_text,
+                )?);
+                checks.push(command_result_check(
+                    command_number,
+                    command_text,
+                    false,
+                    None,
+                    Some(&error.to_string()),
+                ));
+                return Ok(policy_result(
+                    VerificationStatus::Failed,
+                    policy,
+                    evidence_paths,
+                    checks,
+                ));
+            }
+        }
+    }
+
+    Ok(policy_result(
+        VerificationStatus::Passed,
+        policy,
+        evidence_paths,
+        checks,
+    ))
 }
 
 fn run_declared_commands(
@@ -391,6 +643,14 @@ fn write_verification_evidence(
     command_number: usize,
     text: &str,
 ) -> Result<String> {
+    write_verification_evidence_named(opts, &command_number.to_string(), text)
+}
+
+fn write_verification_evidence_named(
+    opts: &VerificationOpts,
+    label: &str,
+    text: &str,
+) -> Result<String> {
     let relative_dir = relative_evidence_dir(opts);
     let absolute_dir = if opts.evidence_dir.as_os_str().is_empty() {
         opts.working_dir.join(&relative_dir)
@@ -405,7 +665,7 @@ fn write_verification_evidence(
             absolute_dir.display()
         )
     })?;
-    let file_name = format!("verify_{command_number}.txt");
+    let file_name = format!("verify_{}.txt", evidence_label(label));
     let absolute_path = absolute_dir.join(&file_name);
     let temp_path = absolute_path.with_extension("txt.tmp");
     fs::write(&temp_path, text)
@@ -417,6 +677,43 @@ fn write_verification_evidence(
         )
     })?;
     Ok(format!("{}/{}", path_to_slash(&relative_dir), file_name))
+}
+
+fn evidence_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn verification_phase_label(label: &str) -> &str {
+    match label {
+        "compile" => "compile",
+        "run-tests" => "test",
+        "screenshot" => "screenshot",
+        _ => label,
+    }
+}
+
+fn executable_in_path(executable: &str) -> Option<PathBuf> {
+    let executable_path = Path::new(executable);
+    if executable_path.is_file() {
+        return Some(executable_path.to_path_buf());
+    }
+    if executable_path.components().count() > 1 || executable_path.is_absolute() {
+        return None;
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|path| path.join(executable))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 fn relative_evidence_dir(opts: &VerificationOpts) -> PathBuf {
@@ -1225,14 +1522,23 @@ fn verification_dir(project_path: &Path) -> PathBuf {
     project_path.join(".lux/verification")
 }
 
-fn built_in_domains(spec: &SpecProject) -> [(&'static str, Option<&DomainSpec>); 7] {
+fn built_in_domains(spec: &SpecProject) -> [(&'static str, Option<&DomainSpec>); 13] {
     [
-        ("design", spec.domains.design.as_ref()),
-        ("architecture", spec.domains.architecture.as_ref()),
+        ("gdd", spec.domains.gdd.as_ref()),
+        ("mechanics", spec.domains.mechanics.as_ref()),
+        ("controls", spec.domains.controls.as_ref()),
+        ("camera", spec.domains.camera.as_ref()),
         ("art_style", spec.domains.art_style.as_ref()),
         ("audio", spec.domains.audio.as_ref()),
         ("narrative", spec.domains.narrative.as_ref()),
         ("levels", spec.domains.levels.as_ref()),
+        (
+            "technical_architecture",
+            spec.domains.technical_architecture.as_ref(),
+        ),
+        ("engine", spec.domains.engine.as_ref()),
+        ("testing", spec.domains.testing.as_ref()),
+        ("build_release", spec.domains.build_release.as_ref()),
         ("ui_ux", spec.domains.ui_ux.as_ref()),
     ]
 }
@@ -1272,14 +1578,41 @@ fn schell_is_complete(spec: &SpecProject) -> bool {
 fn implementation_evidence_exists(project_path: &Path, name: &str, domain: &DomainSpec) -> bool {
     content_path_exists(project_path, &domain.content_path)
         || match name {
-            "architecture" => has_any_path(
-                project_path,
-                &["Assets/Scripts", "Assets", "src", "Scripts"],
-            ),
-            "design" => {
+            "gdd" => {
                 has_scene_file(&project_path.join("Assets/Scenes"))
                     || has_scene_file(&project_path.join("Assets"))
             }
+            "mechanics" => has_any_path(
+                project_path,
+                &[
+                    "Assets/Scripts",
+                    "Assets/Gameplay",
+                    "src/gameplay",
+                    "Scripts/Gameplay",
+                ],
+            ),
+            "controls" => has_any_path(
+                project_path,
+                &[
+                    "Assets/InputSystem_Actions.inputactions",
+                    "Assets/Input",
+                    "Assets/Controls",
+                    "src/input",
+                ],
+            ),
+            "camera" => has_any_path(
+                project_path,
+                &[
+                    "Assets/Cameras",
+                    "Assets/Camera",
+                    "Assets/Cinemachine",
+                    "src/camera",
+                ],
+            ),
+            "technical_architecture" => has_any_path(
+                project_path,
+                &["Assets/Scripts", "Assets", "src", "Scripts"],
+            ),
             "art_style" => has_any_path(
                 project_path,
                 &["Assets/Art", "Assets/Materials", "Assets/Sprites"],
@@ -1287,6 +1620,29 @@ fn implementation_evidence_exists(project_path: &Path, name: &str, domain: &Doma
             "audio" => has_any_path(project_path, &["Assets/Audio", "Assets/Sounds"]),
             "narrative" => has_any_path(project_path, &["Assets/Dialogue", "Assets/Narrative"]),
             "levels" => has_any_path(project_path, &["Assets/Levels", "Assets/Scenes"]),
+            "engine" => has_any_path(
+                project_path,
+                &[
+                    "Packages/manifest.json",
+                    "ProjectSettings",
+                    "package.json",
+                    "addons",
+                ],
+            ),
+            "testing" => has_any_path(
+                project_path,
+                &[
+                    "Assets/Tests",
+                    "Tests",
+                    "test",
+                    "tests",
+                    "Packages/packages-lock.json",
+                ],
+            ),
+            "build_release" => has_any_path(
+                project_path,
+                &[".github/workflows", "builds", "Build", "Builds", "dist"],
+            ),
             "ui_ux" => has_any_path(project_path, &["Assets/UI", "Assets/Prefabs/UI"]),
             _ => false,
         }
@@ -1847,4 +2203,162 @@ fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|time| time.with_timezone(&Utc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lux_ticket::{TicketFilter, TicketStatus, TicketStore};
+    use chrono::Utc;
+    use std::fs;
+
+    struct TestProject {
+        path: PathBuf,
+    }
+
+    impl TestProject {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("lux-verification-{name}-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(path.join(".lux")).expect(".lux directory should be created");
+            Self { path }
+        }
+
+        fn opts(&self, run_id: &str) -> VerificationOpts {
+            VerificationOpts {
+                run_id: run_id.to_string(),
+                working_dir: self.path.clone(),
+                evidence_dir: PathBuf::from(format!(".lux/evidence/autonomous/{run_id}")),
+            }
+        }
+    }
+
+    impl Drop for TestProject {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn ticket_with_policy(policy: &str, commands: Vec<&str>) -> Ticket {
+        let now = Utc::now().to_rfc3339();
+        Ticket {
+            id: format!("ticket-{}", uuid::Uuid::new_v4()),
+            title: "Router test ticket".to_string(),
+            description: "Ticket for verification router tests".to_string(),
+            status: TicketStatus::ToDo,
+            priority: TicketPriority::High,
+            assignee: None,
+            blockers: Vec::new(),
+            tags: Vec::new(),
+            spec_ref: Some("engine".to_string()),
+            created_at: now.clone(),
+            updated_at: now,
+            execution_objective: Some("Verify engine router behavior".to_string()),
+            allowed_executor: None,
+            dispatch_policy: None,
+            verification_policy: Some(policy.to_string()),
+            command_allowlist: Some(commands.into_iter().map(ToOwned::to_owned).collect()),
+            evidence_refs: None,
+            blocker_policy: None,
+            non_goals: None,
+        }
+    }
+
+    #[test]
+    fn route_verification_command_suite_writes_evidence() {
+        let project = TestProject::new("command-suite");
+        let ticket = ticket_with_policy("command_suite:printf ok", Vec::new());
+
+        let result = route_verification(&ticket, &project.opts("run-command-suite"))
+            .expect("command_suite should route");
+
+        assert_eq!(result.status, VerificationStatus::Passed);
+        assert_eq!(result.policy_used, "command_suite:printf ok");
+        assert_eq!(result.evidence_paths.len(), 1);
+        let evidence = project.path.join(&result.evidence_paths[0]);
+        assert!(
+            evidence.is_file(),
+            "command_suite route should write evidence"
+        );
+        let text = fs::read_to_string(evidence).expect("evidence should be readable");
+        assert!(text.contains("policy=command_suite:printf ok"));
+        assert!(text.contains("command=printf ok"));
+    }
+
+    #[test]
+    fn h7_unknown_engine_policy_is_unsupported_with_evidence() {
+        let project = TestProject::new("unknown-policy");
+        let ticket = ticket_with_policy("renpy_cli", Vec::new());
+
+        let result = route_verification(&ticket, &project.opts("run-unknown-policy"))
+            .expect("unsupported policy should route to blocker evidence");
+
+        assert_eq!(result.status, VerificationStatus::Unsupported);
+        assert_eq!(result.policy_used, "renpy_cli");
+        assert!(!result.passed);
+        assert_eq!(result.evidence_paths.len(), 1);
+        let evidence = fs::read_to_string(project.path.join(&result.evidence_paths[0]))
+            .expect("unsupported evidence should be readable");
+        assert!(evidence.contains("unsupported_reason=Unsupported verification_policy: renpy_cli"));
+        assert!(
+            evidence.contains("\"policy\":\"renpy_cli\""),
+            "unsupported evidence must name the policy"
+        );
+    }
+
+    #[test]
+    fn h7_unity_uloop_mock_writes_compile_test_screenshot_evidence() {
+        let project = TestProject::new("unity-uloop");
+        let ticket = ticket_with_policy(
+            "unity_uloop",
+            vec!["printf compile", "printf run-tests", "printf screenshot"],
+        );
+
+        let result = route_verification(&ticket, &project.opts("run-unity-uloop"))
+            .expect("unity_uloop should route through mocked commands");
+
+        assert_eq!(result.status, VerificationStatus::Passed);
+        assert_eq!(result.policy_used, "unity_uloop");
+        assert_eq!(result.evidence_paths.len(), 3);
+        for path in &result.evidence_paths {
+            assert!(project.path.join(path).is_file());
+        }
+        let all_evidence = result
+            .evidence_paths
+            .iter()
+            .map(|path| fs::read_to_string(project.path.join(path)).expect("evidence readable"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all_evidence.contains("phase=compile"));
+        assert!(all_evidence.contains("phase=test"));
+        assert!(all_evidence.contains("phase=screenshot"));
+    }
+
+    #[test]
+    fn h7_godot_cli_missing_path_creates_blocker_evidence() {
+        let project = TestProject::new("godot-missing");
+        let ticket = ticket_with_policy("godot_cli", vec!["__lux_missing_godot_cli__"]);
+
+        let result = route_verification(&ticket, &project.opts("run-godot-missing"))
+            .expect("missing Godot CLI should create blocker evidence");
+
+        assert_eq!(result.status, VerificationStatus::Unsupported);
+        assert_eq!(result.policy_used, "godot_cli");
+        assert_eq!(result.evidence_paths.len(), 1);
+        let evidence = fs::read_to_string(project.path.join(&result.evidence_paths[0]))
+            .expect("blocker evidence should be readable");
+        assert!(evidence.contains("missing CLI"));
+        assert!(evidence.contains("\"policy\":\"godot_cli\""));
+
+        let blockers = FileTicketStore::new(&project.path)
+            .list(TicketFilter::default())
+            .expect("blocker tickets should list");
+        assert!(
+            blockers
+                .iter()
+                .any(|ticket| ticket.title.contains("godot_cli")
+                    && ticket.description.contains("missing CLI")),
+            "missing Godot CLI must create a blocker ticket"
+        );
+    }
 }

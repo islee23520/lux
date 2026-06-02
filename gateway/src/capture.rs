@@ -479,7 +479,9 @@ mod tests {
     };
 
     async fn bridge_project() -> (PathBuf, Arc<Mutex<Vec<Value>>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = TcpListener::from_std(listener).unwrap();
         let port = listener.local_addr().unwrap().port();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured_requests = requests.clone();

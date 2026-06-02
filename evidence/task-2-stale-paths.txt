@@ -1,1 +1,0 @@
-stale path scan passed

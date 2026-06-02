@@ -6,9 +6,13 @@ use std::{
 use chrono::Utc;
 use lux::{
     lux_lock::{acquire_lux_lock, DEFAULT_STALE_THRESHOLD_SECS},
-    lux_run::{execute_task, RunConfig, RunLifecycle},
+    lux_run::{execute_task, plan_phase, RunConfig, RunLifecycle},
     lux_run_recover::ExecutionSession,
     lux_run_state::{RunState, RunStatus},
+    lux_spec::{
+        lux_save, DomainSpec, Requirement, RequirementPriority, RequirementStatus, RoadmapTicket,
+        SpecProject, TargetsSpec, TestingSpec, UnitySpec,
+    },
     lux_task_dag::{TaskDAG, TaskNode, TaskStatus},
     lux_team_profile::{TeamProfile, TeamSizePreset},
 };
@@ -89,6 +93,97 @@ fn make_lifecycle_with_task(project_root: &Path, task_id: &str) -> RunLifecycle 
     )
 }
 
+fn seed_execution_grade_spec(project_root: &Path) {
+    let mut spec = SpecProject {
+        project_id: "h10-game".to_string(),
+        project_name: "H10 Game".to_string(),
+        unity: Some(UnitySpec {
+            required_version: Some("6000.0".to_string()),
+            detected_version: Some("6000.0.75f1".to_string()),
+            render_pipeline: Some("urp".to_string()),
+            scripting_backend: Some("mono".to_string()),
+            ..UnitySpec::default()
+        }),
+        targets: Some(TargetsSpec {
+            platforms: vec!["macos".to_string()],
+            min_sdk: Default::default(),
+            test_platform: Some("unity_editmode".to_string()),
+            target_platforms: Vec::new(),
+        }),
+        testing: Some(TestingSpec::default()),
+        ..SpecProject::default()
+    };
+
+    let mut mechanics = DomainSpec::new("mechanics", "domains/mechanics.md", 0.0);
+    mechanics.defined = true;
+    mechanics.requirements.push(Requirement {
+        id: "mechanics.jump".to_string(),
+        text: "Player can jump with coyote time".to_string(),
+        priority: RequirementPriority::Must,
+        status: RequirementStatus::Accepted,
+        acceptance_criteria: vec!["EditMode test covers coyote timing".to_string()],
+        rationale: None,
+        source_question: None,
+        depends_on: Vec::new(),
+        conflicts_with: Vec::new(),
+        confidence: Some(0.95),
+    });
+    spec.domains.mechanics = Some(mechanics);
+    spec.roadmap.tickets.push(RoadmapTicket {
+        id: "ticket-playable-jump".to_string(),
+        title: "Implement playable jump".to_string(),
+        domain: Some("mechanics".to_string()),
+        requirement_refs: vec!["mechanics.jump".to_string()],
+        status: Some("todo".to_string()),
+        priority: Some("high".to_string()),
+    });
+
+    lux_save(project_root, &spec).expect("seed .lux/specs spec");
+    fs::create_dir_all(project_root.join(".lux/specs/domains")).expect("create domain docs");
+    fs::write(
+        project_root.join(".lux/specs/domains/mechanics.md"),
+        "Player jump contract.",
+    )
+    .expect("write mechanics doc");
+}
+
+fn make_lifecycle_for_dry_run(project_root: &Path, goal: &str) -> RunLifecycle {
+    seed_execution_grade_spec(project_root);
+    let mut state = RunState::idle(project_root).expect("idle state");
+    state.run_id = "test-run-001".to_string();
+    state
+        .transition_to(RunStatus::Planning, "test")
+        .expect("transition to planning");
+    state.save(project_root).expect("save state");
+
+    let spec = lux::lux_spec::lux_load(project_root).expect("load seeded spec");
+    let dag = TaskDAG::from_spec(&spec);
+    let config = RunConfig {
+        project_path: project_root.to_path_buf(),
+        team_preset: TeamSizePreset::Small,
+        dry_run: true,
+        goal: Some(goal.to_string()),
+    };
+    let lux_dir = project_root.join(".lux");
+    let lock_guard = acquire_lux_lock(
+        &lux_dir,
+        "test-agent",
+        "test",
+        DEFAULT_STALE_THRESHOLD_SECS,
+        true,
+    )
+    .expect("acquire lock for dry run test");
+
+    RunLifecycle::from_recovered_parts(
+        config,
+        dag,
+        TeamProfile::default(),
+        state,
+        Default::default(),
+        Some(lock_guard),
+    )
+}
+
 #[test]
 fn execute_task_sets_awaiting_evidence_not_done() {
     let temp = TestTempDir::new("dispatch-not-done");
@@ -103,6 +198,106 @@ fn execute_task_sets_awaiting_evidence_not_done() {
         node.status,
         TaskStatus::AwaitingEvidence,
         "dispatch must set AwaitingEvidence, not Done"
+    );
+}
+
+#[test]
+fn dry_run_plan_persists_current_goal_from_specs() {
+    let temp = TestTempDir::new("current-goal");
+    let mut lifecycle = make_lifecycle_for_dry_run(
+        temp.path(),
+        "make next playable step; $(touch /tmp/lux-h10-injection)",
+    );
+
+    plan_phase(&mut lifecycle).expect("plan phase should persist next goal");
+
+    let plan_path = temp.path().join(".lux/runs/test-run-001/plan.json");
+    let plan: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&plan_path).expect("plan should be readable"))
+            .expect("plan should be JSON");
+    assert!(
+        plan["nextGoal"]["sourceSpecRefs"]
+            .as_array()
+            .expect("plan next goal refs should be an array")
+            .iter()
+            .any(|value| value == ".lux/specs/spec.json"),
+        "plan must reference canonical .lux/specs source"
+    );
+
+    let current_path = temp.path().join(".lux/goals/current.json");
+    let current: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&current_path).expect("current goal should be readable"),
+    )
+    .expect("current goal should be JSON");
+    assert_eq!(current["runId"], "test-run-001");
+    assert!(
+        current["goalId"]
+            .as_str()
+            .expect("goal id should be a string")
+            .starts_with("ambiguity:"),
+        "current goal should select the highest-priority spec-derived next goal"
+    );
+    assert_eq!(current["selectedEngine"], "unity");
+    assert!(
+        current["sourceSpecRefs"]
+            .as_array()
+            .expect("current refs should be an array")
+            .iter()
+            .any(|value| value == ".lux/specs/spec.json"),
+        "current goal must reference canonical .lux/specs source"
+    );
+    assert_eq!(
+        current["requestedGoal"], "make next playable step; $(touch /tmp/lux-h10-injection)",
+        "requested goal text must be persisted as data"
+    );
+    assert!(
+        !Path::new("/tmp/lux-h10-injection").exists(),
+        "goal text must not be executed as a shell command"
+    );
+
+    let decisions = fs::read_to_string(temp.path().join(".lux/specs/decisions.jsonl"))
+        .expect("decision ledger should be readable");
+    assert!(
+        decisions.lines().any(|line| {
+            let event: serde_json::Value =
+                serde_json::from_str(line).expect("decision event should be JSON");
+            event["event"] == "goal_selected"
+                && event["goalId"] == current["goalId"]
+                && event["sourceSpecRefs"]
+                    .as_array()
+                    .is_some_and(|refs| refs.iter().any(|value| value == ".lux/specs/spec.json"))
+        }),
+        "decision ledger must append a matching goal_selected event"
+    );
+}
+
+#[test]
+fn dry_run_plan_prefers_blocking_contradiction_over_ambiguity() {
+    let temp = TestTempDir::new("current-goal-contradiction");
+    let mut lifecycle = make_lifecycle_for_dry_run(temp.path(), "make next playable step");
+    fs::write(
+        temp.path().join(".lux/specs/preferences.json"),
+        r#"{"conflicts":[{"domain":"mechanics","severity":"blocking"}]}"#,
+    )
+    .expect("write blocking contradiction fixture");
+
+    plan_phase(&mut lifecycle).expect("plan phase should select contradiction first");
+
+    let current_path = temp.path().join(".lux/goals/current.json");
+    let current: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&current_path).expect("current goal should be readable"),
+    )
+    .expect("current goal should be JSON");
+    assert_eq!(
+        current["goalId"], "contradiction:mechanics",
+        "blocking contradictions must outrank ambiguity and executable milestones"
+    );
+    assert!(
+        current["rationale"]
+            .as_str()
+            .expect("rationale should be text")
+            .contains("unresolved blocking contradiction"),
+        "rationale must explain contradiction priority"
     );
 }
 

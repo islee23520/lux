@@ -1,2 +1,0 @@
-FAIL: skills-root - /tmp/lux-missing-skills does not exist
-exit=1

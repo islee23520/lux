@@ -139,14 +139,13 @@ Initialize or repair the Lux workspace state for a Unity project.
 ## When to Use
 - First time an AI agent starts work in a Unity project that should use Lux.
 - `.lux/` is missing, incomplete, or suspected to be corrupted.
-- The OpenCode plugin under `.opencode/plugins/` is missing after project setup.
 - A team profile must be applied before automated Lux workflows start.
 - A controlled reinitialization is needed with `--force`.
 
 ## Commands
 | Command | Use |
 | --- | --- |
-| `lux init` | Create `.lux/`, write `spec.json`, and install the OpenCode plugin. |
+| `lux init` | Create `.lux/`, write `spec.json`, and prepare server/MCP state. |
 | `lux init --force` | Reinitialize generated Lux state without deleting project work. |
 | `lux init --team-profile <name>` | Initialize using a named AI team profile. |
 | `lux doctor` | Confirm initialization health after setup. |
@@ -155,7 +154,7 @@ Initialize or repair the Lux workspace state for a Unity project.
 ```bash
 lux init
 ```
-Expected: `.lux/spec.json` exists and `.opencode/plugins/` contains the Lux plugin.
+Expected: `.lux/spec.json` exists and the project can use Lux CLI/API/MCP surfaces.
 
 ```bash
 lux init --team-profile small-team
@@ -170,7 +169,7 @@ Expected: regenerated Lux metadata and a clean diagnostic report.
 ## Gotchas
 - `lux init` is project-scoped; run it from the Unity project root or pass the correct project path through the caller.
 - `--force` repairs Lux state but must not be treated as a request to delete worktrees, tickets, or user assets.
-- Post-init success means `.lux/spec.json` and `.opencode/plugins/` are present; verify before running automation.
+- Post-init success means `.lux/spec.json` and server/MCP state are present; verify before running automation.
 "#;
 
 const LUX_SPEC_SKILL: &str = r#"# lux-spec — Spec Management
@@ -266,7 +265,7 @@ Trigger and monitor the Unity WebGL build pipeline through Lux.
 - A verified feature needs a distributable WebGL build.
 - CI or release workflow must confirm the project builds outside the editor.
 - Verification requires build artifacts after compile and bridge checks pass.
-- Build status must be tracked through the Lux API or dashboard.
+- Build status must be tracked through the Lux API or MCP surface.
 - You need a reproducible build command for scripts.
 
 ## Commands
@@ -434,7 +433,7 @@ Diagnose and optionally repair Lux workspace, Unity, bridge, and agent integrati
 - Before starting significant work in an unfamiliar project.
 - After crashes, interrupted runs, missing plugins, or strange status output.
 - As a CI/CD gate before automated Lux workflows.
-- When `.agents/skills/` or `.opencode/plugins/` appears incomplete.
+- When `.agents/skills/` appears incomplete.
 - Before using `--fix` to let Lux propose safe repairs.
 
 ## Commands

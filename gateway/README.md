@@ -1,9 +1,14 @@
 # Lux Rust Gateway
 
-The Lux Rust Gateway is the central orchestration layer for `com.linalab.lux`. It provides the CLI and HTTP/WebSocket API.
+The Lux Rust Gateway is the central orchestration layer for `com.linalab.lux`.
+LUX is a local-first server/MCP evidence-gated automation control plane for game projects, and the gateway is its side-effect owner: CLI, HTTP/WebSocket APIs, MCP stdio serving, bridge installation, engine command execution, and `.lux/` evidence writes.
 
 > [!NOTE]
-> The canonical LUX implementation roadmap/status is maintained in `.lux/roadmap.json`. User/game requirements, tickets, and active run lifecycle live in their ADR-defined domain files (`.lux/spec.json`, `.lux/tickets/*.json`, and `.lux/run-state.json`). This document provides a high-level overview of the gateway's role and current capabilities.
+> The canonical LUX implementation roadmap/status is maintained in `.lux/roadmap.json`.
+> User/game requirements live in canonical `.lux/specs/spec.json`.
+> `.lux/spec.json` is a compatibility mirror / legacy read fallback.
+> Tickets and active run lifecycle live in `.lux/tickets/*.json` and `.lux/run-state.json`.
+> This document provides a high-level overview of the gateway's role and current capabilities.
 
 ## Run
 
@@ -14,10 +19,9 @@ LUX_GATEWAY_TOKEN=$(uuidgen) cargo run -- serve --host 127.0.0.1 --port 17340
 
 ## Install or Update
 
-From a Unity Package Manager install of `com.linalab.lux`, open `Window >
-Linalab > Lux Workbench` and click **Install Global Rust CLI**. You can also
-run `Tools > Linalab > Lux > Rust CLI > Install or Update Global Tool`.
-Both paths install or update the packaged Rust binary globally through Cargo.
+From a Unity Package Manager install of `com.linalab.lux`, run
+`Tools > Linalab > Lux > Rust CLI > Install or Update Global Tool`. This installs
+or updates the packaged Rust binary globally through Cargo.
 
 From a terminal, run the same install/update command directly:
 
@@ -32,7 +36,7 @@ with the actual path to this `gateway/` directory.
 
 `lux unity status` reads `UserSettings/LuxBridgeSettings.json`, which is written
 from Unity through `Tools > Linalab > Lux > Unity Bridge > Write Lux Bridge
-Settings` or the Lux Workbench. It only uses Lux-owned settings files.
+Settings`. It only uses Lux-owned settings files.
 
 Environment variables are also supported:
 
@@ -47,10 +51,10 @@ for each development session and pass the same value to Unity through the
 ## Status & Roadmap
 
 The gateway implementation follows the project-wide roadmap:
-- **Phase A (Core)**: ✅ Mostly complete.
-- **Phase B (Events)**: ✅ Mostly complete.
-- **Phase C (Dashboard)**: ⚠️ Partial.
-- **Phase D/E (Skills/OpenCode)**: 🏗️ Scaffolded.
+- **Phase A (Core)**: active Rust CLI/server foundation.
+- **Phase B (Events)**: active event and evidence projection foundation.
+- **Phase C (Server/MCP control plane)**: current repository surface.
+- **Phase D/E (Skills and agent execution)**: scaffolded through gateway templates, MCP tools, installed workflow skills, and `.lux/` evidence; legacy adapter roots are not active source.
 
 Autonomous spec-to-ticket execution is planned but not yet implemented.
 
@@ -103,8 +107,9 @@ Existing bridge tools remain available:
 The first game-development milestone adds these tools:
 
 - `lux_game_spec_write` — write or import a minimal game/project spec through
-  the Lux spec path, returning the `.lux/spec.json` path plus validation and
-  detection summaries.
+  the Lux spec path, returning the canonical `.lux/specs/spec.json` path plus
+  validation and detection summaries. `.lux/spec.json` remains a compatibility
+  fallback for older project state.
 - `lux_game_ticket_prepare` — create or select one safe first-loop ticket using
   the Lux ticket store, including objective, non-goals, allowlist, verification
   policy, and ticket path.
@@ -129,7 +134,8 @@ The MCP game-development loop is intentionally bounded:
 
 1. Install or refresh the bridge.
 2. Run diagnostics.
-3. Write/import a minimal spec into `.lux/spec.json`.
+3. Write/import a minimal spec into canonical `.lux/specs/spec.json`.
+   Keep `.lux/spec.json` only as a compatibility fallback.
 4. Create/select one ticket under `.lux/tickets/`.
 5. Execute one safe maneuver through existing Lux/Unity surfaces.
 6. Run compile/test/playmode or configured validation where available.
