@@ -1619,6 +1619,45 @@ fn rust_lux_unity_status_reads_lux_bridge_settings_without_external_settings() {
 }
 
 #[test]
+fn rust_lux_unity_status_reports_gateway_url_and_reachability() {
+    let temp_dir = create_temp_dir("lux-unity-status-gateway");
+    let project_root = temp_dir.join("Project");
+    let user_settings = project_root.join("UserSettings");
+    fs::create_dir_all(&user_settings).expect("create UserSettings dir");
+    fs::write(
+        user_settings.join("LuxBridgeSettings.json"),
+        r#"{
+  "schema_version": 1,
+  "protocol": "lux.unity.bridge.v1",
+  "package_name": "com.linalab.lux",
+  "package_version": "0.1.0",
+  "project_root": "/tmp/lux-project",
+  "rust_gateway_path": "/tmp/lux/RustGateway~",
+  "gateway_url": "http://127.0.0.1:1",
+  "unity_server_port": null,
+  "generated_at_utc": "2026-04-30T00:00:00Z"
+}
+"#,
+    )
+    .expect("write LuxBridgeSettings.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "unity",
+            "status",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux unity status");
+
+    assert_command_success(&output, "lux unity status with gateway URL");
+    let status: Value = serde_json::from_slice(&output.stdout).expect("status JSON");
+    assert_eq!(status["gateway_url"], "http://127.0.0.1:1");
+    assert_eq!(status["gateway_reachable"], false);
+}
+
+#[test]
 fn rust_lux_unity_backend_list_commands_reads_protocol_info() {
     let temp_dir = create_temp_dir("lux-unity-backend-list-commands");
     let project_root = temp_dir.join("Project");

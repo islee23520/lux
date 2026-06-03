@@ -58,7 +58,7 @@ pub mod visual_regression;
 use std::{
     fs,
     io::{BufRead, BufReader, ErrorKind, Read, Write},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
     sync::OnceLock,
@@ -1276,6 +1276,8 @@ struct LuxBridgeSettings {
     project_root: String,
     rust_gateway_path: String,
     #[serde(default)]
+    gateway_url: Option<String>,
+    #[serde(default)]
     unity_server_port: Option<u16>,
     generated_at_utc: String,
 }
@@ -2056,10 +2058,34 @@ fn run_self_update_command(args: SelfUpdateArgs) -> anyhow::Result<()> {
 }
 
 fn is_tcp_port_open(host: &str, port: u16) -> bool {
-    let Ok(address) = format!("{host}:{port}").parse::<SocketAddr>() else {
+    is_tcp_endpoint_open(host, port)
+}
+
+fn is_tcp_endpoint_open(host: &str, port: u16) -> bool {
+    let Ok(addresses) = (host, port).to_socket_addrs() else {
         return false;
     };
-    std::net::TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
+
+    addresses.into_iter().any(|address| {
+        std::net::TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
+    })
+}
+
+fn is_gateway_url_reachable(gateway_url: Option<&str>) -> bool {
+    let Some(gateway_url) = gateway_url else {
+        return false;
+    };
+    let Ok(url) = reqwest::Url::parse(gateway_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return false;
+    };
+
+    is_tcp_endpoint_open(host, port)
 }
 
 // ---------------------------------------------------------------------------
@@ -4428,6 +4454,8 @@ fn print_lux_unity_status(args: UnityStatusArgs) -> anyhow::Result<()> {
             "package_version": settings.package_version,
             "project_root": settings.project_root,
             "rust_gateway_path": settings.rust_gateway_path,
+            "gateway_url": settings.gateway_url,
+            "gateway_reachable": is_gateway_url_reachable(settings.gateway_url.as_deref()),
             "unity_server_port": settings.unity_server_port,
             "generated_at_utc": settings.generated_at_utc,
             "settings_path": settings_path,
