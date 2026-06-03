@@ -21,6 +21,7 @@ RustGateway~/target/
 
 # Unity meta files
 *.meta
+!bridge/**/*.meta
 
 # IDE
 .vs/
