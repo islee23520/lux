@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LUX - Local-first Game Automation Control Plane</title>
+    <meta
+      name="description"
+      content="LUX is a local-first server and MCP evidence loop for AI-assisted game automation."
+    />
+    <link rel="canonical" href="./index.html" />
+    <link rel="alternate" hreflang="en" href="./index.html?lang=en" />
+    <link rel="alternate" hreflang="ko" href="./index.html?lang=ko" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2307110f'/%3E%3Cpath d='M17 45V18h6v22h13v5H17Zm20 0-8-14 8-13h7l-8 13 9 14h-8Z' fill='%237ef3a5'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas id="evidence-canvas" aria-hidden="true"></canvas>
+    <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="LUX home">
+        <span class="brand-mark">LX</span>
+        <span class="brand-copy">
+          <span>LUX</span>
+          <small data-i18n="brandKicker">Local automation toolkit</small>
+        </span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#rhythm" data-i18n="navRhythm">Rhythm</a>
+        <a href="#architecture" data-i18n="navArchitecture">Architecture</a>
+        <a href="#engines" data-i18n="navEngines">Engines</a>
+        <a href="#verify" data-i18n="navVerify">Verify</a>
+      </nav>
+
+      <div class="language-switcher" aria-label="Language">
+        <button type="button" data-lang-option="en" aria-pressed="true">EN</button>
+        <button type="button" data-lang-option="ko" aria-pressed="false">KO</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow" data-i18n="heroEyebrow">English is the base content model</p>
+          <h1 data-i18n="heroTitle">Local-first evidence loop for AI game automation.</h1>
+          <p class="hero-lede" data-i18n="heroLede">
+            LUX gives coding agents a truthful runtime surface: project intent, engine state,
+            bridge status, logs, screenshots, and verification results before progress is claimed.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#architecture" data-i18n="heroPrimary">Explore the control plane</a>
+            <a class="button secondary" href="#engines" data-i18n="heroSecondary">View capability tiers</a>
+          </div>
+        </div>
+
+        <aside class="runtime-panel" aria-label="Runtime signal">
+          <div class="panel-header">
+            <span data-i18n="panelTitle">Live truth route</span>
+            <span class="status-dot"></span>
+          </div>
+          <ol class="signal-stack">
+            <li>
+              <span>.lux</span>
+              <strong data-i18n="signalTruth">runtime truth</strong>
+            </li>
+            <li>
+              <span>gateway</span>
+              <strong data-i18n="signalGateway">CLI / HTTP / MCP</strong>
+            </li>
+            <li>
+              <span>bridge</span>
+              <strong data-i18n="signalBridge">engine adapter</strong>
+            </li>
+            <li>
+              <span>evidence</span>
+              <strong data-i18n="signalEvidence">verified result</strong>
+            </li>
+          </ol>
+        </aside>
+      </section>
+
+      <section class="section rhythm-section" id="rhythm">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="rhythmEyebrow">Operating rhythm</p>
+          <h2 data-i18n="rhythmTitle">Observe, route, act, verify, project.</h2>
+          <p data-i18n="rhythmIntro">
+            LUX deliberately slows automation down enough to make each claim inspectable.
+          </p>
+        </div>
+
+        <div class="rhythm-grid">
+          <article class="step-card">
+            <span>01</span>
+            <h3 data-i18n="observeTitle">Observe</h3>
+            <p data-i18n="observeBody">Read `.lux/`, engine status, logs, hierarchy, screenshots, and recent run evidence.</p>
+          </article>
+          <article class="step-card">
+            <span>02</span>
+            <h3 data-i18n="routeTitle">Route</h3>
+            <p data-i18n="routeBody">Choose the verified engine surface instead of assuming every adapter is equally mature.</p>
+          </article>
+          <article class="step-card">
+            <span>03</span>
+            <h3 data-i18n="actTitle">Act</h3>
+            <p data-i18n="actBody">Run commands through gateway-owned CLI, HTTP/WebSocket, MCP, or bridge paths.</p>
+          </article>
+          <article class="step-card">
+            <span>04</span>
+            <h3 data-i18n="verifyTitle">Verify</h3>
+            <p data-i18n="verifyBody">Capture compile, test, run, status, screenshot, or log evidence before completion.</p>
+          </article>
+          <article class="step-card">
+            <span>05</span>
+            <h3 data-i18n="projectTitle">Project</h3>
+            <p data-i18n="projectBody">Publish only proven state into docs, skills, CLI summaries, and `.lux/` projections.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section architecture-section" id="architecture">
+        <div class="section-heading compact">
+          <p class="eyebrow" data-i18n="architectureEyebrow">Repository anatomy</p>
+          <h2 data-i18n="architectureTitle">Each layer owns one kind of truth.</h2>
+        </div>
+
+        <div class="layer-board">
+          <article>
+            <h3>.lux/</h3>
+            <p data-i18n="layerLux">Canonical runtime truth: specs, tickets, events, roadmap, sessions, and run evidence.</p>
+          </article>
+          <article>
+            <h3>gateway/</h3>
+            <p data-i18n="layerGateway">Rust CLI, Axum HTTP/WS server, MCP tools, routing, and engine orchestration.</p>
+          </article>
+          <article>
+            <h3>bridge/</h3>
+            <p data-i18n="layerBridge">Ordinary in-repository engine bridge source. No git submodule or external bridge remote.</p>
+          </article>
+          <article>
+            <h3>Skills/</h3>
+            <p data-i18n="layerSkills">Manifest-backed workflow library projected into target projects with capability guardrails.</p>
+          </article>
+          <article>
+            <h3>docs/</h3>
+            <p data-i18n="layerDocs">Human-readable projection of runtime and product reality, never the SSoT over `.lux/`.</p>
+          </article>
+          <article>
+            <h3>scripts/</h3>
+            <p data-i18n="layerScripts">Local verification, policy scanning, structure checks, and release maintenance.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section engines-section" id="engines">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="enginesEyebrow">Capability tiers</p>
+          <h2 data-i18n="enginesTitle">Unity is verified. Everything else says exactly what it can prove.</h2>
+        </div>
+
+        <div class="engine-grid">
+          <article class="engine-card verified">
+            <span data-i18n="verifiedBadge">verified</span>
+            <h3>Unity</h3>
+            <p data-i18n="unityBody">Primary public-beta path for bridge install, status, compile, tests, run evidence, and screenshots.</p>
+          </article>
+          <article class="engine-card partial">
+            <span data-i18n="partialBadge">partial</span>
+            <h3>Godot</h3>
+            <p data-i18n="godotBody">Detection, bridge install, status, and workflow projection only; build/run/test remain unsupported.</p>
+          </article>
+          <article class="engine-card planned">
+            <span data-i18n="plannedBadge">planned</span>
+            <h3>Three.js</h3>
+            <p data-i18n="threeBody">Adapter files may exist, but runtime automation remains planned until a harness is present and verified.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section verify-section" id="verify">
+        <div class="section-heading compact">
+          <p class="eyebrow" data-i18n="verifyEyebrow">Evidence surfaces</p>
+          <h2 data-i18n="verifySectionTitle">A claim is not done until a surface proves it.</h2>
+        </div>
+
+        <div class="evidence-columns">
+          <div>
+            <h3 data-i18n="commandsTitle">Commands</h3>
+            <pre><code>cargo build --workspace
+cargo test --workspace
+bash scripts/test-all.sh --quick
+lux bridge install --project-path ./Game
+lux unity status</code></pre>
+          </div>
+          <div>
+            <h3 data-i18n="evidenceTitle">What LUX captures</h3>
+            <ul>
+              <li data-i18n="evSpec">Spec and domain decisions</li>
+              <li data-i18n="evScene">Scene hierarchy and selected object context</li>
+              <li data-i18n="evLogs">Compile, console, and runtime logs</li>
+              <li data-i18n="evScreens">Screenshots and visual checks</li>
+              <li data-i18n="evRuns">Run state, tickets, and verification history</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span data-i18n="footerOne">LUX keeps local runtime truth observable.</span>
+      <a href="../README.md" data-i18n="footerDocs">Read the English base README</a>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
