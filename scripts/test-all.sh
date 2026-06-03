@@ -120,6 +120,18 @@ else
   err "project structure sanity"
 fi
 
+if (cd "$ROOT_DIR" && bash scripts/check-readme-bridge-contract.sh 2>&1); then
+  ok "README and bridge contract"
+else
+  err "README and bridge contract"
+fi
+
+if (cd "$ROOT_DIR" && bash scripts/check-website-contract.sh 2>&1); then
+  ok "website contract"
+else
+  err "website contract"
+fi
+
 if (cd "$ROOT_DIR" && { ! rg -n "axum|clap|tokio::process|std::process::Command|Command::new|crate::gateway|gateway::" crates 2>&1; }); then
   ok "core crate boundary"
 else
