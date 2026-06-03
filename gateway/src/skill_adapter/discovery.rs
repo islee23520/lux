@@ -91,6 +91,15 @@ pub fn scan_scope_roots(
 }
 
 fn scan_skill_scope(root: &Path, scope: &str, entries: &mut Vec<SkillEntry>) -> Result<()> {
+    scan_skill_scope_at(root, scope, entries, 0)
+}
+
+fn scan_skill_scope_at(
+    root: &Path,
+    scope: &str,
+    entries: &mut Vec<SkillEntry>,
+    depth: usize,
+) -> Result<()> {
     let read_dir = match fs::read_dir(root) {
         Ok(read_dir) => read_dir,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -113,21 +122,82 @@ fn scan_skill_scope(root: &Path, scope: &str, entries: &mut Vec<SkillEntry>) -> 
             continue;
         }
 
-        match frontmatter::read_skill_manifest(&directory_path) {
-            Ok(Some(manifest)) => entries.push(SkillEntry {
-                manifest,
-                directory_path,
-                scope: scope.to_string(),
-            }),
-            Ok(None) => continue,
-            Err(error) => {
-                eprintln!(
-                    "Warning: failed to discover skill directory {}: {error}",
-                    directory_path.display()
-                );
+        if is_skill_directory(&directory_path) {
+            match frontmatter::read_skill_manifest(&directory_path) {
+                Ok(Some(manifest)) => entries.push(SkillEntry {
+                    manifest,
+                    directory_path,
+                    scope: scope.to_string(),
+                }),
+                Ok(None) => continue,
+                Err(error) => {
+                    eprintln!(
+                        "Warning: failed to discover skill directory {}: {error}",
+                        directory_path.display()
+                    );
+                }
             }
+            continue;
+        }
+
+        if depth < 4 {
+            scan_skill_scope_at(&directory_path, scope, entries, depth + 1)?;
         }
     }
 
     Ok(())
+}
+
+fn is_skill_directory(directory_path: &Path) -> bool {
+    directory_path.join("manifest.json").is_file() || directory_path.join("SKILL.md").is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_scope_roots;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir_with(prefix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("lux-skill-discovery-{prefix}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn scan_scope_roots_discovers_skills_below_category_directories() {
+        let root = temp_dir_with("categorized");
+        let skill_dir = root.join("architecture").join("architecture-review");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            concat!(
+                "---\n",
+                "name: architecture-review\n",
+                "description: Review architecture boundaries.\n",
+                "category: architecture\n",
+                "source: lux\n",
+                "---\n",
+                "# Architecture Review\n",
+            ),
+        )
+        .unwrap();
+
+        let mut entries = Vec::new();
+        scan_scope_roots("core", &[root.clone()], &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].manifest.name, "architecture-review");
+        assert_eq!(
+            entries[0].manifest.category.as_deref(),
+            Some("architecture")
+        );
+        assert_eq!(entries[0].directory_path, skill_dir);
+
+        fs::remove_dir_all(root).ok();
+    }
 }

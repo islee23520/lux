@@ -1,0 +1,23 @@
+{
+  "name": "lux-unity",
+  "version": "1.0.0",
+  "description": "Unity automation commands for Lux CLI",
+  "displayName": "Lux Unity",
+  "luxVersion": ">=0.1.0",
+  "author": {
+    "name": "Linalab"
+  },
+  "keywords": [
+    "unity",
+    "compile",
+    "test",
+    "screenshot",
+    "logs",
+    "playmode",
+    "dynamic-code"
+  ],
+  "type": "core",
+  "source": null,
+  "dependencies": {},
+  "category": "workflow"
+}

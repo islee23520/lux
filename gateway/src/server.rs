@@ -4130,41 +4130,18 @@ async fn get_skill_adaptation(
         ));
     };
 
-    // Discover skills to find the matching one
-    let skill_dir = {
-        let core_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("Skills")
-            .join("skills")
-            .join(&skill_name);
-        let project_dir = project_root.join(".agents/skills").join(&skill_name);
-        let global_dir = std::env::var("HOME")
-            .ok()
-            .map(|h| PathBuf::from(h).join(".agents/skills").join(&skill_name));
-
-        if core_dir.join("manifest.json").is_file() {
-            Some(core_dir)
-        } else if project_dir.join("manifest.json").is_file() {
-            Some(project_dir)
-        } else if let Some(ref global) = global_dir {
-            if global.join("manifest.json").is_file() {
-                Some(global.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-
-    let Some(skill_dir) = skill_dir else {
+    let Some(skill) = discovery::discover_skills(Some(project_root))
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .into_iter()
+        .find(|entry| entry.manifest.name == skill_name)
+    else {
         return Err((
             StatusCode::NOT_FOUND,
             format!("skill '{skill_name}' not found"),
         ));
     };
 
-    let adaptation_path = skill_dir.join("lux-adaptation.json");
+    let adaptation_path = skill.directory_path.join("lux-adaptation.json");
     if !adaptation_path.is_file() {
         return Err((
             StatusCode::NOT_FOUND,

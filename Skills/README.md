@@ -8,13 +8,17 @@ Lux ships a tracked skill source tree for local AI workflows. The Gateway can ex
 
 ### Skills Inventory
 
-Current tree count: 46 total `SKILL.md` files under `Skills/skills`, including 20 manifest-backed built-in skills.
+Current tree count: 46 total `SKILL.md` files under `Skills/skills`, grouped by intent with category-level routing files.
 
-| Group | Count | Description |
-|----------|-------|-------------|
-| Manifest-backed built-in skills | 20 | Runtime and workflow skills with `manifest.json` plus `SKILL.md`; validated by `Skills/tools/validate-skills.sh`. |
-| Reference-only SKILL.md docs | 26 | Unity pattern and studio reference skills kept as reusable documentation; not all are release manifests. |
-| Total SKILL.md files | 46 | All skill documents currently tracked under `Skills/skills`. |
+| Category | Description |
+|----------|-------------|
+| `architecture/` | Architecture decisions, architecture review, core invariants, and LDP decisions. |
+| `review/` | LUX code review, studio code review, security audit, and performance profiling. |
+| `workflow/` | LUX game-development and Unity MCP/bridge operation workflows. |
+| `unity/` | Unity C# reference plus Unity design pattern reference skills. |
+| `studio/` | Studio brainstorming, sprint planning, phase gates, and workflow help. |
+| `quality/` | Regression, smoke, test setup/helpers, and release readiness. |
+| `bugs/` | Bug reports, triage, tech debt, retrospectives, and changelog writing. |
 
 ### Additional Resources
 - **Design Templates**: Narrative, Levels, Art-Style, Audio, Architecture, UI/UX, Testing docs
@@ -35,7 +39,8 @@ cargo run -- agents-install --project-path /path/to/project
 
 ## Architecture
 
-This repo uses a tracked-source plus projection model:
+This repo uses a game-studio-lite tracked-source plus projection model:
+- **Category directories** own routing policy through `AGENTS.md`.
 - **Manifest-backed built-in skills** are direct Gateway/CLI inventory entries.
 - **Reference-only skills** remain useful `SKILL.md` documents without being forced into release manifests.
 - **Projection tools** install selected skills into target-project agent directories.

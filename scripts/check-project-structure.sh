@@ -10,6 +10,13 @@ required_roots=(
   "bridge"
   "Skills"
   "Skills/skills"
+  "Skills/skills/architecture"
+  "Skills/skills/review"
+  "Skills/skills/workflow"
+  "Skills/skills/unity"
+  "Skills/skills/studio"
+  "Skills/skills/quality"
+  "Skills/skills/bugs"
   "docs"
   "scripts"
 )
@@ -54,7 +61,24 @@ if [ ! -f "$ROOT_DIR/gateway/Cargo.toml" ]; then
   exit 1
 fi
 
-if ! find "$ROOT_DIR/Skills/skills" -mindepth 2 -maxdepth 2 -name manifest.json | grep -q .; then
+flat_skill_dirs="$({
+  find "$ROOT_DIR/Skills/skills" -mindepth 1 -maxdepth 1 -type d \
+    ! -name architecture \
+    ! -name review \
+    ! -name workflow \
+    ! -name unity \
+    ! -name studio \
+    ! -name quality \
+    ! -name bugs \
+    -print
+} || true)"
+if [ -n "$flat_skill_dirs" ]; then
+  echo "Skills must live under category directories, not as flat Skills/skills children:" >&2
+  echo "$flat_skill_dirs" >&2
+  exit 1
+fi
+
+if ! find "$ROOT_DIR/Skills/skills" -mindepth 3 -maxdepth 5 -name manifest.json | grep -q .; then
   echo "Skills must contain per-skill manifest.json files" >&2
   exit 1
 fi

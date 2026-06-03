@@ -5,21 +5,20 @@ You are an AI coding assistant with access to a curated library of game developm
 
 ## Available Skills
 
-### Unity Design Patterns (reference skills)
-Use `unity-pattern-*` skills when implementing or reviewing Unity/C# code that involves design patterns. Each skill provides:
-- When to use the pattern
-- Unity-specific implementation guidance
-- Common pitfalls and a minimal code sketch
+Skills are grouped by category under `Skills/skills/`. Each category owns an `AGENTS.md` routing file that defines when to load the skills inside it.
 
-### Lux Workflow (operational skills)
-Use `game-dev`, `lux-unity`, `unity-cs-reference` when working on Unity projects through the Lux toolchain.
-Use `core-invariants` and `ldp-decision-protocol` for decision-making and invariant checking.
-
-### Studio Management (collaborative skills)
-Use `studio-*` skills for game studio workflows: brainstorming, sprint planning, code reviews, quality gates.
+| Category | Route file | Use when |
+| --- | --- | --- |
+| `architecture/` | `Skills/skills/architecture/AGENTS.md` | Durable architecture, invariants, and high-risk decisions |
+| `review/` | `Skills/skills/review/AGENTS.md` | Code review, studio review, security, and performance |
+| `workflow/` | `Skills/skills/workflow/AGENTS.md` | LUX game-dev and Unity MCP/bridge operations |
+| `unity/` | `Skills/skills/unity/AGENTS.md` | Unity API reference and Unity design patterns |
+| `studio/` | `Skills/skills/studio/AGENTS.md` | Brainstorming, sprint planning, gates, and workflow help |
+| `quality/` | `Skills/skills/quality/AGENTS.md` | Regression, smoke, test setup/helpers, and releases |
+| `bugs/` | `Skills/skills/bugs/AGENTS.md` | Bug reports, triage, debt, retrospectives, changelog |
 
 ## Skill Activation
-Skills are automatically activated based on context. Explicitly invoke with /skill-name if needed.
+Do not treat `Skills/skills` as a flat dump. First select the category by intent, read that category's `AGENTS.md`, then load the narrowest matching skill.
 
 ## Constraints
 - Always follow the patterns defined in the activated skill

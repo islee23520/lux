@@ -5,9 +5,36 @@ description: "Lux Skills Federation - Consolidated game development skills for A
 reference: "https://github.com/Donchitos/Claude-Code-Game-Studios"
 
 categories:
-  reference:
-    description: "Static design pattern and API reference skills"
+  architecture:
+    description: "Durable architecture decisions, invariant checks, and ethical decision gates"
+    routing: "Skills/skills/architecture/AGENTS.md"
     skills:
+      - architecture-decision
+      - architecture-review
+      - core-invariants
+      - ldp-decision-protocol
+
+  review:
+    description: "Implementation review, security review, and performance investigation"
+    routing: "Skills/skills/review/AGENTS.md"
+    skills:
+      - code-review
+      - studio-code-review
+      - security-audit
+      - perf-profile
+
+  workflow:
+    description: "LUX game-development and Unity MCP/bridge operation skills"
+    routing: "Skills/skills/workflow/AGENTS.md"
+    skills:
+      - game-dev
+      - lux-unity
+
+  unity:
+    description: "Unity API reference and Unity design pattern skills"
+    routing: "Skills/skills/unity/AGENTS.md"
+    skills:
+      - unity-cs-reference
       - unity-pattern-adapter
       - unity-pattern-builder
       - unity-pattern-command
@@ -30,147 +57,158 @@ categories:
       - unity-pattern-state
       - unity-pattern-strategy
 
-  workflow:
-    description: "Runtime workflow and operation skills"
-    skills:
-      - game-dev
-      - lux-unity
-      - unity-cs-reference
-      - core-invariants
-      - ldp-decision-protocol
-
   studio:
-    description: "Studio management and collaboration skills (adapted from CCGS)"
+    description: "Studio management and collaboration skills adapted from CCGS"
+    routing: "Skills/skills/studio/AGENTS.md"
     skills:
       - studio-brainstorm
-      - studio-code-review
       - studio-sprint-plan
       - studio-gate-check
       - studio-help
 
+  quality:
+    description: "Testing, smoke checks, release readiness, and regression evidence"
+    routing: "Skills/skills/quality/AGENTS.md"
+    skills:
+      - regression-suite
+      - smoke-check
+      - test-setup
+      - test-helpers
+      - release-checklist
+
+  bugs:
+    description: "Bug reporting, triage, technical debt, retrospectives, and changelogs"
+    routing: "Skills/skills/bugs/AGENTS.md"
+    skills:
+      - bug-report
+      - bug-triage
+      - tech-debt
+      - retrospective
+      - changelog
+
 skills:
   - name: unity-pattern-adapter
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/adapter/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-builder
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/builder/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-command
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/command/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-composite
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/composite/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-decorator
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/decorator/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-dependency-injection
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/dependency-injection/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-dirty-flag
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/dirty-flag/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-facade
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/facade/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-factory-method
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/factory-method/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-mediator
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/mediator/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-memento
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/memento/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-mvp
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/mvp/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-object-pooling
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/object-pooling/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-observer
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/observer/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-prototype
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/prototype/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-proxy
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/proxy/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-service-locator
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/service-locator/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-singleton
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/singleton/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-spatial-partition
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/spatial-partition/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-state
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/state/SKILL.md
     status: canonical
     platforms: [claude-code, opencode]
   - name: unity-pattern-strategy
-    category: reference
+    category: unity
     source: unity-design-patterns-skills
     source_path: patterns/strategy/SKILL.md
     status: canonical
@@ -179,31 +217,31 @@ skills:
   - name: game-dev
     category: workflow
     source: lux
-    source_path: Skills/game-dev/SKILL.md
+    source_path: Skills/skills/workflow/game-dev/SKILL.md
     status: canonical
     platforms: [opencode]
   - name: lux-unity
     category: workflow
     source: lux
-    source_path: Skills/lux-unity/SKILL.md
+    source_path: Skills/skills/workflow/lux-unity/SKILL.md
     status: canonical
     platforms: [opencode]
   - name: unity-cs-reference
-    category: workflow
+    category: unity
     source: lux
-    source_path: Skills/unity-cs-reference/SKILL.md
+    source_path: Skills/skills/unity/unity-cs-reference/SKILL.md
     status: canonical
     platforms: [opencode]
   - name: core-invariants
-    category: workflow
+    category: architecture
     source: lux
-    source_path: Skills/core-invariants/SKILL.md
+    source_path: Skills/skills/architecture/core-invariants/SKILL.md
     status: canonical
     platforms: [opencode]
   - name: ldp-decision-protocol
-    category: workflow
+    category: architecture
     source: lux
-    source_path: Skills/ldp-decision-protocol/SKILL.md
+    source_path: Skills/skills/architecture/ldp-decision-protocol/SKILL.md
     status: canonical
     platforms: [opencode]
 
@@ -214,7 +252,7 @@ skills:
     status: adapted
     platforms: [opencode]
   - name: studio-code-review
-    category: studio
+    category: review
     source: chronos-adapted
     source_path: .claude/skills/code-review/SKILL.md
     status: adapted

@@ -36,9 +36,57 @@ if [ ! -d "$SKILLS_ROOT" ]; then
   exit 1
 fi
 
+required_categories=(
+  architecture
+  review
+  workflow
+  unity
+  studio
+  quality
+  bugs
+)
+
+for category in "${required_categories[@]}"; do
+  category_dir="$SKILLS_ROOT/$category"
+  if [ ! -d "$category_dir" ]; then
+    print_result "FAIL" "category-$category" "missing category directory"
+    overall_status=1
+    continue
+  fi
+  if [ ! -f "$category_dir/AGENTS.md" ]; then
+    print_result "FAIL" "category-$category" "missing AGENTS.md routing file"
+    overall_status=1
+  else
+    print_result "PASS" "category-$category" "AGENTS.md routing file exists"
+  fi
+done
+
+flat_skill_dirs="$({
+  find "$SKILLS_ROOT" -mindepth 1 -maxdepth 1 -type d \
+    ! -name architecture \
+    ! -name review \
+    ! -name workflow \
+    ! -name unity \
+    ! -name studio \
+    ! -name quality \
+    ! -name bugs \
+    -print
+} || true)"
+if [ -n "$flat_skill_dirs" ]; then
+  print_result "FAIL" "category-layout" "skills must live below category directories"
+  printf '%s\n' "$flat_skill_dirs"
+  overall_status=1
+else
+  print_result "PASS" "category-layout" "no flat skill directories"
+fi
+
+skill_count=0
 while IFS= read -r -d '' skill_dir; do
+  skill_count=$((skill_count + 1))
   skill_name="$(basename "$skill_dir")"
   skill_file="$skill_dir/SKILL.md"
+  relative_skill_dir="${skill_dir#"$SKILLS_ROOT"/}"
+  category_name="${relative_skill_dir%%/*}"
 
   if [ ! -f "$skill_file" ]; then
     print_result "FAIL" "$skill_name" "missing SKILL.md"
@@ -80,6 +128,29 @@ while IFS= read -r -d '' skill_dir; do
     fi
   done
 
+  declared_category="$({
+    awk '/^category:[[:space:]]+/ { sub(/^category:[[:space:]]+/, "", $0); print; exit }' "$skill_file"
+  })"
+  if [ "$declared_category" = "$category_name" ]; then
+    print_result "PASS" "$skill_name" "frontmatter category matches $category_name"
+  else
+    print_result "FAIL" "$skill_name" "frontmatter category '$declared_category' does not match category '$category_name'"
+    overall_status=1
+  fi
+
+  manifest_file="$skill_dir/manifest.json"
+  if [ -f "$manifest_file" ]; then
+    manifest_category="$(
+      node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(value.category || "");' "$manifest_file"
+    )"
+    if [ "$manifest_category" = "$category_name" ]; then
+      print_result "PASS" "$skill_name" "manifest category matches $category_name"
+    else
+      print_result "FAIL" "$skill_name" "manifest category '$manifest_category' does not match category '$category_name'"
+      overall_status=1
+    fi
+  fi
+
   declared_name="$({
     awk '/^name:[[:space:]]+/ { sub(/^name:[[:space:]]+/, "", $0); print; exit }' "$skill_file"
   })"
@@ -97,7 +168,14 @@ while IFS= read -r -d '' skill_dir; do
     print_result "FAIL" "$skill_name" "line count $line_count exceeds 500"
     overall_status=1
   fi
-done < <(find "$SKILLS_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+done < <(find "$SKILLS_ROOT" -mindepth 2 -maxdepth 4 -type d -exec test -f '{}/SKILL.md' ';' -print0 | sort -z)
+
+if [ "$skill_count" -eq 0 ]; then
+  print_result "FAIL" "skills" "no SKILL.md files found below category directories"
+  overall_status=1
+else
+  print_result "PASS" "skills" "validated $skill_count skill directories"
+fi
 
 if [ "$overall_status" -eq 0 ]; then
   print_result "PASS" "summary" "all skill checks passed"
