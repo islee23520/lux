@@ -205,9 +205,41 @@ See `docs/godot-support.md`.
 
 | Command | Purpose |
 | --- | --- |
-| `lux hooks install` | Install hooks. |
-| `lux hooks status` | Show hook status. |
-| `lux hooks run` | Run hooks. |
+| `lux hooks install` | Install the Codex-native Lux hook bridge. |
+| `lux hooks status` | Show hook status, project settings, and loaded rule paths. |
+| `lux hooks run` | Run a Codex-native or Lux project-wise hook event. |
+
+`lux hooks install` installs the verified Codex-native `UserPromptSubmit`
+bridge only. Project-wise governance events are Lux hook events that can be
+run through `lux hooks run --event <name>`:
+
+| Event | Surface | Purpose |
+| --- | --- | --- |
+| `UserPromptSubmit` | Codex native | Records prompt-hook runtime evidence and ULW detection. |
+| `LuxPreWorkRuleLoad` | Lux project-wise | Records project settings and applicable `AGENTS.md` rule paths. |
+| `LuxPostEditPolicy` | Lux project-wise | Runs policy checks for forbidden markers and required allow-marker evidence. |
+| `LuxVerificationEvidence` | Lux project-wise | Records verification-gate intent for later evidence workflows. |
+
+Project-wise settings are read from `.lux-agent.toml` in the target project
+root. Missing settings are reported as `not_configured`; Lux does not present
+missing settings as active enforcement. A minimal settings file is:
+
+```toml
+version = 1
+
+[hooks]
+pre_work_rule_load = true
+post_edit_policy = true
+verification_evidence = true
+
+[policy]
+forbidden_markers = ["TODO", "FIXME", "HACK"]
+allow_markers = ["lux-allow-failover", "lux-allow-legacy", "lux-allow-dual-write"]
+```
+
+Hook runs append runtime evidence to `.lux/hooks/events.jsonl`. That log is
+runtime truth for hook activity only; GitHub Issues remain roadmap/backlog
+tracking and are not used as Lux runtime state.
 
 ### Autonomous
 
