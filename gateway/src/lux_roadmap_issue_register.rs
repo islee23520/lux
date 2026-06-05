@@ -183,7 +183,15 @@ fn load_existing_issues(request: &IssueRegisterRequest) -> Result<Vec<ExistingIs
 }
 
 fn normalize_title(title: &str) -> String {
-    title.trim().to_lowercase()
+    title
+        .trim()
+        .strip_prefix("Roadmap: ")
+        .unwrap_or(title.trim())
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty() && *part != "and")
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn find_existing_issue(

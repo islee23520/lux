@@ -315,7 +315,7 @@ fn rust_lux_roadmap_issue_register_dedupes_existing_github_issues_from_snapshot(
         r#"[
   {
     "number": 17,
-    "title": "Roadmap: M1: Canonical 9-Domain Schema & Defaults",
+    "title": "M1: Canonical 9-domain schema and defaults",
     "state": "OPEN",
     "url": "https://github.com/islee23520/lux/issues/17"
   }
