@@ -138,6 +138,37 @@ fn verification_evidence_rejects_symlink_escape() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn verification_evidence_rejects_symlinked_evidence_root() {
+    let project = temp_path("lux-hooks-verification-root-symlink");
+    fs::create_dir_all(project.join(".lux")).expect("create lux dir");
+    fs::write(
+        project.join(".lux-agent.toml"),
+        settings("verification_evidence"),
+    )
+    .expect("settings");
+    let outside = temp_path("lux-hooks-outside-evidence-root");
+    fs::create_dir_all(&outside).expect("outside evidence root");
+    fs::write(outside.join("manual.txt"), "external evidence").expect("outside evidence");
+    std::os::unix::fs::symlink(&outside, project.join(".lux/evidence")).expect("symlink root");
+
+    let output = run_hook(
+        &project,
+        "LuxVerificationEvidence",
+        r#"{"evidence_path":".lux/evidence/manual.txt"}"#,
+    );
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    let report: Value = serde_json::from_str(&stdout).expect("json report");
+    assert_eq!(report["gate_result"]["status"], "failed");
+    assert_eq!(
+        report["gate_result"]["findings"][0]["message"],
+        "evidence root must not be a symlink"
+    );
+}
+
 #[test]
 fn policy_scan_excludes_generated_build_and_vendor_paths() {
     let project = temp_path("lux-hooks-generated-paths");

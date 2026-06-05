@@ -112,6 +112,9 @@ fn verification_evidence_gate(
     if relative.trim().is_empty() || path.contains("..") {
         return Ok(failed_evidence_gate("evidence_path must be normalized"));
     }
+    if evidence_root_has_symlink(project_path) {
+        return Ok(failed_evidence_gate("evidence root must not be a symlink"));
+    }
     let evidence_root = project_path.join(".lux/evidence");
     let Ok(root_canonical) = evidence_root.canonicalize() else {
         return Ok(failed_evidence_gate("evidence root does not exist"));
@@ -131,6 +134,19 @@ fn verification_evidence_gate(
     Ok(HookGateResult {
         status: "passed".to_string(),
         findings: Vec::new(),
+    })
+}
+
+fn evidence_root_has_symlink(project_path: &Path) -> bool {
+    [
+        project_path.join(".lux"),
+        project_path.join(".lux/evidence"),
+    ]
+    .iter()
+    .any(|path| {
+        std::fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
     })
 }
 
