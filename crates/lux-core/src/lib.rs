@@ -1,5 +1,7 @@
 use std::fs;
 use std::io::{BufWriter, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use anyhow::Context;
@@ -27,9 +29,17 @@ pub fn append_jsonl<T: Serialize>(path: &Path, event: &T) -> anyhow::Result<()> 
             .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
     }
     let line = serde_json::to_string(event).context("failed to serialize jsonl event")?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("jsonl file must not be a symlink: {}", path.display());
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let file = options
         .open(path)
         .with_context(|| format!("failed to open jsonl file for append {}", path.display()))?;
     let mut writer = BufWriter::new(file);
@@ -140,6 +150,25 @@ mod tests {
         let events = read_jsonl::<Value>(&path)?;
 
         assert_eq!(events, vec![json!({ "id": 1 }), json!({ "id": 2 })]);
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_jsonl_rejects_symlinked_log_file() -> anyhow::Result<()> {
+        let dir = test_dir("jsonl-symlink")?;
+        let path = dir.join("events.jsonl");
+        let outside = dir.join("outside.jsonl");
+        std::fs::write(&outside, "")?;
+        std::os::unix::fs::symlink(&outside, &path)?;
+
+        let error = append_jsonl(&path, &json!({ "id": 1 })).expect_err("symlink rejected");
+
+        assert!(error
+            .to_string()
+            .contains("jsonl file must not be a symlink"));
+        assert_eq!(std::fs::read_to_string(outside)?, "");
         std::fs::remove_dir_all(dir)?;
         Ok(())
     }
