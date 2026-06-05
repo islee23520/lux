@@ -2,8 +2,10 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 mod command;
@@ -209,7 +211,21 @@ pub(super) fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         .and_then(|name| name.to_str())
         .with_context(|| format!("{} has no valid UTF-8 file name", path.display()))?;
     let tmp_path = parent.join(format!(".{file_name}.tmp"));
-    let mut tmp_file = File::create(&tmp_path)
+    if fs::symlink_metadata(&tmp_path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "temporary file must not be a symlink: {}",
+            tmp_path.display()
+        );
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let mut tmp_file = options
+        .open(&tmp_path)
         .with_context(|| format!("failed to create temporary file {}", tmp_path.display()))?;
     tmp_file
         .write_all(serde_json::to_string_pretty(value)?.as_bytes())
