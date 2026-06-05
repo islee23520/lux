@@ -2,13 +2,13 @@
 
 This document serves as the authoritative engineering assessment for the **Roadmap Reality Lock** milestone. It reconciles the current repository state with the long-term target of autonomous Unity development.
 
-This file is a repository docs projection. Runtime roadmap, spec, run, ticket, and evidence truth remains under `.lux/`, with `.lux/specs/` serving as the GDD SSoT for game-domain intent. If this document and `.lux/` disagree, `.lux/` wins and the document must be refreshed from supported evidence.
+This file is a repository docs projection. Runtime roadmap, spec, run, ticket, and evidence truth remains under `.lux/`, with `.lux/specs/` serving as the GDD SSoT for game-domain intent. GitHub Issues are the collaborator-visible tracking surface for Lux roadmap work and remaining unaddressed product features. Local ledger records are only worktree decision receipts. If this document and `.lux/` disagree about runtime state, `.lux/` wins and the document must be refreshed from supported evidence.
 
 ## Current vs Target Gap Matrix
 
 | Area | Current State | Target State | Gap | Severity | This Plan Action |
 |---|---|---|---|---|---|
-| Roadmap/status truth | `gateway/src/lux_roadmap.rs` exists with `RoadmapReality` and M1-M5 phase tracking; docs are projections that must follow this implementation. | One canonical source of roadmap truth. | Historical docs can still drift from gateway reality if not refreshed. | Critical | Keep `.lux/roadmap.json`/roadmap loader as the canonical status path and update projections from code evidence. |
+| Roadmap/status truth | `gateway/src/lux_roadmap.rs` exists with `RoadmapReality` and M1-M5 phase tracking; GitHub Issues track roadmap work and unaddressed product features. | `.lux/roadmap.json` gates runtime status while GitHub Issues hold collaborator-visible roadmap work. | Historical docs can still drift from gateway reality, and local ledgers can hide tracking from collaborators if misused. | Critical | Keep `.lux/roadmap.json`/roadmap loader as the runtime status path, register roadmap work in GitHub Issues, and update projections from code evidence. |
 | Domain schema | `gateway/src/lux_spec.rs:523` and `crates/lux-spec-core/src/domain.rs:1` now project the canonical game-domain set with migration aliases. Legacy docs/templates still referenced the older domain-path layout and the old `design`/`architecture` list. | Canonical game domains plus explicit aliases and migration receipts. | Docs and template projections can still lag runtime naming if not refreshed together. | High | Keep the runtime schema canonical and update projections whenever the alias map changes. |
 | Ambiguity semantics | `gateway/src/lux_spec.rs:160` stops when report <= target; `gateway/src/lux_loop.rs:19` has threshold 0.65; gateway templates may still project separate evaluator guidance. | Consistent ambiguity polarity and threshold across Rust, MCP/API, and workflow-skill projections. | Stop/continue conditions may invert. | Critical | Add contract tests and code comments/API docs requiring low = clear, target <=0.02. |
 | Socratic spec loop | `gateway/src/lux_spec_loop.rs` is implemented with proposal/approval flow and question/approve/reject/apply endpoints. | Autonomous Socratic convergence loop. | Human-gated proposal flow exists; autonomous convergence is not yet verified. | Medium | Treat as scaffolded implementation until autonomous convergence evidence exists. |
@@ -87,7 +87,9 @@ This repository is currently split into runtime state, gateway/server source, br
 
 ## Default Decisions & Invariants
 
-- **Canonical SSoT**: `.lux/roadmap.json` is the single source of truth for roadmap and status.
+- **Runtime roadmap SSoT**: `.lux/roadmap.json` is the single source of truth for runtime roadmap status and feature flags.
+- **Roadmap tracking SSoT**: GitHub Issues are the single collaborator-visible tracking surface for Lux roadmap work and remaining unaddressed product features.
+- **Local ledger scope**: `.ledger`-style records are only local worktree decision receipts.
 - **GDD SSoT**: `.lux/specs/` is the single source of truth for game-design domains; repository docs projection pages may summarize it but must not replace it.
 - **Evidence-gated projection**: CLI, MCP/API, and docs status fields for ambiguity, decisions, capabilities, next goal, and evidence status must be backed by `.lux/` state or supported gateway endpoints.
 - **Evidence-gated run completion**: `lux run` may orchestrate generated source changes only when completion links accepted artifacts such as command output, tests, logs, game-context snapshots, screenshots, uloop/manual QA transcripts, or explicit blocker reports.

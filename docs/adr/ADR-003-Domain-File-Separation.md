@@ -23,12 +23,16 @@ Canonical homes by domain:
 | `.lux/spec.json` | Compatibility mirror / legacy read fallback for older projects | Gateway | lux_spec compatibility write/read |
 | `.lux/tickets/*.json` | Execution tasks derived from spec/goals | Gateway | Ticket CRUD |
 | `.lux/run-state.json` | Active run lifecycle state | Gateway ONLY | State machine |
-| `.lux/roadmap.json` | LUX implementation milestones (M1-M5) ONLY | lux_roadmap init/load |
+| `.lux/roadmap.json` | Minimal LUX runtime roadmap status and feature flags | lux_roadmap init/load |
+| GitHub Issues | LUX implementation milestones and unaddressed product features | Repository maintainers | GitHub issue registration |
+| `.ledger`-style local records | Worktree-local decision receipts only | Local agent/worktree | Agent tooling |
 
 Key rules:
 - M1-M5 are LUX implementation milestones, NOT user game milestones
 - `lux goal` creates/updates spec goals + run-state pointers, NOT roadmap entries
-- Roadmap stores LUX product progress (phase C=85%, D=65%, etc.), NOT game features
+- GitHub Issues track collaborator-visible Lux roadmap work, acceptance criteria, and remaining unaddressed product features
+- `.lux/roadmap.json` stores minimal runtime phase status and feature gates, NOT the full product backlog
+- Local ledger records are scoped to worktree decisions and must not replace GitHub Issues
 - Schema tests must reject domain leakage (tickets inside roadmap, state inside spec)
 
 ## Consequences

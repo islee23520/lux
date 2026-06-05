@@ -31,6 +31,7 @@ mod lux_next_goal_evidence;
 mod lux_next_goal_helpers;
 mod lux_next_goal_types;
 pub mod lux_roadmap;
+mod lux_roadmap_registry;
 pub mod lux_run;
 pub mod lux_run_recover;
 pub mod lux_run_state;
@@ -351,8 +352,17 @@ struct LuxRoadmapArgs {
 
 #[derive(Subcommand, Debug)]
 enum LuxRoadmapAction {
+    /// Create or replace .lux/roadmap.json from a selected engine template
+    Init(LuxRoadmapInitArgs),
     /// Validate and print .lux/roadmap.json status
     Status,
+}
+
+#[derive(Parser, Debug)]
+struct LuxRoadmapInitArgs {
+    /// Engine template to use: unity, godot, or three_js
+    #[arg(long, default_value = "unity")]
+    engine: String,
 }
 
 #[derive(Parser, Debug)]
@@ -1656,8 +1666,32 @@ fn print_spec_loop_run(run: &lux_spec_loop::SpecLoopRun) {
 fn run_lux_roadmap_command(args: LuxRoadmapArgs) -> anyhow::Result<()> {
     let project_root = resolve_lux_project_root(&args.project_path)?;
     match args.action.unwrap_or(LuxRoadmapAction::Status) {
+        LuxRoadmapAction::Init(init_args) => init_lux_roadmap_template(&project_root, init_args),
         LuxRoadmapAction::Status => print_lux_roadmap_status(&project_root),
     }
+}
+
+fn init_lux_roadmap_template(project_root: &Path, args: LuxRoadmapInitArgs) -> anyhow::Result<()> {
+    let engine = args
+        .engine
+        .parse::<lux_project::EngineKind>()
+        .map_err(|error| anyhow::anyhow!(error))
+        .with_context(|| {
+            format!(
+                "failed to parse roadmap engine '{}'; expected unity, godot, or three_js",
+                args.engine
+            )
+        })?;
+    let roadmap = lux_roadmap::roadmap_template_for_engine(engine);
+    lux_roadmap::save(project_root, &roadmap)?;
+    println!(
+        "Lux roadmap initialized: {}",
+        lux_roadmap::roadmap_file_path(project_root).display()
+    );
+    println!("Engine: {:?}", engine);
+    println!("Capabilities: {}", roadmap.capabilities.len());
+    println!("Phases: {}", roadmap.phases.len());
+    Ok(())
 }
 
 fn print_lux_roadmap_status(project_root: &Path) -> anyhow::Result<()> {

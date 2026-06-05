@@ -11,7 +11,9 @@ Use this skill only when a request directly involves operating or inspecting a U
 
 ## Core Rules
 
-- Treat `.lux/` as the project runtime source of truth for specs, tickets, run state, and evidence.
+- Treat `.lux/` as the project runtime source of truth for specs, execution tickets, run state, and evidence.
+- Treat GitHub Issues as the repository-level tracking surface for Lux roadmap work and remaining unaddressed product features.
+- Treat `.ledger`-style files only as local worktree decision records.
 - Prefer gateway/bridge/MCP commands over direct Unity project edits.
 - Keep operations explicit, observable, and reversible where possible.
 - Never hide bridge, compile, test, MCP, or API failures behind fallback data.
@@ -26,7 +28,7 @@ Use this skill only when a request directly involves operating or inspecting a U
 Use `lux mcp --project-path <unity-project>` when an AI client needs the stdio MCP surface. The game-development tools are:
 
 - `lux_bridge_install` and `lux_bridge_diagnostics` for bridge setup and health.
-- `lux_game_spec_write` for `.lux/specs/spec.json`, GDD/domain specs, and decision-ledger creation/import.
+- `lux_game_spec_write` for `.lux/specs/spec.json`, GDD/domain specs, and local worktree decision-record creation/import.
 - `lux_game_ticket_prepare` for one safe `.lux/tickets/` first-loop ticket.
 - `lux_unity_maneuver` for one safe Unity code/scene/settings/package/asset action with evidence.
 - `lux_game_dev_loop_once` for the full installed-bridge loop, stopping after one verified loop or a specific structured failure.

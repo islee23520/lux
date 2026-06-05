@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use lux::lux_roadmap::{
     init_or_load, load, roadmap_file_path, save, RoadmapError, RoadmapPhase, RoadmapPhaseStatus,
-    RoadmapReality, REMOTE_WEBRTC_EXPERIMENTAL_FLAG, ROADMAP_SCHEMA_VERSION,
+    RoadmapReality, CAPABILITY_GLOBAL_CLI, CAPABILITY_MCP_STDIO, CAPABILITY_UNITY_BRIDGE_WORKFLOW,
+    REMOTE_WEBRTC_EXPERIMENTAL_FLAG, ROADMAP_SCHEMA_VERSION,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -40,7 +41,13 @@ fn lux_roadmap_create_default() {
     assert_eq!(roadmap.schema_version, ROADMAP_SCHEMA_VERSION);
     assert!(roadmap.authoritative);
     assert!(!roadmap.phases.is_empty());
-    assert!(roadmap.capabilities.is_empty());
+    for capability in [
+        CAPABILITY_GLOBAL_CLI,
+        CAPABILITY_MCP_STDIO,
+        CAPABILITY_UNITY_BRIDGE_WORKFLOW,
+    ] {
+        assert!(roadmap.capabilities.iter().any(|item| item == capability));
+    }
     assert!(roadmap.evidence_refs.is_empty());
     assert_eq!(
         roadmap

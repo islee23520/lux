@@ -1,6 +1,6 @@
 # LUX Usage Guide
 
-This document is a reference-oriented usage guide for LUX. It focuses on concrete interfaces and surfaces, the CLI, HTTP API, WebSocket events, specs, skills, runs, tickets, and verification. It is intentionally more detailed than the project overview.
+This document is a reference-oriented usage guide for LUX. It focuses on concrete interfaces and surfaces, the CLI, HTTP API, WebSocket events, specs, skills, runs, tickets, GitHub issue tracking, and verification. It is intentionally more detailed than the project overview.
 
 Key references:
 
@@ -170,6 +170,13 @@ See `docs/godot-support.md`.
 | `lux spec validate` | Validate spec. |
 | `lux roadmap status` | Show roadmap status. |
 | `lux kanban` | Show kanban surfaces. |
+
+Roadmap and remaining-feature registration:
+
+- GitHub Issues are the repository-level tracking surface for Lux roadmap work and known unaddressed product features.
+- `.ledger`-style files are only local worktree decision records.
+- `.lux/tickets/*.json` are executable run tickets, not the canonical product backlog.
+- `.lux/roadmap.json` may gate runtime behavior and summarize phase state, but issue discussion, acceptance criteria, and unresolved feature tracking belong in GitHub Issues.
 
 ### Skills
 
@@ -690,6 +697,7 @@ Architectural decisions in `docs/adr/` define control-plane ownership:
 - ADR-001: the Rust Gateway is the sole owner of execution lifecycle.
 - ADR-002: `.lux/run-state.json` is the canonical durable state for the active run.
 - ADR-003: `.lux/specs/spec.json`, `.lux/specs/domains/*.md`, `.lux/tickets/*.json`, `.lux/run-state.json`, and `.lux/roadmap.json` are separated by domain.
+- ADR-007: GitHub Issues are the repository-level roadmap and remaining-feature tracking surface; local ledger records are worktree decision receipts only.
 
 ### Run states
 

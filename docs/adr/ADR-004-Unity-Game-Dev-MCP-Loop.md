@@ -17,6 +17,10 @@ The repository already separates durable state under `.lux/`:
 - `.lux/run-state.json` for active run lifecycle.
 - `.lux/roadmap.json` for Lux product roadmap state.
 
+Repository-level Lux roadmap items and remaining unaddressed product features
+are tracked in GitHub Issues, not in local ledger files. Local ledger-style
+records are only worktree decision receipts.
+
 The new MCP workflow must not reintroduce split-brain state, hide Unity failures,
 or grow a Unity Editor window UI as part of this milestone.
 

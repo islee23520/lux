@@ -167,7 +167,7 @@ lux unity run-tests
 lux unity play
 lux unity screenshot
 
-# Specs, roadmap, and tickets
+# Specs, roadmap, tickets, and GitHub issues
 lux spec
 lux spec edit gdd
 lux spec validate
@@ -253,7 +253,9 @@ Lux/
 
 ## Roadmap Reality
 
-The canonical roadmap and milestone state lives in `.lux/roadmap.json`. User/game requirements, execution tickets, and active run state live under the ADR-003 domain paths such as `.lux/specs/spec.json`, `.lux/specs/domains/*.md`, `.lux/tickets/*.json`, and `.lux/run-state.json`.
+The minimal runtime roadmap and milestone status lives in `.lux/roadmap.json`. User/game requirements, execution tickets, and active run state live under the ADR-003 domain paths such as `.lux/specs/spec.json`, `.lux/specs/domains/*.md`, `.lux/tickets/*.json`, and `.lux/run-state.json`.
+
+Repository-level Lux roadmap work and unaddressed product features are tracked in GitHub Issues. Local `.ledger`-style files are only for local worktree decision recording; they must not become the roadmap backlog or collaborator-visible feature registry.
 
 | Phase | Name | Status | Description |
 | --- | --- | --- | --- |
@@ -265,7 +267,7 @@ The canonical roadmap and milestone state lives in `.lux/roadmap.json`. User/gam
 
 Out of scope for the current public-beta framing:
 
-- External GitHub milestone/issue sync.
+- Automatic GitHub milestone/issue sync unless a supported GitHub issue-registration surface is implemented.
 - WebRTC or remote video streaming unless explicitly gated behind experimental flags.
 - Browser-based remote control of Unity Editor.
 - iOS companion app or PWA.

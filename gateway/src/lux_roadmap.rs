@@ -9,6 +9,13 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+pub use crate::lux_roadmap_registry::{
+    CAPABILITY_GLOBAL_CLI, CAPABILITY_GODOT_BRIDGE_WORKFLOW, CAPABILITY_MCP_STDIO,
+    CAPABILITY_THREE_JS_BRIDGE_WORKFLOW, CAPABILITY_UNITY_BRIDGE_WORKFLOW,
+    GLOBAL_CLI_MCP_BRIDGE_PHASE,
+};
+use lux_project::EngineKind;
+
 pub const ROADMAP_SCHEMA_VERSION: &str = "1.0";
 pub const SUPPORTED_ROADMAP_SCHEMA_MAJOR_VERSION: &str = "1";
 pub const REMOTE_WEBRTC_EXPERIMENTAL_FLAG: &str = "remote_webrtc";
@@ -76,57 +83,13 @@ impl Error for RoadmapError {}
 
 impl Default for RoadmapReality {
     fn default() -> Self {
-        let mut experimental_flags = HashMap::new();
-        experimental_flags.insert(REMOTE_WEBRTC_EXPERIMENTAL_FLAG.to_string(), false);
-
         Self {
             schema_version: ROADMAP_SCHEMA_VERSION.to_string(),
             updated_at: Utc::now().to_rfc3339(),
-            phases: vec![
-                RoadmapPhase {
-                    name: "M1: Canonical 9-Domain Schema & Defaults".to_string(),
-                    status: RoadmapPhaseStatus::Planned,
-                    evidence_path: None,
-                    pushed_at: None,
-                    push_git_sha: None,
-                    push_evidence_path: None,
-                },
-                RoadmapPhase {
-                    name: "M2: Ambiguity Convergence & Socratic Loop".to_string(),
-                    status: RoadmapPhaseStatus::Planned,
-                    evidence_path: None,
-                    pushed_at: None,
-                    push_git_sha: None,
-                    push_evidence_path: None,
-                },
-                RoadmapPhase {
-                    name: "M3: Execution-Grade Ticket Schema".to_string(),
-                    status: RoadmapPhaseStatus::Planned,
-                    evidence_path: None,
-                    pushed_at: None,
-                    push_git_sha: None,
-                    push_evidence_path: None,
-                },
-                RoadmapPhase {
-                    name: "M4: Ticket-Driven OpenCode Hook Executor".to_string(),
-                    status: RoadmapPhaseStatus::Planned,
-                    evidence_path: None,
-                    pushed_at: None,
-                    push_git_sha: None,
-                    push_evidence_path: None,
-                },
-                RoadmapPhase {
-                    name: "M5: Blocker Auto-Resolution Graph".to_string(),
-                    status: RoadmapPhaseStatus::Planned,
-                    evidence_path: None,
-                    pushed_at: None,
-                    push_git_sha: None,
-                    push_evidence_path: None,
-                },
-            ],
-            capabilities: Vec::new(),
+            phases: crate::lux_roadmap_registry::default_phases(),
+            capabilities: crate::lux_roadmap_registry::default_capabilities(),
             evidence_refs: Vec::new(),
-            experimental_flags,
+            experimental_flags: crate::lux_roadmap_registry::default_experimental_flags(),
             authoritative: true,
         }
     }
@@ -225,6 +188,13 @@ impl RoadmapReality {
                 }
                 .into());
             }
+            if phase.status == RoadmapPhaseStatus::Complete && phase.evidence_path.is_none() {
+                return Err(RoadmapError::Invalid {
+                    path: path.to_path_buf(),
+                    message: format!("completed phase {} is missing evidence_path", phase.name),
+                }
+                .into());
+            }
             if phase.status == RoadmapPhaseStatus::Pushed {
                 require_pushed_field(path, phase, "pushed_at", phase.pushed_at.as_deref())?;
                 if let Some(pushed_at) = phase.pushed_at.as_deref() {
@@ -249,6 +219,14 @@ impl RoadmapReality {
         }
 
         Ok(())
+    }
+}
+
+pub fn roadmap_template_for_engine(engine: EngineKind) -> RoadmapReality {
+    RoadmapReality {
+        phases: crate::lux_roadmap_registry::phases_for_engine(engine),
+        capabilities: crate::lux_roadmap_registry::capabilities_for_engine(engine),
+        ..RoadmapReality::default()
     }
 }
 
