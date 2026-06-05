@@ -31,7 +31,8 @@ mod lux_next_goal_evidence;
 mod lux_next_goal_helpers;
 mod lux_next_goal_types;
 pub mod lux_roadmap;
-mod lux_roadmap_registry;
+pub mod lux_roadmap_issue_register;
+mod lux_roadmap_issue_register_types;
 pub mod lux_run;
 pub mod lux_run_recover;
 pub mod lux_run_state;
@@ -352,17 +353,29 @@ struct LuxRoadmapArgs {
 
 #[derive(Subcommand, Debug)]
 enum LuxRoadmapAction {
-    /// Create or replace .lux/roadmap.json from a selected engine template
-    Init(LuxRoadmapInitArgs),
     /// Validate and print .lux/roadmap.json status
     Status,
+    /// Register missing roadmap and capability gaps as GitHub issues
+    IssueRegister(LuxRoadmapIssueRegisterArgs),
 }
 
 #[derive(Parser, Debug)]
-struct LuxRoadmapInitArgs {
-    /// Engine template to use: unity, godot, or three_js
-    #[arg(long, default_value = "unity")]
-    engine: String,
+struct LuxRoadmapIssueRegisterArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// GitHub repository in owner/name form
+    #[arg(long)]
+    repo: String,
+    /// Print the issue plan without creating GitHub issues
+    #[arg(long, action = ArgAction::SetTrue)]
+    dry_run: bool,
+    /// Print JSON output
+    #[arg(long, action = ArgAction::SetTrue)]
+    json: bool,
+    /// Existing GitHub issues JSON snapshot, matching gh issue list JSON
+    #[arg(long)]
+    existing_issues_json: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -1664,34 +1677,39 @@ fn print_spec_loop_run(run: &lux_spec_loop::SpecLoopRun) {
 }
 
 fn run_lux_roadmap_command(args: LuxRoadmapArgs) -> anyhow::Result<()> {
-    let project_root = resolve_lux_project_root(&args.project_path)?;
     match args.action.unwrap_or(LuxRoadmapAction::Status) {
-        LuxRoadmapAction::Init(init_args) => init_lux_roadmap_template(&project_root, init_args),
-        LuxRoadmapAction::Status => print_lux_roadmap_status(&project_root),
+        LuxRoadmapAction::Status => {
+            let project_root = resolve_lux_project_root(&args.project_path)?;
+            print_lux_roadmap_status(&project_root)
+        }
+        LuxRoadmapAction::IssueRegister(register_args) => {
+            let project_path = register_args
+                .project_path
+                .as_ref()
+                .or(args.project_path.as_ref())
+                .cloned();
+            let project_root = resolve_lux_project_root(&project_path)?;
+            let request = lux_roadmap_issue_register::IssueRegisterRequest {
+                project_root,
+                repo: register_args.repo,
+                dry_run: register_args.dry_run,
+                existing_issues_json: register_args.existing_issues_json,
+            };
+            let plan = lux_roadmap_issue_register::register_roadmap_issues(request)?;
+            if register_args.json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                println!(
+                    "GitHub issue registration plan for {}: {} planned, {} existing, {} created",
+                    plan.repo, plan.planned_count, plan.existing_count, plan.created_count
+                );
+                for item in plan.items {
+                    println!("- {:?}: {}", item.action, item.title);
+                }
+            }
+            Ok(())
+        }
     }
-}
-
-fn init_lux_roadmap_template(project_root: &Path, args: LuxRoadmapInitArgs) -> anyhow::Result<()> {
-    let engine = args
-        .engine
-        .parse::<lux_project::EngineKind>()
-        .map_err(|error| anyhow::anyhow!(error))
-        .with_context(|| {
-            format!(
-                "failed to parse roadmap engine '{}'; expected unity, godot, or three_js",
-                args.engine
-            )
-        })?;
-    let roadmap = lux_roadmap::roadmap_template_for_engine(engine);
-    lux_roadmap::save(project_root, &roadmap)?;
-    println!(
-        "Lux roadmap initialized: {}",
-        lux_roadmap::roadmap_file_path(project_root).display()
-    );
-    println!("Engine: {:?}", engine);
-    println!("Capabilities: {}", roadmap.capabilities.len());
-    println!("Phases: {}", roadmap.phases.len());
-    Ok(())
 }
 
 fn print_lux_roadmap_status(project_root: &Path) -> anyhow::Result<()> {
