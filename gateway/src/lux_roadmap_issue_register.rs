@@ -198,14 +198,7 @@ fn find_existing_issue(
     existing_by_title: &HashMap<String, ExistingIssue>,
     title: &str,
 ) -> Option<ExistingIssue> {
-    existing_by_title
-        .get(&normalize_title(title))
-        .or_else(|| {
-            title
-                .strip_prefix("Roadmap: ")
-                .and_then(|unprefixed| existing_by_title.get(&normalize_title(unprefixed)))
-        })
-        .cloned()
+    existing_by_title.get(&normalize_title(title)).cloned()
 }
 
 fn default_labels() -> Vec<String> {
@@ -273,6 +266,7 @@ fn issue_action(
 fn known_gap_candidates() -> &'static [(&'static str, &'static str)] {
     &[
         ("Godot: finish evidence-backed runtime support beyond partial tier", "Godot is partial until runtime support produces supported evidence or explicit blockers."),
+        ("M6: Autonomous spec-to-ticket-to-execution pipeline", "M6 remains planned until spec convergence, ticket generation, execution, and T3 Unity verification complete autonomously with evidence."),
         ("Three.js: build and verify runtime harness before promoting from planned", "Three.js remains planned until a supported runtime harness is verified."),
         ("Bundled workflow skills: add behavioral QA beyond schema validation", "Skill schema validation is not behavioral readiness."),
         ("Roadmap projection drift: keep .lux roadmap, docs, CLI, API, and MCP aligned", "Roadmap projections must not drift from runtime status or GitHub issue tracking."),
