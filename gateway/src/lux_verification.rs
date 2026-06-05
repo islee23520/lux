@@ -652,31 +652,10 @@ fn write_verification_evidence_named(
     text: &str,
 ) -> Result<String> {
     let relative_dir = relative_evidence_dir(opts);
-    let absolute_dir = if opts.evidence_dir.as_os_str().is_empty() {
-        opts.working_dir.join(&relative_dir)
-    } else if opts.evidence_dir.is_absolute() {
-        opts.evidence_dir.clone()
-    } else {
-        opts.working_dir.join(&opts.evidence_dir)
-    };
-    fs::create_dir_all(&absolute_dir).with_context(|| {
-        format!(
-            "failed to create evidence directory {}",
-            absolute_dir.display()
-        )
-    })?;
     let file_name = format!("verify_{}.txt", evidence_label(label));
-    let absolute_path = absolute_dir.join(&file_name);
-    let temp_path = absolute_path.with_extension("txt.tmp");
-    fs::write(&temp_path, text)
-        .with_context(|| format!("failed to write temp evidence {}", temp_path.display()))?;
-    fs::rename(&temp_path, &absolute_path).with_context(|| {
-        format!(
-            "failed to atomically replace verification evidence {}",
-            absolute_path.display()
-        )
-    })?;
-    Ok(format!("{}/{}", path_to_slash(&relative_dir), file_name))
+    let relative_path = format!("{}/{}", path_to_slash(&relative_dir), file_name);
+    crate::lux_io::write_evidence_file(&opts.working_dir, &relative_path, text, usize::MAX)
+        .with_context(|| format!("failed to write verification evidence {relative_path}"))
 }
 
 fn evidence_label(label: &str) -> String {
