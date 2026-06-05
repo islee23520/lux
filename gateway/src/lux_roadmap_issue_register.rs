@@ -1,57 +1,11 @@
-use std::{collections::HashMap, fs, path::PathBuf, process::Command};
+use std::{collections::HashMap, fs, process::Command};
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
 
 use crate::lux_roadmap::{self, RoadmapPhaseStatus};
-
-#[derive(Debug)]
-pub struct IssueRegisterRequest {
-    pub project_root: PathBuf,
-    pub repo: String,
-    pub dry_run: bool,
-    pub existing_issues_json: Option<PathBuf>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct IssueRegisterPlan {
-    pub repo: String,
-    pub dry_run: bool,
-    pub planned_count: usize,
-    pub existing_count: usize,
-    pub created_count: usize,
-    pub items: Vec<IssueRegisterItem>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct IssueRegisterItem {
-    pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
-    pub action: IssueRegisterAction,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub existing_issue: Option<ExistingIssue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_url: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IssueRegisterAction {
-    WouldCreate,
-    Exists,
-    Created,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ExistingIssue {
-    pub number: u64,
-    pub title: String,
-    #[serde(default)]
-    pub state: String,
-    #[serde(default)]
-    pub url: Option<String>,
-}
+pub use crate::lux_roadmap_issue_register_types::{
+    ExistingIssue, IssueRegisterAction, IssueRegisterItem, IssueRegisterPlan, IssueRegisterRequest,
+};
 
 pub fn register_roadmap_issues(request: IssueRegisterRequest) -> Result<IssueRegisterPlan> {
     validate_repo(&request.repo)?;
@@ -59,8 +13,13 @@ pub fn register_roadmap_issues(request: IssueRegisterRequest) -> Result<IssueReg
     let roadmap = lux_roadmap::RoadmapReality::init_or_load(&request.project_root)?;
     let existing = load_existing_issues(&request)?;
     let existing_by_title = existing
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|issue| (normalize_title(&issue.title), issue))
+        .collect::<HashMap<_, _>>();
+    let existing_by_milestone = existing
+        .into_iter()
+        .filter_map(|issue| milestone_key(&issue.title).map(|key| (key, issue)))
         .collect::<HashMap<_, _>>();
 
     let mut items = Vec::new();
@@ -72,7 +31,8 @@ pub fn register_roadmap_issues(request: IssueRegisterRequest) -> Result<IssueReg
             continue;
         }
         let title = format!("Roadmap: {}", phase.name);
-        let existing_issue = find_existing_issue(&existing_by_title, &title);
+        let existing_issue =
+            find_existing_issue(&existing_by_title, &existing_by_milestone, &title);
         let created_url = create_if_missing(&request, &title, &existing_issue, None)?;
         let action = issue_action(
             request.dry_run,
@@ -93,7 +53,7 @@ pub fn register_roadmap_issues(request: IssueRegisterRequest) -> Result<IssueReg
     }
 
     for (title, body) in known_gap_candidates() {
-        let existing_issue = find_existing_issue(&existing_by_title, title);
+        let existing_issue = find_existing_issue(&existing_by_title, &existing_by_milestone, title);
         let created_url = create_if_missing(&request, title, &existing_issue, Some(body))?;
         let action = issue_action(
             request.dry_run,
@@ -194,11 +154,39 @@ fn normalize_title(title: &str) -> String {
         .to_lowercase()
 }
 
+fn milestone_key(title: &str) -> Option<String> {
+    let title = title
+        .trim()
+        .strip_prefix("Roadmap: ")
+        .unwrap_or(title.trim());
+    let (prefix, _) = title.split_once(':')?;
+    let mut chars = prefix.chars();
+    let marker = chars.next()?;
+    let number = chars.as_str().parse::<u16>();
+    match (marker, number) {
+        ('M' | 'm', Ok(number)) => Some(format!("M{number}")),
+        _ => None,
+    }
+}
+
+fn roadmap_milestone_key(title: &str) -> Option<String> {
+    let title = title.trim().strip_prefix("Roadmap: ")?;
+    milestone_key(title)
+}
+
 fn find_existing_issue(
     existing_by_title: &HashMap<String, ExistingIssue>,
+    existing_by_milestone: &HashMap<String, ExistingIssue>,
     title: &str,
 ) -> Option<ExistingIssue> {
-    existing_by_title.get(&normalize_title(title)).cloned()
+    existing_by_title
+        .get(&normalize_title(title))
+        .or_else(|| {
+            roadmap_milestone_key(title)
+                .as_ref()
+                .and_then(|key| existing_by_milestone.get(key))
+        })
+        .cloned()
 }
 
 fn default_labels() -> Vec<String> {

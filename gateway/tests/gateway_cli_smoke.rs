@@ -307,7 +307,7 @@ fn rust_lux_roadmap_issue_register_dry_run_outputs_github_issue_plan() {
 
 #[test]
 fn rust_lux_roadmap_issue_register_dedupes_existing_github_issues_from_snapshot() {
-    // Given: one roadmap milestone already exists on GitHub.
+    // Given: roadmap milestones already exist on GitHub with wording drift.
     let project_root = create_temp_dir("lux-roadmap-issue-register-dedupe");
     let existing_issues_path = project_root.join("existing-issues.json");
     fs::write(
@@ -318,6 +318,24 @@ fn rust_lux_roadmap_issue_register_dedupes_existing_github_issues_from_snapshot(
     "title": "M1: Canonical 9-domain schema and defaults",
     "state": "OPEN",
     "url": "https://github.com/islee23520/lux/issues/17"
+  },
+  {
+    "number": 18,
+    "title": "M2: Ambiguity convergence and autonomous Socratic loop",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/18"
+  },
+  {
+    "number": 19,
+    "title": "M3: Execution-grade ticket schema with evidence provenance",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/19"
+  },
+  {
+    "number": 20,
+    "title": "M4: Ticket-driven agent hook executor",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/20"
   }
 ]"#,
     )
@@ -342,20 +360,27 @@ fn rust_lux_roadmap_issue_register_dedupes_existing_github_issues_from_snapshot(
         .output()
         .expect("run lux roadmap issue-register with existing issue snapshot");
 
-    // Then: the existing title is reported as deduped instead of planned for creation.
+    // Then: each existing milestone prefix is reported as deduped instead of planned for creation.
     assert_command_success(&output, "lux roadmap issue-register dedupe");
     let plan: Value = serde_json::from_slice(&output.stdout).expect("issue-register JSON");
     let items = plan["items"].as_array().expect("items array");
-    let deduped = items
-        .iter()
-        .find(|item| {
-            item["title"]
-                .as_str()
-                .is_some_and(|title| title == "Roadmap: M1: Canonical 9-Domain Schema & Defaults")
-        })
-        .expect("M1 item");
-    assert_eq!(deduped["action"], "exists");
-    assert_eq!(deduped["existing_issue"]["number"], 17);
+    for (title, issue_number) in [
+        ("Roadmap: M1: Canonical 9-Domain Schema & Defaults", 17),
+        ("Roadmap: M2: Ambiguity Convergence & Socratic Loop", 18),
+        ("Roadmap: M3: Execution-Grade Ticket Schema", 19),
+        ("Roadmap: M4: Ticket-Driven OpenCode Hook Executor", 20),
+    ] {
+        let deduped = items
+            .iter()
+            .find(|item| {
+                item["title"]
+                    .as_str()
+                    .is_some_and(|item_title| item_title == title)
+            })
+            .expect("roadmap milestone item");
+        assert_eq!(deduped["action"], "exists");
+        assert_eq!(deduped["existing_issue"]["number"], issue_number);
+    }
 }
 
 #[test]
