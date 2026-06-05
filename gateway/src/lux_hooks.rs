@@ -5,8 +5,11 @@ use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod command;
 mod gate;
@@ -211,15 +214,8 @@ pub(super) fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         .and_then(|name| name.to_str())
         .with_context(|| format!("{} has no valid UTF-8 file name", path.display()))?;
     let tmp_path = parent.join(format!(".{file_name}.tmp"));
-    if fs::symlink_metadata(&tmp_path)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false)
-    {
-        anyhow::bail!(
-            "temporary file must not be a symlink: {}",
-            tmp_path.display()
-        );
-    }
+    reject_or_remove_legacy_temp(&tmp_path)?;
+    let tmp_path = unique_temp_path(path)?;
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -245,4 +241,42 @@ pub(super) fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         )
     })?;
     Ok(())
+}
+
+fn reject_or_remove_legacy_temp(path: &Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect temporary file {}", path.display()));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("temporary file must not be a symlink: {}", path.display());
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        anyhow::bail!("temporary file must not be hardlinked: {}", path.display());
+    }
+    if metadata.is_file() {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale temporary file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn unique_temp_path(path: &Path) -> Result<PathBuf> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("{} has no parent directory", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("{} has no valid UTF-8 file name", path.display()))?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before UNIX epoch")?
+        .as_nanos();
+    Ok(parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), nanos)))
 }

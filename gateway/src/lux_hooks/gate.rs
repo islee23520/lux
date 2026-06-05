@@ -3,6 +3,8 @@ use super::rules::ProjectGovernance;
 use super::{HookGateResult, DEFAULT_CODEX_EVENTS, LUX_PROJECT_EVENTS};
 use anyhow::Result;
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 pub(super) fn hook_source(event: &str) -> &'static str {
@@ -136,6 +138,14 @@ fn verification_evidence_gate(
     }
     if !candidate_canonical.is_file() {
         return Ok(failed_evidence_gate("evidence_path is not a file"));
+    }
+    #[cfg(unix)]
+    match std::fs::metadata(&candidate_canonical) {
+        Ok(metadata) if metadata.nlink() > 1 => {
+            return Ok(failed_evidence_gate("evidence_path must not be hardlinked"));
+        }
+        Ok(_) => {}
+        Err(_) => return Ok(failed_evidence_gate("evidence_path metadata unavailable")),
     }
     Ok(HookGateResult {
         status: "passed".to_string(),
