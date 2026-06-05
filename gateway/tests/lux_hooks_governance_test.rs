@@ -189,7 +189,7 @@ allow_markers = ["lux-allow-failover"]
     })
     .expect_err("policy should fail");
     let message = error.to_string();
-    assert!(message.contains("policy gate failed"));
+    assert!(message.contains("hook gate failed"));
     assert!(message.contains(&["TO", "DO"].concat()));
     assert!(message.contains("lux-allow-failover"));
     assert!(!message.contains(".lux-agent.toml"));

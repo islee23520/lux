@@ -1,8 +1,7 @@
-use super::policy;
+use super::gate;
 use super::rules::load_project_governance;
 use super::{
-    resolve_project_path, write_json_atomic, HookGateResult, HookRunReport, HooksRunArgs,
-    OmxUltraworkStatus, DEFAULT_CODEX_EVENTS,
+    resolve_project_path, write_json_atomic, HookRunReport, HooksRunArgs, OmxUltraworkStatus,
 };
 use crate::lux_io::append_jsonl;
 use anyhow::{bail, Context, Result};
@@ -40,40 +39,8 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
             .as_ref()
             .is_some_and(|excerpt| contains_ulw_signal(excerpt));
     let omx_ultrawork = inspect_omx_ultrawork(&project_path);
-    let gate_result =
-        if args.event == "LuxPostEditPolicy" && governance.settings.status != "configured" {
-            HookGateResult {
-                status: "not_configured".to_string(),
-                findings: Vec::new(),
-            }
-        } else if args.event == "LuxPostEditPolicy"
-            && !governance
-                .settings
-                .enabled_gates
-                .iter()
-                .any(|gate| gate == "post_edit_policy")
-        {
-            HookGateResult {
-                status: "disabled".to_string(),
-                findings: Vec::new(),
-            }
-        } else if args.event == "LuxPostEditPolicy" {
-            let findings = policy::scan_project(&project_path, &governance.settings)?;
-            HookGateResult {
-                status: if findings.is_empty() {
-                    "passed".to_string()
-                } else {
-                    "failed".to_string()
-                },
-                findings,
-            }
-        } else {
-            HookGateResult {
-                status: "passed".to_string(),
-                findings: Vec::new(),
-            }
-        };
-    let source = hook_source(&args.event);
+    let gate_result = gate::evaluate_gate(&args.event, &project_path, &governance, parsed_stdin)?;
+    let source = gate::hook_source(&args.event);
     let hook_dir = project_path.join(".lux").join("hooks");
     fs::create_dir_all(&hook_dir)
         .with_context(|| format!("failed to create {}", hook_dir.display()))?;
@@ -103,24 +70,17 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
         event: args.event.clone(),
         project_path,
         event_log_path,
+        source: source.to_string(),
         ulw_detected,
         omx_ultrawork,
         project_settings: governance.settings,
         loaded_rule_paths: governance.loaded_rule_paths,
         gate_result,
     };
-    if report.gate_result.status == "failed" {
+    if matches!(report.gate_result.status.as_str(), "failed" | "unsupported") {
         bail!(HookRunFailure { report });
     }
     Ok(report)
-}
-
-fn hook_source(event: &str) -> &'static str {
-    if DEFAULT_CODEX_EVENTS.contains(&event) {
-        "codex-native-hook"
-    } else {
-        "lux-project-hook"
-    }
 }
 
 #[derive(Debug)]
@@ -130,6 +90,9 @@ pub(super) struct HookRunFailure {
 
 impl std::fmt::Display for HookRunFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.report.gate_result.findings.is_empty() {
+            return write!(formatter, "hook gate {}", self.report.gate_result.status);
+        }
         let markers = self
             .report
             .gate_result
@@ -138,7 +101,11 @@ impl std::fmt::Display for HookRunFailure {
             .map(|finding| finding.marker.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        write!(formatter, "policy gate failed: {markers}")
+        write!(
+            formatter,
+            "hook gate {}: {markers}",
+            self.report.gate_result.status
+        )
     }
 }
 

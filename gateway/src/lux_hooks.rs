@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 mod command;
+mod gate;
 mod install;
 mod policy;
 mod rules;
@@ -125,6 +126,7 @@ pub struct HookRunReport {
     pub event: String,
     pub project_path: PathBuf,
     pub event_log_path: PathBuf,
+    pub source: String,
     pub ulw_detected: bool,
     pub omx_ultrawork: OmxUltraworkStatus,
     pub project_settings: ProjectSettingsReport,

@@ -218,7 +218,7 @@ run through `lux hooks run --event <name>`:
 | `UserPromptSubmit` | Codex native | Records prompt-hook runtime evidence and ULW detection. |
 | `LuxPreWorkRuleLoad` | Lux project-wise | Records project settings and applicable `AGENTS.md` rule paths. |
 | `LuxPostEditPolicy` | Lux project-wise | Runs policy checks for forbidden markers and required allow-marker evidence. |
-| `LuxVerificationEvidence` | Lux project-wise | Records verification-gate intent for later evidence workflows. |
+| `LuxVerificationEvidence` | Lux project-wise | Requires an existing `evidence_path` under `.lux/evidence/` before verification is recorded as passed. |
 
 Project-wise settings are read from `.lux-agent.toml` in the target project
 root. Missing settings are reported as `not_configured`; Lux does not present
@@ -240,6 +240,11 @@ allow_markers = ["lux-allow-failover", "lux-allow-legacy", "lux-allow-dual-write
 Hook runs append runtime evidence to `.lux/hooks/events.jsonl`. That log is
 runtime truth for hook activity only; GitHub Issues remain roadmap/backlog
 tracking and are not used as Lux runtime state.
+
+`LuxVerificationEvidence` reads hook stdin as JSON. When
+`verification_evidence` is enabled, pass `{"evidence_path":".lux/evidence/<file>"}`
+and ensure that file already exists in the project. Missing, non-`.lux/evidence`,
+or nonexistent paths fail the hook gate and are recorded in the event log.
 
 ### Autonomous
 

@@ -3,6 +3,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+const MAX_POLICY_FILE_BYTES: u64 = 1_048_576;
+const REDACTED_SNIPPET: &str = "[redacted]";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyFinding {
     pub path: PathBuf,
@@ -19,6 +22,16 @@ pub fn scan_project(
     let mut findings = Vec::new();
     scan_directory(project_path, project_path, settings, &mut findings)?;
     Ok(findings)
+}
+
+pub(super) fn hook_finding(path: &Path, marker: &str, message: &str) -> PolicyFinding {
+    PolicyFinding {
+        path: path.to_path_buf(),
+        line: 0,
+        marker: marker.to_string(),
+        message: message.to_string(),
+        snippet: REDACTED_SNIPPET.to_string(),
+    }
 }
 
 fn scan_directory(
@@ -54,6 +67,18 @@ fn scan_file(
     settings: &ProjectSettingsReport,
     findings: &mut Vec<PolicyFinding>,
 ) -> Result<()> {
+    let metadata =
+        std::fs::metadata(path).with_context(|| format!("failed to inspect {}", path.display()))?;
+    if metadata.len() > MAX_POLICY_FILE_BYTES {
+        findings.push(finding(
+            project_path,
+            path,
+            0,
+            "file_size_limit",
+            "file exceeds policy scan size limit",
+        ));
+        return Ok(());
+    }
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::InvalidData => return Ok(()),
@@ -71,7 +96,6 @@ fn scan_file(
                     line_number,
                     marker,
                     "forbidden marker is not allowed",
-                    line,
                 ));
             }
         }
@@ -83,7 +107,6 @@ fn scan_file(
                     line_number,
                     marker,
                     "allow marker requires same-line evidence, issue, or sunset",
-                    line,
                 ));
             }
         }
@@ -97,7 +120,6 @@ fn finding(
     line: usize,
     marker: &str,
     message: &str,
-    snippet: &str,
 ) -> PolicyFinding {
     PolicyFinding {
         path: path
@@ -107,7 +129,7 @@ fn finding(
         line,
         marker: marker.to_string(),
         message: message.to_string(),
-        snippet: snippet.trim().chars().take(180).collect(),
+        snippet: REDACTED_SNIPPET.to_string(),
     }
 }
 
@@ -125,7 +147,22 @@ fn excluded_path(project_path: &Path, path: &Path) -> bool {
         return true;
     }
     relative.components().any(|component| {
-        let text = component.as_os_str().to_string_lossy();
-        matches!(text.as_ref(), ".git" | ".lux" | "target" | "node_modules")
+        let text = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        matches!(
+            text.as_str(),
+            ".git"
+                | ".lux"
+                | "target"
+                | "node_modules"
+                | "library"
+                | "temp"
+                | "logs"
+                | "obj"
+                | "bin"
+                | "build"
+                | "builds"
+                | "generated"
+                | "vendor"
+        )
     })
 }
