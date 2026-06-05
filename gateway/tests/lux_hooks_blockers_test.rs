@@ -108,6 +108,36 @@ fn verification_evidence_requires_existing_lux_evidence_path() {
     assert_eq!(passed_report["gate_result"]["status"], "passed");
 }
 
+#[cfg(unix)]
+#[test]
+fn verification_evidence_rejects_symlink_escape() {
+    let project = temp_path("lux-hooks-verification-symlink");
+    fs::create_dir_all(project.join(".lux/evidence")).expect("create evidence dir");
+    fs::write(
+        project.join(".lux-agent.toml"),
+        settings("verification_evidence"),
+    )
+    .expect("settings");
+    let outside = temp_path("lux-hooks-outside-evidence");
+    fs::write(&outside, "external evidence").expect("outside evidence");
+    std::os::unix::fs::symlink(&outside, project.join(".lux/evidence/link.txt")).expect("symlink");
+
+    let output = run_hook(
+        &project,
+        "LuxVerificationEvidence",
+        r#"{"evidence_path":".lux/evidence/link.txt"}"#,
+    );
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    let report: Value = serde_json::from_str(&stdout).expect("json report");
+    assert_eq!(report["gate_result"]["status"], "failed");
+    assert_eq!(
+        report["gate_result"]["findings"][0]["message"],
+        "evidence_path must stay under .lux/evidence"
+    );
+}
+
 #[test]
 fn policy_scan_excludes_generated_build_and_vendor_paths() {
     let project = temp_path("lux-hooks-generated-paths");

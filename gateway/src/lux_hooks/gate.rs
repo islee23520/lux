@@ -112,8 +112,21 @@ fn verification_evidence_gate(
     if relative.trim().is_empty() || path.contains("..") {
         return Ok(failed_evidence_gate("evidence_path must be normalized"));
     }
-    if !project_path.join(path).is_file() {
+    let evidence_root = project_path.join(".lux/evidence");
+    let Ok(root_canonical) = evidence_root.canonicalize() else {
+        return Ok(failed_evidence_gate("evidence root does not exist"));
+    };
+    let candidate = project_path.join(path);
+    let Ok(candidate_canonical) = candidate.canonicalize() else {
         return Ok(failed_evidence_gate("evidence_path does not exist"));
+    };
+    if !candidate_canonical.starts_with(&root_canonical) {
+        return Ok(failed_evidence_gate(
+            "evidence_path must stay under .lux/evidence",
+        ));
+    }
+    if !candidate_canonical.is_file() {
+        return Ok(failed_evidence_gate("evidence_path is not a file"));
     }
     Ok(HookGateResult {
         status: "passed".to_string(),
