@@ -262,6 +262,170 @@ fn rust_lux_godot_status_writes_engine_capabilities_json() {
 }
 
 #[test]
+fn rust_lux_roadmap_issue_register_dry_run_outputs_github_issue_plan() {
+    // Given: a Lux project initialized with the default roadmap runtime state.
+    let project_root = create_temp_dir("lux-roadmap-issue-register-dry-run");
+
+    // When: the operator asks Lux to prepare GitHub issue registration in dry-run JSON mode.
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "roadmap",
+            "issue-register",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--repo",
+            "islee23520/lux",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("run lux roadmap issue-register dry run");
+
+    // Then: Lux returns a remote GitHub issue plan without creating a local backlog fallback.
+    assert_command_success(&output, "lux roadmap issue-register dry-run");
+    let plan: Value = serde_json::from_slice(&output.stdout).expect("issue-register JSON");
+    assert_eq!(plan["repo"], "islee23520/lux");
+    assert_eq!(plan["dry_run"], true);
+    assert_eq!(plan["created_count"], 0);
+    assert!(plan["planned_count"].as_u64().expect("planned count") >= 5);
+    assert!(plan["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .any(|item| item["title"]
+            .as_str()
+            .is_some_and(|title| title.contains("M1: Canonical 9-Domain Schema"))));
+    assert!(
+        !project_root.join(".ledger").exists(),
+        "issue-register must not fall back to .ledger"
+    );
+    assert!(
+        !project_root.join(".lux/tickets").exists(),
+        "issue-register must not create local ticket backlog fallback"
+    );
+}
+
+#[test]
+fn rust_lux_roadmap_issue_register_dedupes_existing_github_issues_from_snapshot() {
+    // Given: roadmap milestones already exist on GitHub with wording drift.
+    let project_root = create_temp_dir("lux-roadmap-issue-register-dedupe");
+    let existing_issues_path = project_root.join("existing-issues.json");
+    fs::write(
+        &existing_issues_path,
+        r#"[
+  {
+    "number": 17,
+    "title": "M1: Canonical 9-domain schema and defaults",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/17"
+  },
+  {
+    "number": 18,
+    "title": "M2: Ambiguity convergence and autonomous Socratic loop",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/18"
+  },
+  {
+    "number": 19,
+    "title": "M3: Execution-grade ticket schema with evidence provenance",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/19"
+  },
+  {
+    "number": 20,
+    "title": "M4: Ticket-driven agent hook executor",
+    "state": "OPEN",
+    "url": "https://github.com/islee23520/lux/issues/20"
+  }
+]"#,
+    )
+    .expect("write existing issues snapshot");
+
+    // When: the dry run is supplied the existing GitHub issue snapshot.
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "roadmap",
+            "issue-register",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--repo",
+            "islee23520/lux",
+            "--dry-run",
+            "--json",
+            "--existing-issues-json",
+            existing_issues_path
+                .to_str()
+                .expect("existing issues path UTF-8"),
+        ])
+        .output()
+        .expect("run lux roadmap issue-register with existing issue snapshot");
+
+    // Then: each existing milestone prefix is reported as deduped instead of planned for creation.
+    assert_command_success(&output, "lux roadmap issue-register dedupe");
+    let plan: Value = serde_json::from_slice(&output.stdout).expect("issue-register JSON");
+    let items = plan["items"].as_array().expect("items array");
+    for (title, issue_number) in [
+        ("Roadmap: M1: Canonical 9-Domain Schema & Defaults", 17),
+        ("Roadmap: M2: Ambiguity Convergence & Socratic Loop", 18),
+        ("Roadmap: M3: Execution-Grade Ticket Schema", 19),
+        ("Roadmap: M4: Ticket-Driven OpenCode Hook Executor", 20),
+    ] {
+        let deduped = items
+            .iter()
+            .find(|item| {
+                item["title"]
+                    .as_str()
+                    .is_some_and(|item_title| item_title == title)
+            })
+            .expect("roadmap milestone item");
+        assert_eq!(deduped["action"], "exists");
+        assert_eq!(deduped["existing_issue"]["number"], issue_number);
+    }
+}
+
+#[test]
+fn rust_lux_roadmap_issue_register_rejects_invalid_repo_without_local_fallback() {
+    // Given: a Lux project with no remote issue target.
+    let project_root = create_temp_dir("lux-roadmap-issue-register-invalid-repo");
+
+    // When: the operator supplies an invalid GitHub repo coordinate.
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "roadmap",
+            "issue-register",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+            "--repo",
+            "lux",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("run lux roadmap issue-register invalid repo");
+
+    // Then: the command fails explicitly and still does not write a local backlog fallback.
+    assert!(
+        !output.status.success(),
+        "invalid repo should fail, stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("GitHub repo must be owner/name"),
+        "stderr should explain invalid repo, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !project_root.join(".ledger").exists(),
+        "invalid repo must not fall back to .ledger"
+    );
+    assert!(
+        !project_root.join(".lux/tickets").exists(),
+        "invalid repo must not create local ticket backlog fallback"
+    );
+}
+
+#[test]
 fn rust_lux_godot_build_exits_non_zero_until_verified() {
     let temp_dir = create_temp_dir("lux-godot-build");
     let project_root = temp_dir.join("GodotProject");
