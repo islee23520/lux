@@ -43,6 +43,10 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
     let gate_result = gate::evaluate_gate(&args.event, &project_path, &governance, parsed_stdin)?;
     let source = gate::hook_source(&args.event);
     let hook_dir = project_path.join(".lux").join("hooks");
+    reject_symlinked_path(
+        &hook_dir,
+        ".lux/hooks runtime directory must not be a symlink",
+    )?;
     fs::create_dir_all(&hook_dir)
         .with_context(|| format!("failed to create {}", hook_dir.display()))?;
     let event_log_path = hook_dir.join("events.jsonl");
@@ -86,11 +90,15 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
 
 fn reject_symlinked_lux_root(project_path: &Path) -> Result<()> {
     let lux_root = project_path.join(".lux");
-    if fs::symlink_metadata(&lux_root)
+    reject_symlinked_path(&lux_root, ".lux runtime root must not be a symlink")
+}
+
+fn reject_symlinked_path(path: &Path, message: &str) -> Result<()> {
+    if fs::symlink_metadata(path)
         .map(|metadata| metadata.file_type().is_symlink())
         .unwrap_or(false)
     {
-        bail!(".lux runtime root must not be a symlink");
+        bail!("{message}");
     }
     Ok(())
 }

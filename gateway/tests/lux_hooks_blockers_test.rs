@@ -196,6 +196,23 @@ fn hook_run_rejects_symlinked_lux_root_before_event_log_write() {
     assert!(!outside.join("hooks/events.jsonl").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn hook_run_rejects_symlinked_hooks_dir_before_event_log_write() {
+    let project = temp_path("lux-hooks-dir-symlink");
+    fs::create_dir_all(project.join(".lux")).expect("create lux root");
+    let outside = temp_path("lux-hooks-outside-hooks-dir");
+    fs::create_dir_all(&outside).expect("outside hooks dir");
+    std::os::unix::fs::symlink(&outside, project.join(".lux/hooks")).expect("symlink hooks dir");
+
+    let output = run_hook(&project, "UserPromptSubmit", "{}");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains(".lux/hooks runtime directory must not be a symlink"));
+    assert!(!outside.join("events.jsonl").exists());
+}
+
 #[test]
 fn policy_scan_excludes_generated_build_and_vendor_paths() {
     let project = temp_path("lux-hooks-generated-paths");
