@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::{BufWriter, Write};
 #[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -34,6 +36,13 @@ pub fn append_jsonl<T: Serialize>(path: &Path, event: &T) -> anyhow::Result<()> 
         .unwrap_or(false)
     {
         anyhow::bail!("jsonl file must not be a symlink: {}", path.display());
+    }
+    #[cfg(unix)]
+    if fs::metadata(path)
+        .map(|metadata| metadata.nlink() > 1)
+        .unwrap_or(false)
+    {
+        anyhow::bail!("jsonl file must not be hardlinked: {}", path.display());
     }
     let mut options = fs::OpenOptions::new();
     options.create(true).append(true);
@@ -169,6 +178,25 @@ mod tests {
             .to_string()
             .contains("jsonl file must not be a symlink"));
         assert_eq!(std::fs::read_to_string(outside)?, "");
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_jsonl_rejects_hardlinked_log_file() -> anyhow::Result<()> {
+        let dir = test_dir("jsonl-hardlink")?;
+        let path = dir.join("events.jsonl");
+        let outside = dir.join("outside.jsonl");
+        std::fs::write(&outside, "outside-original")?;
+        std::fs::hard_link(&outside, &path)?;
+
+        let error = append_jsonl(&path, &json!({ "id": 1 })).expect_err("hardlink rejected");
+
+        assert!(error
+            .to_string()
+            .contains("jsonl file must not be hardlinked"));
+        assert_eq!(std::fs::read_to_string(outside)?, "outside-original");
         std::fs::remove_dir_all(dir)?;
         Ok(())
     }

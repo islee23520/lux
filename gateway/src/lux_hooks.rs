@@ -221,7 +221,7 @@ pub(super) fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         );
     }
     let mut options = OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     options.custom_flags(libc::O_NOFOLLOW);
     let mut tmp_file = options

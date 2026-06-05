@@ -61,3 +61,22 @@ fn ulw_check_rejects_symlinked_temp_file_before_write() {
         "outside-original"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn ulw_check_rejects_hardlinked_temp_file_before_write() {
+    let project = temp_path("lux-hooks-ulw-temp-hardlink");
+    let hooks = project.join(".lux/hooks");
+    fs::create_dir_all(&hooks).expect("create hooks dir");
+    let outside = temp_path("lux-hooks-outside-ulw-hardlink");
+    fs::write(&outside, "outside-original").expect("outside target");
+    fs::hard_link(&outside, hooks.join(".ulw-check.json.tmp")).expect("hardlink temp file");
+
+    let output = run_hook(&project, "UserPromptSubmit", r#"{"prompt":"ulw"}"#);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(outside).expect("outside content"),
+        "outside-original"
+    );
+}
