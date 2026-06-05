@@ -134,7 +134,7 @@ fn verification_evidence_rejects_symlink_escape() {
     assert_eq!(report["gate_result"]["status"], "failed");
     assert_eq!(
         report["gate_result"]["findings"][0]["message"],
-        "evidence_path must stay under .lux/evidence"
+        "evidence_path must not be a symlink"
     );
 }
 
@@ -167,6 +167,33 @@ fn verification_evidence_rejects_symlinked_evidence_root() {
         report["gate_result"]["findings"][0]["message"],
         "evidence root must not be a symlink"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn hook_run_rejects_symlinked_lux_root_before_event_log_write() {
+    let project = temp_path("lux-hooks-lux-root-symlink");
+    fs::create_dir_all(&project).expect("create project");
+    fs::write(
+        project.join(".lux-agent.toml"),
+        settings("verification_evidence"),
+    )
+    .expect("settings");
+    let outside = temp_path("lux-hooks-outside-lux-root");
+    fs::create_dir_all(outside.join("evidence")).expect("outside lux root");
+    fs::write(outside.join("evidence/manual.txt"), "external evidence").expect("outside evidence");
+    std::os::unix::fs::symlink(&outside, project.join(".lux")).expect("symlink lux root");
+
+    let output = run_hook(
+        &project,
+        "LuxVerificationEvidence",
+        r#"{"evidence_path":".lux/evidence/manual.txt"}"#,
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains(".lux runtime root must not be a symlink"));
+    assert!(!outside.join("hooks/events.jsonl").exists());
 }
 
 #[test]

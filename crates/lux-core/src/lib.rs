@@ -35,7 +35,11 @@ pub fn append_jsonl<T: Serialize>(path: &Path, event: &T) -> anyhow::Result<()> 
     let mut writer = BufWriter::new(file);
     writeln!(writer, "{}", line)
         .with_context(|| format!("failed to append jsonl line to {}", path.display()))?;
-    writer.flush().context("failed to flush jsonl file")?;
+    let file = writer
+        .into_inner()
+        .context("failed to flush jsonl writer before sync")?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync jsonl file {}", path.display()))?;
     Ok(())
 }
 

@@ -17,11 +17,12 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
         bail!("--event must not be empty");
     }
     let project_path = resolve_project_path(args.project_path.as_ref())?;
-    let governance = load_project_governance(&project_path)?;
     let mut stdin_body = String::new();
     io::stdin()
         .read_to_string(&mut stdin_body)
         .context("failed to read hook stdin")?;
+    reject_symlinked_lux_root(&project_path)?;
+    let governance = load_project_governance(&project_path)?;
     let event_id = format!("lux-hook-{}", Uuid::new_v4());
     let timestamp_utc = Utc::now().to_rfc3339();
     let parsed_stdin_result = serde_json::from_str::<Value>(&stdin_body);
@@ -81,6 +82,17 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
         bail!(HookRunFailure { report });
     }
     Ok(report)
+}
+
+fn reject_symlinked_lux_root(project_path: &Path) -> Result<()> {
+    let lux_root = project_path.join(".lux");
+    if fs::symlink_metadata(&lux_root)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        bail!(".lux runtime root must not be a symlink");
+    }
+    Ok(())
 }
 
 #[derive(Debug)]

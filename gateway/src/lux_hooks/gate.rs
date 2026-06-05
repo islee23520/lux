@@ -116,10 +116,16 @@ fn verification_evidence_gate(
         return Ok(failed_evidence_gate("evidence root must not be a symlink"));
     }
     let evidence_root = project_path.join(".lux/evidence");
+    let candidate = project_path.join(path);
+    if std::fs::symlink_metadata(&candidate)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Ok(failed_evidence_gate("evidence_path must not be a symlink"));
+    }
     let Ok(root_canonical) = evidence_root.canonicalize() else {
         return Ok(failed_evidence_gate("evidence root does not exist"));
     };
-    let candidate = project_path.join(path);
     let Ok(candidate_canonical) = candidate.canonicalize() else {
         return Ok(failed_evidence_gate("evidence_path does not exist"));
     };
