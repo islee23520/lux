@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -19,8 +19,7 @@ pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> anyhow::Result
     let content = serde_json::to_string_pretty(value)
         .context("failed to serialize value for atomic write")?;
     let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, content)
-        .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
+    write_new_file_synced(&tmp_path, content.as_bytes())?;
     fs::rename(&tmp_path, path)
         .with_context(|| format!("failed to atomically replace file {}", path.display()))
 }
@@ -104,8 +103,7 @@ pub fn write_evidence_file(
         content
     };
     let tmp_path = abs_path.with_extension("txt.tmp");
-    fs::write(&tmp_path, truncated)
-        .with_context(|| format!("failed to write evidence tmp {}", tmp_path.display()))?;
+    write_new_file_synced(&tmp_path, truncated.as_bytes())?;
     fs::rename(&tmp_path, &abs_path).with_context(|| {
         format!(
             "failed to atomically replace evidence file {}",
@@ -113,6 +111,26 @@ pub fn write_evidence_file(
         )
     })?;
     Ok(relative_path.to_string())
+}
+
+fn write_new_file_synced(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("temporary file must not be a symlink: {}", path.display());
+    }
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to write temporary file {}", path.display()))?;
+    file.write_all(content)
+        .with_context(|| format!("failed to write temporary file {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync temporary file {}", path.display()))
 }
 
 #[cfg(test)]
@@ -144,6 +162,26 @@ mod tests {
 
         let content = std::fs::read_to_string(path)?;
         assert!(content.contains("\"status\": \"ok\""));
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_json_rejects_symlinked_temp_file() -> anyhow::Result<()> {
+        let dir = test_dir("atomic-write-symlink")?;
+        let path = dir.join("state.json");
+        let outside = dir.join("outside.json");
+        std::fs::write(&outside, "outside-original")?;
+        std::os::unix::fs::symlink(&outside, path.with_extension("json.tmp"))?;
+
+        let error = atomic_write_json(&path, &json!({ "status": "ok" }))
+            .expect_err("symlink temp rejected");
+
+        assert!(error
+            .to_string()
+            .contains("temporary file must not be a symlink"));
+        assert_eq!(std::fs::read_to_string(outside)?, "outside-original");
         std::fs::remove_dir_all(dir)?;
         Ok(())
     }
@@ -210,6 +248,26 @@ mod tests {
 
         assert_eq!(written, relative_path);
         assert_eq!(std::fs::read_to_string(dir.join(relative_path))?, "abc");
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_evidence_file_rejects_symlinked_temp_file() -> anyhow::Result<()> {
+        let dir = test_dir("evidence-symlink")?;
+        std::fs::create_dir_all(dir.join("evidence"))?;
+        let outside = dir.join("outside.txt");
+        std::fs::write(&outside, "outside-original")?;
+        std::os::unix::fs::symlink(&outside, dir.join("evidence/task.txt.tmp"))?;
+
+        let error = write_evidence_file(&dir, "evidence/task.txt", "abcdef", 6)
+            .expect_err("symlink temp rejected");
+
+        assert!(error
+            .to_string()
+            .contains("temporary file must not be a symlink"));
+        assert_eq!(std::fs::read_to_string(outside)?, "outside-original");
         std::fs::remove_dir_all(dir)?;
         Ok(())
     }
