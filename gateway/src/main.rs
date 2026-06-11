@@ -1243,9 +1243,27 @@ struct ServeArgs {
 
 #[derive(Parser, Debug)]
 struct McpArgs {
+    #[command(subcommand)]
+    action: Option<McpAction>,
     /// Default Unity project root for project-bound MCP tool calls
     #[arg(long)]
     project_path: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// Install a project-scoped MCP config entry for Lux
+    Install(McpInstallArgs),
+}
+
+#[derive(Parser, Debug)]
+struct McpInstallArgs {
+    /// Unity project root that should receive .mcp.json
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Print machine-readable installation details
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -1399,7 +1417,7 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         }
         Command::Verify(args) => run_lux_verify_command(args),
         Command::Run(args) => lux_run::run_command(&args),
-        Command::Mcp(args) => lux_mcp::run_mcp_stdio(args.project_path.as_deref()),
+        Command::Mcp(args) => run_lux_mcp_command(args),
         Command::Serve(args) => serve(args, &config).await,
         Command::Unity(args) => run_lux_unity_command(args),
         Command::Godot(args) => run_lux_godot_command(args),
@@ -1446,6 +1464,40 @@ async fn execute_cli_command(cli: Cli, config: &config::LuxConfig) -> anyhow::Re
         Command::Doctor(args) => lux_doctor::run_doctor_command(args),
         Command::AgentsInstall(args) => lux_agents_install::run_agents_install_command(args),
         Command::Autonomous(args) => run_autonomous_command(args),
+    }
+}
+
+fn run_lux_mcp_command(args: McpArgs) -> anyhow::Result<()> {
+    match args.action {
+        Some(McpAction::Install(install_args)) => {
+            let project_path = install_args
+                .project_path
+                .or(args.project_path)
+                .map(Ok)
+                .unwrap_or_else(std::env::current_dir)
+                .context("resolve project path for lux mcp install")?;
+            let lux_exe = std::env::current_exe().context("resolve current lux executable")?;
+            let result = lux_mcp::install_project_mcp_config(&project_path, &lux_exe)?;
+
+            if install_args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "{}",
+                    result["message"]
+                        .as_str()
+                        .unwrap_or("Lux MCP project config installed")
+                );
+                println!(
+                    "Config: {}",
+                    result["configPath"]
+                        .as_str()
+                        .unwrap_or("<unknown .mcp.json path>")
+                );
+            }
+            Ok(())
+        }
+        None => lux_mcp::run_mcp_stdio(args.project_path.as_deref()),
     }
 }
 

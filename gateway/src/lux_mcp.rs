@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::{
     fs,
     io::{self, BufRead, Write},
@@ -9,6 +11,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 use crate::{
+    lux_io::atomic_write_json,
     lux_spec,
     lux_ticket::{
         DispatchPolicy, FileTicketStore, Ticket, TicketPriority, TicketStatus, TicketStore,
@@ -22,6 +25,83 @@ const TOOL_TICKET_PREPARE: &str = "lux_game_ticket_prepare";
 const TOOL_UNITY_MANEUVER: &str = "lux_unity_maneuver";
 const TOOL_LOOP_ONCE: &str = "lux_game_dev_loop_once";
 const FIRST_LOOP_TICKET_ID: &str = "game-dev-loop-001";
+
+pub fn install_project_mcp_config(project_path: &Path, lux_exe: &Path) -> Result<Value> {
+    if !project_path.exists() {
+        anyhow::bail!("Project path does not exist: {}", project_path.display());
+    }
+    if !project_path.is_dir() {
+        anyhow::bail!(
+            "Project path is not a directory: {}",
+            project_path.display()
+        );
+    }
+
+    let project_path = project_path
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", project_path.display()))?;
+    let config_path = project_path.join(".mcp.json");
+    reject_linked_mcp_config(&config_path)?;
+    let mut root = match fs::read_to_string(&config_path) {
+        Ok(text) => serde_json::from_str::<Value>(&text)
+            .with_context(|| format!("failed to parse {}", config_path.display()))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => json!({}),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", config_path.display()));
+        }
+    };
+    let previous = root.clone();
+
+    let object = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow!(".mcp.json root must be a JSON object"))?;
+    let servers = object
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow!(".mcp.json mcpServers field must be a JSON object"))?;
+
+    servers.insert(
+        "lux".to_string(),
+        json!({
+            "command": lux_exe,
+            "args": [
+                "mcp",
+                "--project-path",
+                project_path,
+            ],
+        }),
+    );
+
+    let changed = root != previous;
+    if changed {
+        atomic_write_json(&config_path, &root)?;
+    }
+
+    Ok(json!({
+        "ok": true,
+        "changed": changed,
+        "configPath": config_path,
+        "serverName": "lux",
+        "command": lux_exe,
+        "args": ["mcp", "--project-path", project_path],
+        "message": if changed { "Lux MCP project config installed" } else { "Lux MCP project config already installed" },
+    }))
+}
+
+fn reject_linked_mcp_config(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!(".mcp.json must not be a symlink: {}", path.display());
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        anyhow::bail!(".mcp.json must not be hardlinked: {}", path.display());
+    }
+    Ok(())
+}
 
 pub fn run_mcp_stdio(project_path: Option<&Path>) -> Result<()> {
     let default_project = match project_path {

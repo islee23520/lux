@@ -25,7 +25,7 @@ Use this skill only when a request directly involves operating or inspecting a U
 
 ## MCP Game-Development Tools
 
-Use `lux mcp --project-path <unity-project>` when an AI client needs the stdio MCP surface. The game-development tools are:
+Run `lux mcp install --project-path <unity-project>` when an MCP client should discover Lux from the installed Unity project. Use `lux mcp --project-path <unity-project>` when launching the stdio MCP surface directly. The game-development tools are:
 
 - `lux_bridge_install` and `lux_bridge_diagnostics` for bridge setup and health.
 - `lux_game_spec_write` for `.lux/specs/spec.json`, GDD/domain specs, and local worktree decision-record creation/import.

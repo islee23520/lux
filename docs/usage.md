@@ -287,6 +287,9 @@ For engine actions that require an operator loop, `lux run` may hand off to uloo
 | Command | Purpose |
 | --- | --- |
 | `lux mcp` | MCP integration entrypoint. |
+| `lux mcp install --project-path <path>` | Install a project `.mcp.json` entry that launches `lux mcp --project-path <path>`. |
+
+Run `lux mcp install --project-path /path/to/project` after `lux init` and bridge installation when an MCP client should communicate with that installed project through Lux.
 
 ### Config
 

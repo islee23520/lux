@@ -158,6 +158,7 @@ lux serve
 cd /path/to/your/project
 lux init
 lux bridge install --project-path /path/to/your/unity-project
+lux mcp install --project-path /path/to/your/unity-project
 
 # Unity status and verification
 lux unity status
@@ -196,7 +197,7 @@ Representative API surfaces:
 | Lux state | `POST /api/lux/init`, `GET /api/lux/spec`, `GET /api/lux/progress/summary` |
 | Build and verification | `POST /api/lux/build/start`, `POST /api/lux/verify/run`, `GET /api/lux/verify/latest` |
 | Kanban and terminal | `GET /api/lux/kanban/board`, `POST /api/lux/terminal/create` |
-| MCP | `lux mcp` exposes bounded game-development loop tools over JSON-RPC stdio. |
+| MCP | `lux mcp install --project-path <project>` writes the project `.mcp.json`; `lux mcp --project-path <project>` exposes bounded game-development loop tools over JSON-RPC stdio. |
 
 ## `.lux/specs` Game Spec System
 

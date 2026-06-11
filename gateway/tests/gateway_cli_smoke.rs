@@ -129,6 +129,7 @@ fn rust_lux_cli_exposes_batch_mode_help_flags() {
     assert_command_help_contains(&["autonomous", "--help"], "dispatch");
     assert_command_help_contains(&["godot", "--help"], "status");
     assert_command_help_contains(&["bridge", "install", "--help"], "--type");
+    assert_command_help_contains(&["mcp", "install", "--help"], "--project-path");
     assert_command_help_contains(&["autonomous", "dry-run", "--help"], "--project-path");
     assert_command_help_contains(&["autonomous", "dispatch", "--help"], "--seq");
     assert_command_help_contains(&["autonomous", "evidence", "--help"], "--run-id");
@@ -4667,12 +4668,17 @@ fn temp_lux_project(name: &str) -> std::path::PathBuf {
 }
 
 fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_lux"))
-        .args([
-            "mcp",
-            "--project-path",
-            project.to_str().expect("project path UTF-8"),
-        ])
+    let args = vec![
+        "mcp".to_string(),
+        "--project-path".to_string(),
+        project.to_str().expect("project path UTF-8").to_string(),
+    ];
+    run_mcp_jsonl_command(Path::new(env!("CARGO_BIN_EXE_lux")), &args, requests)
+}
+
+fn run_mcp_jsonl_command(command: &Path, args: &[String], requests: &[Value]) -> Vec<Value> {
+    let mut child = Command::new(command)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -4698,6 +4704,208 @@ fn run_mcp_jsonl(project: &Path, requests: &[Value]) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).expect("mcp response JSON"))
         .collect()
+}
+
+#[test]
+fn mcp_install_writes_idempotent_project_config_and_launches_server() {
+    let project = create_test_unity_project("lux-mcp-install", false);
+    let existing_config = json!({
+        "mcpServers": {
+            "other": {
+                "command": "other-command"
+            }
+        }
+    });
+    fs::write(
+        project.join(".mcp.json"),
+        serde_json::to_string_pretty(&existing_config).expect("existing MCP config JSON"),
+    )
+    .expect("write existing MCP config");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "mcp",
+            "install",
+            "--project-path",
+            project.to_str().expect("project path UTF-8"),
+            "--json",
+        ])
+        .output()
+        .expect("run lux mcp install");
+    assert_command_success(&first_output, "lux mcp install first");
+    let first_result: Value =
+        serde_json::from_slice(&first_output.stdout).expect("first install JSON");
+    assert_eq!(first_result["ok"], true);
+    assert_eq!(first_result["changed"], true);
+    assert_eq!(first_result["serverName"], "lux");
+
+    let installed_config: Value = serde_json::from_str(
+        &fs::read_to_string(project.join(".mcp.json")).expect("read .mcp.json"),
+    )
+    .expect("installed MCP config JSON");
+    assert_eq!(
+        installed_config["mcpServers"]["other"]["command"],
+        "other-command"
+    );
+    let lux_server = &installed_config["mcpServers"]["lux"];
+    assert_eq!(lux_server["command"], env!("CARGO_BIN_EXE_lux"));
+    let lux_args = lux_server["args"].as_array().expect("lux args array");
+    assert_eq!(lux_args[0], "mcp");
+    assert_eq!(lux_args[1], "--project-path");
+    let canonical_project = project.canonicalize().expect("canonical project");
+    assert_eq!(
+        lux_args[2],
+        canonical_project.to_str().expect("canonical project UTF-8")
+    );
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "mcp",
+            "install",
+            "--project-path",
+            project.to_str().expect("project path UTF-8"),
+            "--json",
+        ])
+        .output()
+        .expect("run idempotent lux mcp install");
+    assert_command_success(&second_output, "lux mcp install second");
+    let second_result: Value =
+        serde_json::from_slice(&second_output.stdout).expect("second install JSON");
+    assert_eq!(second_result["changed"], false);
+
+    let configured_command = PathBuf::from(lux_server["command"].as_str().expect("lux command"));
+    let configured_args = lux_args
+        .iter()
+        .map(|arg| arg.as_str().expect("lux arg").to_string())
+        .collect::<Vec<_>>();
+    let responses = run_mcp_jsonl_command(
+        &configured_command,
+        &configured_args,
+        &[
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+        ],
+    );
+
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "lux");
+    let tools = responses[1]["result"]["tools"]
+        .as_array()
+        .expect("tools array");
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "lux_bridge_install"));
+}
+
+#[test]
+fn mcp_install_persists_canonical_project_path_for_relative_input() {
+    let project = create_test_unity_project("lux-mcp-relative-install", false);
+    let parent = project.parent().expect("project parent");
+    let relative_project = project.file_name().expect("project file name");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .current_dir(parent)
+        .args([
+            "mcp",
+            "install",
+            "--project-path",
+            relative_project.to_str().expect("relative project UTF-8"),
+            "--json",
+        ])
+        .output()
+        .expect("run relative lux mcp install");
+    assert_command_success(&output, "lux mcp install relative");
+
+    let result: Value = serde_json::from_slice(&output.stdout).expect("install JSON");
+    let canonical_project = project.canonicalize().expect("canonical project");
+    assert_eq!(
+        result["args"][2],
+        canonical_project.to_str().expect("canonical project UTF-8")
+    );
+    assert_eq!(
+        result["configPath"],
+        canonical_project
+            .join(".mcp.json")
+            .to_str()
+            .expect("canonical config UTF-8")
+    );
+
+    let installed_config: Value = serde_json::from_str(
+        &fs::read_to_string(project.join(".mcp.json")).expect("read .mcp.json"),
+    )
+    .expect("installed MCP config JSON");
+    assert_eq!(
+        installed_config["mcpServers"]["lux"]["args"][2],
+        canonical_project.to_str().expect("canonical project UTF-8")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_install_rejects_linked_project_config_before_reading() {
+    let symlink_project = create_test_unity_project("lux-mcp-symlink-install", false);
+    let symlink_outside = create_temp_dir("lux-mcp-symlink-outside").join("outside.json");
+    fs::write(
+        &symlink_outside,
+        r#"{"secret":"must-not-copy","mcpServers":{}}"#,
+    )
+    .expect("write symlink outside config");
+    std::os::unix::fs::symlink(&symlink_outside, symlink_project.join(".mcp.json"))
+        .expect("symlink .mcp.json");
+
+    let symlink_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "mcp",
+            "install",
+            "--project-path",
+            symlink_project.to_str().expect("project path UTF-8"),
+            "--json",
+        ])
+        .output()
+        .expect("run symlinked lux mcp install");
+    assert!(
+        !symlink_output.status.success(),
+        "symlinked install should fail"
+    );
+    let symlink_stderr = String::from_utf8_lossy(&symlink_output.stderr);
+    assert!(
+        symlink_stderr.contains(".mcp.json must not be a symlink"),
+        "expected symlink rejection, got:\n{symlink_stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&symlink_outside).expect("read outside config"),
+        r#"{"secret":"must-not-copy","mcpServers":{}}"#
+    );
+
+    let hardlink_project = create_test_unity_project("lux-mcp-hardlink-install", false);
+    let hardlink_outside = create_temp_dir("lux-mcp-hardlink-outside").join("outside.json");
+    fs::write(&hardlink_outside, r#"{"secret":"must-not-copy"}"#)
+        .expect("write hardlink outside config");
+    fs::hard_link(&hardlink_outside, hardlink_project.join(".mcp.json"))
+        .expect("hardlink .mcp.json");
+
+    let hardlink_output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "mcp",
+            "install",
+            "--project-path",
+            hardlink_project.to_str().expect("project path UTF-8"),
+            "--json",
+        ])
+        .output()
+        .expect("run hardlinked lux mcp install");
+    assert!(
+        !hardlink_output.status.success(),
+        "hardlinked install should fail"
+    );
+    let hardlink_stderr = String::from_utf8_lossy(&hardlink_output.stderr);
+    assert!(
+        hardlink_stderr.contains(".mcp.json must not be hardlinked"),
+        "expected hardlink rejection, got:\n{hardlink_stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&hardlink_outside).expect("read outside config"),
+        r#"{"secret":"must-not-copy"}"#
+    );
 }
 
 #[test]

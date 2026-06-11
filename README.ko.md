@@ -158,6 +158,7 @@ lux serve
 cd /path/to/your/project
 lux init
 lux bridge install --project-path /path/to/your/unity-project
+lux mcp install --project-path /path/to/your/unity-project
 
 # Unity 상태와 검증
 lux unity status
@@ -196,7 +197,7 @@ lux ai-log tail
 | Lux state | `POST /api/lux/init`, `GET /api/lux/spec`, `GET /api/lux/progress/summary` |
 | Build and verification | `POST /api/lux/build/start`, `POST /api/lux/verify/run`, `GET /api/lux/verify/latest` |
 | Kanban and terminal | `GET /api/lux/kanban/board`, `POST /api/lux/terminal/create` |
-| MCP | `lux mcp`는 JSON-RPC stdio로 bounded game-development loop tools를 노출합니다. |
+| MCP | `lux mcp install --project-path <project>`는 프로젝트 `.mcp.json`을 작성합니다. `lux mcp --project-path <project>`는 JSON-RPC stdio로 bounded game-development loop tools를 노출합니다. |
 
 ## `.lux/specs` 게임 Spec 시스템
 
