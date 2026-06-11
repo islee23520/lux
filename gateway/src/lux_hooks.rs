@@ -1,14 +1,28 @@
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
+use std::error::Error;
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+mod gate;
+mod policy;
+mod rules;
+
 const DEFAULT_CODEX_EVENTS: &[&str] = &["UserPromptSubmit"];
+const LUX_PROJECT_EVENTS: &[&str] = &[
+    "LuxPreWorkRuleLoad",
+    "LuxPostEditPolicy",
+    "LuxVerificationEvidence",
+];
 
 #[derive(Debug, Clone, Parser)]
 pub struct HooksArgs {
@@ -92,6 +106,10 @@ pub struct HookStatusReport {
     pub hooks_path: PathBuf,
     pub project_path: PathBuf,
     pub events: Vec<HookEventStatusReport>,
+    pub project_settings: rules::ProjectSettingsReport,
+    #[serde(rename = "agents_rule_paths", alias = "loaded_rule_paths")]
+    pub loaded_rule_paths: Vec<PathBuf>,
+    pub lux_events: Vec<LuxHookEventStatusReport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,8 +125,50 @@ pub struct HookRunReport {
     pub event: String,
     pub project_path: PathBuf,
     pub event_log_path: PathBuf,
+    pub source: String,
     pub ulw_detected: bool,
     pub omx_ultrawork: OmxUltraworkStatus,
+    pub project_settings: rules::ProjectSettingsReport,
+    pub loaded_rule_paths: Vec<PathBuf>,
+    pub gate_result: HookGateResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LuxHookEventStatusReport {
+    pub event: String,
+    pub enabled: bool,
+}
+
+impl PartialEq<&str> for LuxHookEventStatusReport {
+    fn eq(&self, other: &&str) -> bool {
+        self.event == *other
+    }
+}
+
+impl PartialEq<str> for LuxHookEventStatusReport {
+    fn eq(&self, other: &str) -> bool {
+        self.event == other
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HookGateResult {
+    pub status: String,
+    #[serde(alias = "violations")]
+    pub findings: Vec<policy::PolicyFinding>,
+}
+
+impl Serialize for HookGateResult {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("HookGateResult", 3)?;
+        state.serialize_field("status", &self.status)?;
+        state.serialize_field("findings", &self.findings)?;
+        state.serialize_field("violations", &self.findings)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,13 +241,22 @@ pub fn run_hooks_command(args: HooksArgs) -> Result<()> {
             }
             Ok(())
         }
-        HooksAction::Run(run_args) => {
-            let report = run_hook_bridge(&run_args)?;
-            if run_args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+        HooksAction::Run(run_args) => match run_hook_bridge(&run_args) {
+            Ok(report) => {
+                if run_args.json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                }
+                Ok(())
             }
-            Ok(())
-        }
+            Err(error) => {
+                if run_args.json {
+                    if let Some(failure) = error.downcast_ref::<HookRunFailure>() {
+                        println!("{}", serde_json::to_string_pretty(&failure.report)?);
+                    }
+                }
+                Err(error)
+            }
+        },
     }
 }
 
@@ -242,6 +311,7 @@ pub fn codex_hook_status(args: &HooksStatusArgs) -> Result<HookStatusReport> {
     let project_path = resolve_project_path(args.project_path.as_ref())?;
     let hooks_path = resolve_hooks_path(args.hooks_path.as_ref())?;
     let hooks_json = read_hooks_json(&hooks_path)?;
+    let governance = rules::load_project_governance(&project_path)?;
     let events = DEFAULT_CODEX_EVENTS
         .iter()
         .map(|event| {
@@ -257,6 +327,9 @@ pub fn codex_hook_status(args: &HooksStatusArgs) -> Result<HookStatusReport> {
         hooks_path,
         project_path,
         events,
+        lux_events: lux_event_statuses(&governance.settings),
+        project_settings: governance.settings,
+        loaded_rule_paths: governance.loaded_rule_paths,
     })
 }
 
@@ -278,7 +351,20 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
             .as_ref()
             .is_some_and(|excerpt| contains_ulw_signal(excerpt));
     let omx_ultrawork = inspect_omx_ultrawork(&project_path);
+    reject_symlinked_lux_root(&project_path)?;
+    let governance = rules::load_project_governance(&project_path)?;
+    let gate_result = gate::evaluate_gate(
+        &args.event,
+        &project_path,
+        &governance,
+        parsed_stdin.as_ref(),
+    )?;
+    let source = gate::hook_source(&args.event);
     let hook_dir = project_path.join(".lux").join("hooks");
+    reject_symlinked_path(
+        &hook_dir,
+        ".lux/hooks runtime directory must not be a symlink",
+    )?;
     fs::create_dir_all(&hook_dir)
         .with_context(|| format!("failed to create {}", hook_dir.display()))?;
     let event_log_path = hook_dir.join("events.jsonl");
@@ -287,25 +373,103 @@ pub fn run_hook_bridge(args: &HooksRunArgs) -> Result<HookRunReport> {
         "event_id": event_id,
         "timestamp_utc": timestamp_utc,
         "event": args.event,
-        "source": "codex-native-hook",
+        "source": source,
         "ulw_detected": ulw_detected,
-        "prompt_excerpt": prompt_excerpt,
         "stdin_json_valid": parsed_stdin.is_some(),
         "omx_ultrawork": omx_ultrawork,
+        "project_settings": governance.settings,
+        "loaded_rule_paths": governance.loaded_rule_paths,
+        "gate_result": gate_result,
     });
     append_jsonl(&event_log_path, &record)?;
     if ulw_detected {
         let latest_path = hook_dir.join("ulw-check.json");
         write_json_atomic(&latest_path, &record)?;
     }
-    Ok(HookRunReport {
+    let report = HookRunReport {
         event_id,
         event: args.event.clone(),
         project_path,
         event_log_path,
+        source: source.to_string(),
         ulw_detected,
         omx_ultrawork,
-    })
+        project_settings: governance.settings,
+        loaded_rule_paths: governance.loaded_rule_paths,
+        gate_result,
+    };
+    if matches!(report.gate_result.status.as_str(), "failed" | "unsupported") {
+        bail!(HookRunFailure { report });
+    }
+    Ok(report)
+}
+
+#[derive(Debug)]
+struct HookRunFailure {
+    report: HookRunReport,
+}
+
+impl fmt::Display for HookRunFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let markers = self
+            .report
+            .gate_result
+            .findings
+            .iter()
+            .map(|finding| finding.marker.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(formatter, "hook gate failed: {} failed", self.report.event)?;
+        if !markers.is_empty() {
+            write!(formatter, ": {markers}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for HookRunFailure {}
+
+fn reject_symlinked_lux_root(project_path: &Path) -> Result<()> {
+    let lux_root = project_path.join(".lux");
+    reject_symlinked_path(&lux_root, ".lux runtime root must not be a symlink")
+}
+
+fn reject_symlinked_path(path: &Path, message: &str) -> Result<()> {
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        bail!("{message}");
+    }
+    Ok(())
+}
+
+fn lux_event_statuses(settings: &rules::ProjectSettingsReport) -> Vec<LuxHookEventStatusReport> {
+    LUX_PROJECT_EVENTS
+        .iter()
+        .map(|event| LuxHookEventStatusReport {
+            event: (*event).to_string(),
+            enabled: lux_event_enabled(event, settings),
+        })
+        .collect()
+}
+
+fn lux_event_enabled(event: &str, settings: &rules::ProjectSettingsReport) -> bool {
+    match event {
+        "LuxPreWorkRuleLoad" => settings
+            .enabled_gates
+            .iter()
+            .any(|gate| gate == "pre_work_rule_load"),
+        "LuxPostEditPolicy" => settings
+            .enabled_gates
+            .iter()
+            .any(|gate| gate == "post_edit_policy"),
+        "LuxVerificationEvidence" => settings
+            .enabled_gates
+            .iter()
+            .any(|gate| gate == "verification_evidence"),
+        _ => false,
+    }
 }
 
 fn read_hooks_json(path: &Path) -> Result<Value> {
@@ -567,6 +731,7 @@ fn append_jsonl(path: &Path, record: &Value) -> Result<()> {
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+    prepare_append_path(path)?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -576,6 +741,23 @@ fn append_jsonl(path: &Path, record: &Value) -> Result<()> {
         .with_context(|| format!("failed to append {}", path.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync {}", path.display()))?;
+    Ok(())
+}
+
+fn prepare_append_path(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        bail!("append file must not be a symlink");
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        bail!("append file must not be hardlinked");
+    }
+    if !metadata.is_file() {
+        bail!("append path must be a regular file: {}", path.display());
+    }
     Ok(())
 }
 
@@ -589,6 +771,7 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         .and_then(|name| name.to_str())
         .with_context(|| format!("{} has no valid UTF-8 file name", path.display()))?;
     let tmp_path = parent.join(format!(".{file_name}.tmp"));
+    prepare_atomic_temp_path(&tmp_path)?;
     let mut tmp_file = File::create(&tmp_path)
         .with_context(|| format!("failed to create temporary file {}", tmp_path.display()))?;
     tmp_file
@@ -609,6 +792,25 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<()> {
         )
     })?;
     Ok(())
+}
+
+fn prepare_atomic_temp_path(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        bail!("temporary file must not be a symlink");
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        bail!("temporary file must not be hardlinked");
+    }
+    if metadata.is_file() {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale temp file {}", path.display()))?;
+        return Ok(());
+    }
+    bail!("temporary path must be a regular file: {}", path.display());
 }
 
 #[cfg(test)]
@@ -696,8 +898,7 @@ mod tests {
         let hooks_path = temp_path("lux-hooks-status-codex").join("hooks.json");
         fs::create_dir_all(project.join("Assets/Scripts")).expect("create project dirs");
         fs::write(project.join("AGENTS.md"), "# Root rules\n").expect("write root rules");
-        fs::write(project.join("Assets/AGENTS.md"), "# Asset rules\n")
-            .expect("write nested rules");
+        fs::write(project.join("Assets/AGENTS.md"), "# Asset rules\n").expect("write nested rules");
         fs::write(
             project.join(".lux-agent.toml"),
             r#"
@@ -734,8 +935,7 @@ allow_markers = ["lux-allow-failover"]
             .as_array()
             .expect("lux events")
             .iter()
-            .any(|event| event["event"] == "LuxPostEditPolicy"
-                && event["enabled"] == true));
+            .any(|event| event["event"] == "LuxPostEditPolicy" && event["enabled"] == true));
     }
 
     #[test]
@@ -783,7 +983,10 @@ allow_markers = ["lux-allow-failover"]
             .expect("parse hook record");
         assert_eq!(record["gate_result"]["status"], "failed");
         assert_eq!(record["gate_result"]["violations"][0]["line"], 1);
-        assert_eq!(record["gate_result"]["violations"][1]["marker"], "lux-allow-failover");
+        assert_eq!(
+            record["gate_result"]["violations"][1]["marker"],
+            "lux-allow-failover"
+        );
     }
 
     #[test]

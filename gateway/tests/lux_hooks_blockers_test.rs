@@ -213,6 +213,64 @@ fn hook_run_rejects_symlinked_hooks_dir_before_event_log_write() {
     assert!(!outside.join("events.jsonl").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn hook_run_rejects_symlinked_event_log_before_write() {
+    let project = temp_path("lux-hooks-event-log-symlink");
+    fs::create_dir_all(project.join(".lux/hooks")).expect("create hooks dir");
+    let outside = temp_path("lux-hooks-outside-event-log");
+    fs::write(&outside, "outside-original").expect("outside log target");
+    std::os::unix::fs::symlink(&outside, project.join(".lux/hooks/events.jsonl"))
+        .expect("event log symlink");
+
+    let output = run_hook(&project, "UserPromptSubmit", "{}");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains("append file must not be a symlink"));
+    assert_eq!(
+        fs::read_to_string(outside).expect("outside content"),
+        "outside-original"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn hook_run_rejects_hardlinked_event_log_before_write() {
+    let project = temp_path("lux-hooks-event-log-hardlink");
+    fs::create_dir_all(project.join(".lux/hooks")).expect("create hooks dir");
+    let outside = temp_path("lux-hooks-outside-hardlinked-event-log");
+    fs::write(&outside, "outside-original").expect("outside log target");
+    fs::hard_link(&outside, project.join(".lux/hooks/events.jsonl")).expect("event log hardlink");
+
+    let output = run_hook(&project, "UserPromptSubmit", "{}");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains("append file must not be hardlinked"));
+    assert_eq!(
+        fs::read_to_string(outside).expect("outside content"),
+        "outside-original"
+    );
+}
+
+#[test]
+fn user_prompt_hook_does_not_persist_prompt_excerpt() {
+    let project = temp_path("lux-hooks-prompt-redaction");
+    fs::create_dir_all(&project).expect("create project");
+
+    let output = run_hook(
+        &project,
+        "UserPromptSubmit",
+        r#"{"prompt":"ulw secret-token-123"}"#,
+    );
+
+    assert!(output.status.success());
+    let log = fs::read_to_string(project.join(".lux/hooks/events.jsonl")).expect("event log");
+    assert!(!log.contains("secret-token-123"));
+    assert!(!log.contains("prompt_excerpt"));
+}
+
 #[test]
 fn policy_scan_excludes_generated_build_and_vendor_paths() {
     let project = temp_path("lux-hooks-generated-paths");

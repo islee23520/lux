@@ -129,9 +129,36 @@ fn discover_agents_rule_paths(project_path: &Path) -> Vec<PathBuf> {
         .map(Path::to_path_buf)
         .collect::<Vec<_>>();
     directories.reverse();
-    directories
+    let mut paths = directories
         .into_iter()
         .map(|directory| directory.join("AGENTS.md"))
         .filter(|path| path.is_file())
-        .collect()
+        .collect::<Vec<_>>();
+    collect_nested_agents_rules(project_path, &mut paths);
+    paths
+}
+
+fn collect_nested_agents_rules(directory: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(
+            name.as_ref(),
+            ".git" | ".lux" | "target" | "node_modules" | "Library" | "Temp"
+        ) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_file() && name == "AGENTS.md" && !paths.contains(&path) {
+            paths.push(path);
+        } else if file_type.is_dir() {
+            collect_nested_agents_rules(&path, paths);
+        }
+    }
 }
