@@ -1047,6 +1047,11 @@ fn rust_lux_bridge_install_copies_unity_bridge_to_luxbridge_layout() {
     );
     assert!(!project_root.join("Assets/Editor/AiBridgeEditor").exists());
     assert!(!project_root.join(".opencode/plugins/lux").exists());
+    // Opt-in behavior: .opencode/commands/ must NOT be auto-created on plain `bridge install`
+    assert!(
+        !project_root.join(".opencode/commands").exists(),
+        ".opencode/commands must be opt-in via --opencode-commands (not installed by default)"
+    );
 }
 
 #[test]
@@ -2285,6 +2290,103 @@ fn rust_lux_unity_get_hierarchy_returns_hierarchy_metadata() {
 }
 
 #[test]
+fn rust_lux_unity_get_hierarchy_falls_back_to_scene_ast() {
+    let temp_dir = create_temp_dir("lux-unity-get-hierarchy-scene-ast");
+    let project_root = temp_dir.join("Project");
+    let bridge_dir = project_root.join("Library/UnityAiBridge");
+    fs::create_dir_all(&bridge_dir).expect("create Unity AI Bridge dir");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Unity TCP server");
+    let port = listener.local_addr().expect("read port").port();
+    let discovery = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "token": TOKEN,
+    });
+    fs::write(bridge_dir.join("server.json"), discovery.to_string()).expect("write discovery");
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept first client");
+        let mut request_reader = BufReader::new(stream.try_clone().expect("clone first stream"));
+        let mut request_line = String::new();
+        request_reader
+            .read_line(&mut request_line)
+            .expect("read first request line");
+        let request: Value = serde_json::from_str(request_line.trim()).expect("first request JSON");
+        assert_eq!(request["command"], "get_lux_hierarchy");
+
+        let rejected = serde_json::json!({
+            "schemaVersion": 1,
+            "requestId": request["requestId"],
+            "ok": false,
+            "errorCode": "registry_not_ready",
+            "errorMessage": "Command registry is not ready for command: get_lux_hierarchy",
+            "payload": null
+        });
+        stream
+            .write_all(format!("{}\n", rejected).as_bytes())
+            .expect("write rejected response");
+
+        let (mut fallback_stream, _) = listener.accept().expect("accept fallback client");
+        let mut fallback_reader = BufReader::new(fallback_stream.try_clone().expect("clone fallback stream"));
+        let mut fallback_line = String::new();
+        fallback_reader
+            .read_line(&mut fallback_line)
+            .expect("read fallback request line");
+        let fallback: Value = serde_json::from_str(fallback_line.trim()).expect("fallback request JSON");
+        assert_eq!(fallback["command"], "get_scene_ast");
+        assert_eq!(fallback["token"], TOKEN);
+        assert_eq!(fallback["params"]["astRootOnly"], false);
+
+        let response = serde_json::json!({
+            "schemaVersion": 1,
+            "requestId": fallback["requestId"],
+            "ok": true,
+            "payload": {
+                "sceneAst": {
+                    "schemaVersion": 1,
+                    "capturedAtUtc": "2026-04-30T00:00:00.0000000Z",
+                    "sceneName": "GamePlay",
+                    "scenePath": "Assets/_Main/Scenes/GamePlay.unity",
+                    "rootCount": 2,
+                    "totalGameObjects": 5,
+                    "totalComponents": 7,
+                    "roots": []
+                }
+            }
+        });
+
+        fallback_stream
+            .write_all(format!("{}\n", response).as_bytes())
+            .expect("write fallback response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "unity",
+            "get-hierarchy",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux unity get-hierarchy");
+
+    assert!(
+        output.status.success(),
+        "lux unity get-hierarchy failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).expect("output JSON");
+    assert_eq!(json["sceneName"], "GamePlay");
+    assert_eq!(json["rootCount"], 2);
+    assert_eq!(json["nodeCount"], 5);
+    assert_eq!(json["source"], "get_scene_ast");
+
+    server.join().expect("join fake Unity TCP server");
+}
+
+#[test]
 #[cfg_attr(
     not(feature = "integration"),
     ignore = "requires uloop passthrough and an external uloop binary"
@@ -3253,6 +3355,80 @@ fn rust_lux_unity_launch_no_wait_returns_immediately() {
         captured_args.contains("-projectPath"),
         "expected -projectPath in args: {captured_args}"
     );
+}
+
+#[test]
+fn rust_lux_unity_context_refresh_uses_open_bridge_when_available() {
+    let temp_dir = create_temp_dir("lux-unity-context-refresh-live");
+    let project_root = temp_dir.join("Project");
+    let bridge_dir = project_root.join("Library/UnityAiBridge");
+    fs::create_dir_all(&bridge_dir).expect("create Unity AI Bridge dir");
+    fs::create_dir_all(project_root.join("UserSettings")).expect("create UserSettings");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake Unity TCP server");
+    let port = listener.local_addr().expect("read port").port();
+    let discovery = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "token": TOKEN,
+    });
+    fs::write(bridge_dir.join("server.json"), discovery.to_string()).expect("write discovery");
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept client");
+        let mut request_reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        let mut request_line = String::new();
+        request_reader
+            .read_line(&mut request_line)
+            .expect("read request line");
+        let request: Value = serde_json::from_str(request_line.trim()).expect("request JSON");
+        assert_eq!(request["command"], "get_selected_file_context");
+        assert_eq!(request["token"], TOKEN);
+
+        let response = serde_json::json!({
+            "schemaVersion": 1,
+            "requestId": request["requestId"],
+            "ok": true,
+            "payload": {
+                "selectedFileContext": {
+                    "projectName": "LiveProject",
+                    "projectPath": "/tmp/live-project",
+                    "unityVersion": "6000.3.0f1",
+                    "selectionCapturedAtUtc": "2026-04-30T00:00:00.0000000Z",
+                    "selectionCount": 0,
+                    "selectedFiles": []
+                }
+            },
+            "capturedAtUtc": "2026-04-30T00:00:00.0000000Z"
+        });
+        stream
+            .write_all(format!("{}\n", response).as_bytes())
+            .expect("write response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "unity",
+            "context",
+            "--refresh",
+            "--project-path",
+            project_root.to_str().expect("project path UTF-8"),
+        ])
+        .output()
+        .expect("run lux unity context --refresh");
+
+    assert!(
+        output.status.success(),
+        "lux unity context --refresh failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let context: Value = serde_json::from_slice(&output.stdout).expect("context JSON");
+    assert_eq!(context["protocol"], "lux.unity.context.v1");
+    assert_eq!(context["source"], "get_selected_file_context");
+    assert_eq!(context["selected_file_context"]["projectName"], "LiveProject");
+
+    server.join().expect("join fake Unity TCP server");
 }
 
 #[test]

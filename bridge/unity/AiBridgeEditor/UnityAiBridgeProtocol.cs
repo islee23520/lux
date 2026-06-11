@@ -12,7 +12,7 @@ namespace Linalab.UnityAiBridge.Editor
     {
         public const int SchemaVersion = 1;
         public const string ProtocolVersion = "1";
-        public const string BackendVersion = "0.1.0";
+        public const string BackendVersion = "0.1.1";
 
         public const string CommandPing = "ping";
         public const string CommandGetProtocolInfo = "get_protocol_info";

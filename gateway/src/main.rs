@@ -240,7 +240,13 @@ struct LuxInitArgs {
     force: bool,
     /// Team profile preset or path for team-mode integration
     #[arg(long = "team-profile")]
-    pub team_profile: Option<String>,
+    team_profile: Option<String>,
+    /// Install Lux workflow skills into .agents/skills/ (default: ask)
+    #[arg(long = "agents-skills", action = ArgAction::SetTrue)]
+    agents_skills: bool,
+    /// Do not install Lux workflow skills into .agents/skills/
+    #[arg(long = "no-agents-skills", action = ArgAction::SetTrue)]
+    no_agents_skills: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -1049,6 +1055,12 @@ struct UnityBridgeInstallArgs {
     /// Unity project root directory
     #[arg(long, short = 'p')]
     project_path: PathBuf,
+    /// Install Lux OpenCode commands into .opencode/commands/ (default: ask)
+    #[arg(long = "opencode-commands", action = ArgAction::SetTrue)]
+    opencode_commands: bool,
+    /// Do not install Lux OpenCode commands into .opencode/commands/
+    #[arg(long = "no-opencode-commands", action = ArgAction::SetTrue)]
+    no_opencode_commands: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -1298,6 +1310,12 @@ struct BridgeInstallArgs {
     /// Bridge type to install
     #[arg(long = "type", default_value = "unity", value_parser = parse_bridge_kind)]
     bridge_type: BridgeKind,
+    /// Install Lux OpenCode commands into .opencode/commands/ (default: ask)
+    #[arg(long = "opencode-commands", action = ArgAction::SetTrue)]
+    opencode_commands: bool,
+    /// Do not install Lux OpenCode commands into .opencode/commands/
+    #[arg(long = "no-opencode-commands", action = ArgAction::SetTrue)]
+    no_opencode_commands: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -1541,16 +1559,35 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
                 .any(|e| e.file_name().to_string_lossy().starts_with("lux-") && e.path().is_dir())
         });
 
-    let should_install_skills = if has_existing_lux_skills && !args.force {
-        prompt_skill_overwrite(&project_root)?
+    let mut install_force = args.force;
+
+    let should_install_skills = if args.agents_skills {
+        install_force = true;
+        true
+    } else if args.no_agents_skills {
+        false
+    } else if args.no_interactive {
+        false
+    } else if has_existing_lux_skills && !args.force {
+        // Existing lux-* skills: ask before overwriting (preserve prior UX)
+        let yes = prompt_skill_overwrite(&project_root)?;
+        if yes {
+            install_force = true;
+        }
+        yes
     } else {
-        !args.no_interactive || has_existing_lux_skills
+        // Fresh project or no existing lux skills: ask whether to place workflow skills for AI agents
+        let yes = prompt_install_agents_skills(&project_root, has_existing_lux_skills)?;
+        if yes {
+            install_force = true;
+        }
+        yes
     };
 
     if should_install_skills {
         let install_args = lux_agents_install::AgentsInstallArgs {
             project_path: Some(project_root.clone()),
-            force: args.force,
+            force: install_force,
             list_only: false,
             skill_names: None,
         };
@@ -1561,9 +1598,9 @@ fn run_lux_init_command(args: LuxInitArgs) -> anyhow::Result<()> {
             ),
             Err(err) => eprintln!("⚠️  Could not install Lux workflow skills: {err:#}"),
         }
-    } else if has_existing_lux_skills {
+    } else if has_existing_lux_skills && !args.agents_skills {
         eprintln!(
-            "ℹ️  Skipped skill installation (existing lux-* skills preserved). Run 'lux agents-install --force' to overwrite."
+            "ℹ️  Skipped skill installation (existing lux-* skills preserved). Run 'lux agents-install --force' or 'lux init --agents-skills' to (re)install."
         );
     }
 
@@ -1580,6 +1617,28 @@ fn prompt_skill_overwrite(project_root: &Path) -> anyhow::Result<bool> {
     eprintln!("   Installing will OVERWRITE existing lux-* skill files.");
     eprintln!();
     eprint!("   Overwrite existing lux-* skills? [y/N]: ");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(matches!(input.trim(), "y" | "yes" | "Y" | "YES"))
+}
+
+fn prompt_install_agents_skills(project_root: &Path, has_existing: bool) -> anyhow::Result<bool> {
+    use std::io;
+    eprintln!();
+    if has_existing {
+        eprintln!(
+            "Lux workflow skills are present in {}/.agents/skills/.",
+            project_root.display()
+        );
+    } else {
+        eprintln!(
+            "Lux workflow skills can be installed to {}/.agents/skills/ for AI agents (Codex, OpenCode, Claude Code, etc.).",
+            project_root.display()
+        );
+    }
+    eprintln!("These skills provide project-aware prompts and harness integration.");
+    eprintln!();
+    eprint!("   Install Lux workflow skills to .agents/skills/? [y/N]: ");
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     Ok(matches!(input.trim(), "y" | "yes" | "Y" | "YES"))
@@ -3387,6 +3446,8 @@ fn run_lux_unity_command(args: UnityArgs) -> anyhow::Result<()> {
                 UnityBridgeAction::Install(i) => BridgeAction::Install(BridgeInstallArgs {
                     project_path: i.project_path,
                     bridge_type: BridgeKind::Unity,
+                    opencode_commands: i.opencode_commands,
+                    no_opencode_commands: i.no_opencode_commands,
                 }),
             };
             run_bridge_command(BridgeArgs {
@@ -3694,13 +3755,12 @@ fn print_lux_backend_get_hierarchy(args: UnityGetHierarchyArgs) -> anyhow::Resul
             "hierarchyUseSelection": args.use_selection,
         }
     });
-    let response_line = send_unity_tcp_line(
-        &discovery,
-        &format!("{}\n", serde_json::to_string(&request)?),
-    )?;
-    let response_json: Value =
-        serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")?;
+    let response_json = send_unity_bridge_request(&discovery, &request)?;
     if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
+        if is_unity_registry_not_ready_for(&response_json, "get_lux_hierarchy") {
+            return print_lux_backend_scene_ast_hierarchy(&discovery, filter_count == 0 || args.all);
+        }
+
         bail!(
             "Unity backend rejected get_lux_hierarchy: {}",
             response_json
@@ -3748,6 +3808,82 @@ fn print_lux_backend_get_hierarchy(args: UnityGetHierarchyArgs) -> anyhow::Resul
         }))?
     );
     Ok(())
+}
+
+fn print_lux_backend_scene_ast_hierarchy(
+    discovery: &UnityBridgeDiscovery,
+    include_all: bool,
+) -> anyhow::Result<()> {
+    let request = json!({
+        "schemaVersion": 1,
+        "requestId": uuid::Uuid::new_v4().to_string(),
+        "command": "get_scene_ast",
+        "token": discovery.token,
+        "params": {
+            "astRootOnly": !include_all,
+        }
+    });
+    let response_json = send_unity_bridge_request(discovery, &request)?;
+    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
+        bail!("Unity backend rejected get_scene_ast fallback: {}", response_json);
+    }
+
+    let scene_ast = response_json
+        .get("payload")
+        .and_then(|payload| payload.get("sceneAst"))
+        .context("Unity TCP response did not include payload.sceneAst")?;
+    let scene_name = scene_ast
+        .get("sceneName")
+        .and_then(Value::as_str)
+        .context("Unity TCP response did not include payload.sceneAst.sceneName")?;
+    let scene_path = scene_ast
+        .get("scenePath")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let root_count = scene_ast
+        .get("rootCount")
+        .and_then(Value::as_i64)
+        .context("Unity TCP response did not include payload.sceneAst.rootCount")?;
+    let node_count = scene_ast
+        .get("totalGameObjects")
+        .and_then(Value::as_i64)
+        .context("Unity TCP response did not include payload.sceneAst.totalGameObjects")?;
+    let component_count = scene_ast
+        .get("totalComponents")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "source": "get_scene_ast",
+            "sceneName": scene_name,
+            "scenePath": scene_path,
+            "rootCount": root_count,
+            "nodeCount": node_count,
+            "componentCount": component_count,
+        }))?
+    );
+    Ok(())
+}
+
+fn send_unity_bridge_request(
+    discovery: &UnityBridgeDiscovery,
+    request: &Value,
+) -> anyhow::Result<Value> {
+    let response_line = send_unity_tcp_line(
+        discovery,
+        &format!("{}\n", serde_json::to_string(request)?),
+    )?;
+    serde_json::from_str(&response_line).context("Unity TCP response was not valid JSON")
+}
+
+fn is_unity_registry_not_ready_for(response_json: &Value, command: &str) -> bool {
+    response_json.get("errorCode").and_then(Value::as_str) == Some("registry_not_ready")
+        && response_json
+            .get("errorMessage")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains(command))
 }
 
 fn resolve_dynamic_code_source(args: &UnityExecuteDynamicCodeArgs) -> anyhow::Result<String> {
@@ -4175,6 +4311,21 @@ fn run_bridge_command(args: BridgeArgs) -> anyhow::Result<()> {
     }
 }
 
+fn prompt_install_opencode_commands(project_root: &Path) -> anyhow::Result<bool> {
+    use std::io;
+    eprintln!();
+    eprintln!(
+        "Lux OpenCode command files can be installed to {}/.opencode/commands/ for OpenCode users.",
+        project_root.display()
+    );
+    eprintln!("These are convenience command shortcuts (lux-init, lux-run, etc.).");
+    eprintln!();
+    eprint!("   Install Lux OpenCode commands to .opencode/commands/? [y/N]: ");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(matches!(input.trim(), "y" | "yes" | "Y" | "YES"))
+}
+
 fn watch_unity_bridge_events(args: BridgeWatchArgs) -> anyhow::Result<()> {
     let project_root = resolve_project_root(&args.project_path)?;
     let discovery = read_unity_bridge_discovery(&project_root)?;
@@ -4291,63 +4442,76 @@ fn install_bridge_files(args: BridgeInstallArgs) -> anyhow::Result<()> {
         bridge_target.display()
     );
 
-    // Install OpenCode command files (.opencode/commands/)
-    let opencode_dir = project_root.join(".opencode");
-    let commands_dir = opencode_dir.join("commands");
-    std::fs::create_dir_all(&commands_dir)
-        .with_context(|| format!("failed to create {}", commands_dir.display()))?;
+    // OpenCode commands (.opencode/commands/) — opt-in only, user chooses
+    let should_install_opencode = if args.opencode_commands {
+        true
+    } else if args.no_opencode_commands {
+        false
+    } else {
+        // Interactive prompt (user chooses whether to install .opencode/commands)
+        prompt_install_opencode_commands(&project_root)?
+    };
 
-    let command_files = [
-        (
-            "lux-init.md",
-            include_str!("templates/commands/lux-init.md"),
-        ),
-        ("lux-run.md", include_str!("templates/commands/lux-run.md")),
-        (
-            "lux-spec-validate.md",
-            include_str!("templates/commands/lux-spec-validate.md"),
-        ),
-        (
-            "lux-spec-edit.md",
-            include_str!("templates/commands/lux-spec-edit.md"),
-        ),
-        (
-            "lux-kanban.md",
-            include_str!("templates/commands/lux-kanban.md"),
-        ),
-        (
-            "lux-build.md",
-            include_str!("templates/commands/lux-build.md"),
-        ),
-        (
-            "lux-verify.md",
-            include_str!("templates/commands/lux-verify.md"),
-        ),
-        (
-            "lux-compile.md",
-            include_str!("templates/commands/lux-compile.md"),
-        ),
-        (
-            "lux-test.md",
-            include_str!("templates/commands/lux-test.md"),
-        ),
-        (
-            "lux-status.md",
-            include_str!("templates/commands/lux-status.md"),
-        ),
-    ];
+    if should_install_opencode {
+        let opencode_dir = project_root.join(".opencode");
+        let commands_dir = opencode_dir.join("commands");
+        std::fs::create_dir_all(&commands_dir)
+            .with_context(|| format!("failed to create {}", commands_dir.display()))?;
 
-    for (name, content) in &command_files {
-        let path = commands_dir.join(name);
-        std::fs::write(&path, content)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        let command_files = [
+            (
+                "lux-init.md",
+                include_str!("templates/commands/lux-init.md"),
+            ),
+            ("lux-run.md", include_str!("templates/commands/lux-run.md")),
+            (
+                "lux-spec-validate.md",
+                include_str!("templates/commands/lux-spec-validate.md"),
+            ),
+            (
+                "lux-spec-edit.md",
+                include_str!("templates/commands/lux-spec-edit.md"),
+            ),
+            (
+                "lux-kanban.md",
+                include_str!("templates/commands/lux-kanban.md"),
+            ),
+            (
+                "lux-build.md",
+                include_str!("templates/commands/lux-build.md"),
+            ),
+            (
+                "lux-verify.md",
+                include_str!("templates/commands/lux-verify.md"),
+            ),
+            (
+                "lux-compile.md",
+                include_str!("templates/commands/lux-compile.md"),
+            ),
+            (
+                "lux-test.md",
+                include_str!("templates/commands/lux-test.md"),
+            ),
+            (
+                "lux-status.md",
+                include_str!("templates/commands/lux-status.md"),
+            ),
+        ];
+
+        for (name, content) in &command_files {
+            let path = commands_dir.join(name);
+            std::fs::write(&path, content)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+
+        eprintln!(
+            "  → Installed {} OpenCode commands at {}",
+            command_files.len(),
+            commands_dir.display()
+        );
+    } else {
+        eprintln!("  → Skipped .opencode/commands/ installation (use --opencode-commands to install).");
     }
-
-    eprintln!(
-        "  → Installed {} OpenCode commands at {}",
-        command_files.len(),
-        commands_dir.display()
-    );
 
     eprintln!("Bridge installed to {}", bridge_target.display());
     eprintln!("Open Unity Editor and wait for recompile. Menu 'AI Bridge' will appear.");
@@ -4506,6 +4670,9 @@ fn is_transient_socket_error(error: &std::io::Error) -> bool {
 
 fn print_lux_unity_context(args: UnityContextArgs) -> anyhow::Result<()> {
     let project_root = resolve_project_root(&args.project_path)?;
+    if args.refresh && refresh_lux_unity_context_via_bridge(&project_root)? {
+        return Ok(());
+    }
     if args.refresh {
         refresh_lux_unity_context(&project_root)?;
     }
@@ -4526,6 +4693,43 @@ fn print_lux_unity_context(args: UnityContextArgs) -> anyhow::Result<()> {
 
     println!("{}", serde_json::to_string_pretty(&context_json)?);
     Ok(())
+}
+
+fn refresh_lux_unity_context_via_bridge(project_root: &Path) -> anyhow::Result<bool> {
+    let Ok(discovery) = read_unity_bridge_discovery(project_root) else {
+        return Ok(false);
+    };
+    let request = json!({
+        "schemaVersion": 1,
+        "requestId": uuid::Uuid::new_v4().to_string(),
+        "command": "get_selected_file_context",
+        "token": discovery.token,
+        "params": {}
+    });
+    let response_json = match send_unity_bridge_request(&discovery, &request) {
+        Ok(response) => response,
+        Err(_) => return Ok(false),
+    };
+    if response_json.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Ok(false);
+    }
+
+    let selected_file_context = response_json
+        .get("payload")
+        .and_then(|payload| payload.get("selectedFileContext"))
+        .context("Unity TCP response did not include payload.selectedFileContext")?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "protocol": "lux.unity.context.v1",
+            "source": "get_selected_file_context",
+            "generated_at_utc": response_json.get("capturedAtUtc").cloned().unwrap_or(Value::Null),
+            "project_root": project_root,
+            "selected_file_context": selected_file_context,
+        }))?
+    );
+    Ok(true)
 }
 
 fn refresh_lux_unity_context(project_root: &Path) -> anyhow::Result<()> {
@@ -4630,6 +4834,8 @@ fn run_batch_compile(args: CompileArgs) -> anyhow::Result<()> {
         install_bridge_files(BridgeInstallArgs {
             project_path: project_root.clone(),
             bridge_type: BridgeKind::Unity,
+            opencode_commands: false,
+            no_opencode_commands: true,
         })?;
     }
 
