@@ -13,6 +13,7 @@
 mod common;
 use common::*;
 
+use chrono::{Duration, Utc};
 use lux::ai_log::{
     apply_retention_policy, compact_log_file, parse_jsonl_values, read_log_entries, redact_entry,
     redact_gameplay_sensitive, redact_project_paths, redact_secrets, AiLogFilter, RetentionPolicy,
@@ -464,8 +465,8 @@ fn retention_enforcement_max_lines_one_keeps_only_last() {
 #[test]
 fn retention_age_test_drops_old_entries() {
     // Write entries with explicit timestamps far in the past and recent ones
-    let old_ts = "2020-01-01T00:00:00Z"; // ~6+ years ago
-    let recent_ts = "2026-05-09T00:00:00Z"; // recent
+    let old_ts = (Utc::now() - Duration::days(365 * 3)).to_rfc3339();
+    let recent_ts = (Utc::now() - Duration::days(1)).to_rfc3339();
 
     let content = format!(
         "{{\"timestampUtc\":\"{old_ts}\",\"n\":1}}\n\
@@ -540,8 +541,8 @@ fn retention_age_test_keeps_everything_when_age_unlimited() {
 #[test]
 fn retention_age_combined_with_max_lines() {
     // Both limits active: age keeps only recent, then max_lines further trims
-    let old_ts = "2020-01-01T00:00:00Z";
-    let recent_ts = "2026-05-09T00:00:00Z";
+    let old_ts = (Utc::now() - Duration::days(365 * 3)).to_rfc3339();
+    let recent_ts = (Utc::now() - Duration::days(1)).to_rfc3339();
     let content = format!(
         "{{\"timestampUtc\":\"{old_ts}\",\"n\":1}}\n\
          {{\"timestampUtc\":\"{recent_ts}\",\"n\":2}}\n\
