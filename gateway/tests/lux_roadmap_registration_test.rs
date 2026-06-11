@@ -7,6 +7,7 @@ use lux::lux_roadmap::{
 use lux_project::EngineKind;
 use serde_json::Value;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TestTempDir {
     path: std::path::PathBuf,
@@ -15,8 +16,12 @@ struct TestTempDir {
 impl TestTempDir {
     fn new(name: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "lux-roadmap-registration-{name}-{}",
-            std::process::id()
+            "lux-roadmap-registration-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
         ));
         if path.exists() {
             std::fs::remove_dir_all(&path).expect("stale temp directory should be removed");
@@ -192,4 +197,106 @@ fn roadmap_init_cli_writes_selected_godot_template() {
         .expect("capabilities array")
         .iter()
         .any(|capability| capability == CAPABILITY_GODOT_BRIDGE_WORKFLOW));
+}
+
+#[test]
+fn roadmap_init_cli_refuses_existing_roadmap() {
+    let temp = TestTempDir::new("cli-existing-roadmap");
+    save(temp.path(), &RoadmapReality::default()).expect("seed roadmap");
+    let original =
+        std::fs::read_to_string(temp.path().join(".lux/roadmap.json")).expect("seeded roadmap");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "roadmap",
+            "--project-path",
+            temp.path().to_str().expect("temp path should be UTF-8"),
+            "init",
+            "--engine",
+            "godot",
+        ])
+        .output()
+        .expect("run lux roadmap init");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains("Lux roadmap already exists"));
+    let after =
+        std::fs::read_to_string(temp.path().join(".lux/roadmap.json")).expect("roadmap after");
+    assert_eq!(after, original);
+}
+
+#[cfg(unix)]
+#[test]
+fn roadmap_init_cli_rejects_symlinked_lux_root() {
+    let temp = TestTempDir::new("cli-symlinked-lux-root");
+    let outside = std::env::temp_dir().join(format!(
+        "lux-roadmap-registration-outside-root-{}",
+        std::process::id()
+    ));
+    if outside.exists() {
+        std::fs::remove_dir_all(&outside).expect("stale outside directory should be removed");
+    }
+    std::fs::create_dir(&outside).expect("outside directory should be created");
+    std::os::unix::fs::symlink(&outside, temp.path().join(".lux")).expect("symlink .lux");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lux"))
+        .args([
+            "roadmap",
+            "--project-path",
+            temp.path().to_str().expect("temp path should be UTF-8"),
+            "init",
+            "--engine",
+            "godot",
+        ])
+        .output()
+        .expect("run lux roadmap init");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    assert!(stderr.contains("roadmap directory must not be a symlink"));
+    assert!(!outside.join("roadmap.json").exists());
+    std::fs::remove_dir_all(outside).expect("outside directory cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn roadmap_save_rejects_symlinked_roadmap_file() {
+    let temp = TestTempDir::new("save-symlinked-roadmap-file");
+    std::fs::create_dir(temp.path().join(".lux")).expect("create .lux");
+    let outside = temp.path().join("outside-roadmap.json");
+    std::fs::write(&outside, "outside-original").expect("outside target");
+    std::os::unix::fs::symlink(&outside, temp.path().join(".lux/roadmap.json"))
+        .expect("roadmap symlink");
+
+    let error = save(temp.path(), &RoadmapReality::default()).expect_err("symlink must fail");
+
+    assert!(error
+        .to_string()
+        .contains("roadmap file must not be a symlink"));
+    assert_eq!(
+        std::fs::read_to_string(outside).expect("outside content"),
+        "outside-original"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn roadmap_save_rejects_hardlinked_temp_file() {
+    let temp = TestTempDir::new("save-hardlinked-temp-file");
+    std::fs::create_dir(temp.path().join(".lux")).expect("create .lux");
+    let outside = temp.path().join("outside-temp.json");
+    std::fs::write(&outside, "outside-original").expect("outside target");
+    std::fs::hard_link(&outside, temp.path().join(".lux/roadmap.json.tmp"))
+        .expect("roadmap temp hardlink");
+
+    let error = save(temp.path(), &RoadmapReality::default()).expect_err("hardlink must fail");
+
+    assert!(error
+        .to_string()
+        .contains("temporary file must not be hardlinked"));
+    assert_eq!(
+        std::fs::read_to_string(outside).expect("outside content"),
+        "outside-original"
+    );
 }

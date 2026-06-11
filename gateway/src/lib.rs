@@ -40,6 +40,7 @@ mod lux_next_goal_types;
 pub mod lux_roadmap;
 pub mod lux_roadmap_issue_register;
 mod lux_roadmap_issue_register_types;
+mod lux_roadmap_registry;
 pub mod lux_run;
 pub mod lux_run_recover;
 pub mod lux_run_state;

@@ -33,6 +33,7 @@ mod lux_next_goal_types;
 pub mod lux_roadmap;
 pub mod lux_roadmap_issue_register;
 mod lux_roadmap_issue_register_types;
+mod lux_roadmap_registry;
 pub mod lux_run;
 pub mod lux_run_recover;
 pub mod lux_run_state;
@@ -353,10 +354,39 @@ struct LuxRoadmapArgs {
 
 #[derive(Subcommand, Debug)]
 enum LuxRoadmapAction {
+    /// Initialize .lux/roadmap.json from an engine-specific template
+    Init(LuxRoadmapInitArgs),
     /// Validate and print .lux/roadmap.json status
     Status,
     /// Register missing roadmap and capability gaps as GitHub issues
     IssueRegister(LuxRoadmapIssueRegisterArgs),
+}
+
+#[derive(Parser, Debug)]
+struct LuxRoadmapInitArgs {
+    /// Unity project root containing the .lux directory
+    #[arg(long)]
+    project_path: Option<PathBuf>,
+    /// Engine template to write
+    #[arg(long, value_enum, default_value_t = LuxRoadmapEngine::Unity)]
+    engine: LuxRoadmapEngine,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LuxRoadmapEngine {
+    Unity,
+    Godot,
+    ThreeJs,
+}
+
+impl From<LuxRoadmapEngine> for lux_project::EngineKind {
+    fn from(value: LuxRoadmapEngine) -> Self {
+        match value {
+            LuxRoadmapEngine::Unity => Self::Unity,
+            LuxRoadmapEngine::Godot => Self::Godot,
+            LuxRoadmapEngine::ThreeJs => Self::ThreeJs,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -1678,6 +1708,22 @@ fn print_spec_loop_run(run: &lux_spec_loop::SpecLoopRun) {
 
 fn run_lux_roadmap_command(args: LuxRoadmapArgs) -> anyhow::Result<()> {
     match args.action.unwrap_or(LuxRoadmapAction::Status) {
+        LuxRoadmapAction::Init(init_args) => {
+            let project_path = init_args
+                .project_path
+                .as_ref()
+                .or(args.project_path.as_ref())
+                .cloned();
+            let project_root = resolve_lux_project_root(&project_path)?;
+            let roadmap_path = lux_roadmap::roadmap_file_path(&project_root);
+            if roadmap_path.exists() {
+                anyhow::bail!("Lux roadmap already exists: {}", roadmap_path.display());
+            }
+            let roadmap = lux_roadmap::roadmap_template_for_engine(init_args.engine.into());
+            lux_roadmap::save(&project_root, &roadmap)?;
+            println!("Lux roadmap initialized: {}", roadmap_path.display());
+            Ok(())
+        }
         LuxRoadmapAction::Status => {
             let project_root = resolve_lux_project_root(&args.project_path)?;
             print_lux_roadmap_status(&project_root)

@@ -3,6 +3,8 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -107,6 +109,7 @@ impl RoadmapReality {
     pub fn save(&self, path: &Path) -> Result<()> {
         let roadmap_path = roadmap_file_path(path);
         self.validate_at(&roadmap_path)?;
+        prepare_roadmap_target_path(&roadmap_path)?;
 
         if let Some(parent) = roadmap_path.parent() {
             fs::create_dir_all(parent)
@@ -120,6 +123,7 @@ impl RoadmapReality {
             )
         })?;
         let tmp_path = roadmap_path.with_extension("json.tmp");
+        prepare_roadmap_temp_path(&tmp_path)?;
         fs::write(&tmp_path, json)
             .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
         fs::rename(&tmp_path, &roadmap_path).with_context(|| {
@@ -245,6 +249,55 @@ fn require_pushed_field(
             ),
         }
         .into());
+    }
+    Ok(())
+}
+
+fn prepare_roadmap_target_path(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        reject_symlinked_roadmap_directory(parent)?;
+    }
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("roadmap file must not be a symlink");
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        anyhow::bail!("roadmap file must not be hardlinked");
+    }
+    if !metadata.is_file() {
+        anyhow::bail!("roadmap path must be a regular file: {}", path.display());
+    }
+    Ok(())
+}
+
+fn prepare_roadmap_temp_path(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("temporary file must not be a symlink");
+    }
+    #[cfg(unix)]
+    if metadata.nlink() > 1 {
+        anyhow::bail!("temporary file must not be hardlinked");
+    }
+    if metadata.is_file() {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to remove stale temp file {}", path.display()))?;
+        return Ok(());
+    }
+    anyhow::bail!("temporary path must be a regular file: {}", path.display());
+}
+
+fn reject_symlinked_roadmap_directory(path: &Path) -> Result<()> {
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("roadmap directory must not be a symlink");
     }
     Ok(())
 }
