@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEngine;
 
 namespace Linalab.UnityAiBridge.Editor.Tests
 {
@@ -128,6 +129,55 @@ namespace Linalab.UnityAiBridge.Editor.Tests
             var quoted = InvokeQuotePosixShellArgument("a b$c`d`$(e)'f\"g");
 
             Assert.That(quoted, Is.EqualTo("'a b$c`d`$(e)'\\''f\"g'"));
+        }
+
+        [Test]
+        public void BuildSelectionAstContextJson_IncludesSelectedHierarchyNode()
+        {
+            var previousSelection = Selection.objects;
+            var root = new GameObject("LuxAstRoot");
+            var child = new GameObject("LuxAstChild");
+
+            try
+            {
+                child.transform.SetParent(root.transform, false);
+                Selection.objects = new Object[] { root };
+
+                var json = UnityAiBridgeAstContextMenu.BuildSelectionAstContextJson();
+
+                Assert.That(json, Does.Contain("\"selectionCount\": 1"));
+                Assert.That(json, Does.Contain("\"hierarchyPath\": \"/LuxAstRoot\""));
+                Assert.That(json, Does.Contain("\"name\": \"LuxAstChild\""));
+            }
+            finally
+            {
+                Selection.objects = previousSelection;
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void CopySelectionAstContext_WritesSelectionAstToClipboard()
+        {
+            var previousSelection = Selection.objects;
+            var previousClipboard = EditorGUIUtility.systemCopyBuffer;
+            var gameObject = new GameObject("LuxClipboardTarget");
+
+            try
+            {
+                Selection.objects = new Object[] { gameObject };
+
+                UnityAiBridgeAstContextMenu.CopySelectionAstContext();
+
+                Assert.That(EditorGUIUtility.systemCopyBuffer, Does.Contain("\"selectionCount\": 1"));
+                Assert.That(EditorGUIUtility.systemCopyBuffer, Does.Contain("\"name\": \"LuxClipboardTarget\""));
+            }
+            finally
+            {
+                Selection.objects = previousSelection;
+                EditorGUIUtility.systemCopyBuffer = previousClipboard;
+                Object.DestroyImmediate(gameObject);
+            }
         }
 
         private static string InvokeBuildMcpServerCommand(string projectPath)
