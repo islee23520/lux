@@ -341,6 +341,10 @@ namespace Linalab.UnityAiBridge.Editor
             {
                 Trace.TraceWarning($"Unity AI Bridge TCP client handling failed: {exception.Message}");
             }
+            catch (Exception exception)
+            {
+                Trace.TraceWarning($"Unity AI Bridge TCP client handling failed: {exception}");
+            }
         }
 
         private UnityAiBridgeProtocolResponse HandleRequestLine(string line, ClientConnection connection)
@@ -763,6 +767,17 @@ namespace Linalab.UnityAiBridge.Editor
             return builder.ToString();
         }
 
+        private static void AppendUnityJsonValue(StringBuilder builder, object value)
+        {
+            if (value == null)
+            {
+                builder.Append("null");
+                return;
+            }
+
+            builder.Append(JsonUtility.ToJson(value));
+        }
+
         private static void AppendJsonValue(StringBuilder builder, object value)
         {
             if (value == null)
@@ -1159,6 +1174,15 @@ namespace Linalab.UnityAiBridge.Editor
 
             builder.Append(",\"inputEventResult\":");
             AppendJsonValue(builder, payload.inputEventResult);
+
+            builder.Append(",\"assetAst\":");
+            AppendUnityJsonValue(builder, payload.assetAst);
+
+            builder.Append(",\"selectionAst\":");
+            AppendUnityJsonValue(builder, payload.selectionAst);
+
+            builder.Append(",\"sceneAst\":");
+            AppendUnityJsonValue(builder, payload.sceneAst);
 
             builder.Append('}');
         }

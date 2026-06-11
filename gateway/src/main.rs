@@ -4257,7 +4257,7 @@ fn send_unity_tcp_line_with_timeout(
     stream.set_write_timeout(Some(Duration::from_millis(250)))?;
     write_unity_tcp_with_retry(&mut stream, request_line.as_bytes(), deadline)?;
 
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     let mut chunk = [0_u8; 1024];
     loop {
         let size = match stream.read(&mut chunk) {
@@ -4271,11 +4271,11 @@ fn send_unity_tcp_line_with_timeout(
         if size == 0 {
             break;
         }
-        buffer.push_str(
-            std::str::from_utf8(&chunk[..size]).context("Unity TCP response was not UTF-8")?,
-        );
-        if let Some(index) = buffer.find('\n') {
-            return Ok(buffer[..index].to_string());
+        buffer.extend_from_slice(&chunk[..size]);
+        if let Some(index) = buffer.iter().position(|byte| *byte == b'\n') {
+            let line = std::str::from_utf8(&buffer[..index])
+                .context("Unity TCP response was not UTF-8")?;
+            return Ok(line.to_string());
         }
 
         if Instant::now() >= deadline {

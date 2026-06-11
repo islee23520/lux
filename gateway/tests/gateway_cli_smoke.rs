@@ -3391,7 +3391,7 @@ fn rust_lux_unity_context_refresh_uses_open_bridge_when_available() {
             "ok": true,
             "payload": {
                 "selectedFileContext": {
-                    "projectName": "LiveProject",
+                    "projectName": "LiveProjectあいうえお漢字かなカナポイ活さがそうキノコのコ".repeat(80),
                     "projectPath": "/tmp/live-project",
                     "unityVersion": "6000.3.0f1",
                     "selectionCapturedAtUtc": "2026-04-30T00:00:00.0000000Z",
@@ -3426,7 +3426,12 @@ fn rust_lux_unity_context_refresh_uses_open_bridge_when_available() {
     let context: Value = serde_json::from_slice(&output.stdout).expect("context JSON");
     assert_eq!(context["protocol"], "lux.unity.context.v1");
     assert_eq!(context["source"], "get_selected_file_context");
-    assert_eq!(context["selected_file_context"]["projectName"], "LiveProject");
+    assert!(
+        context["selected_file_context"]["projectName"]
+            .as_str()
+            .expect("projectName string")
+            .starts_with("LiveProjectあいうえお漢字かなカナポイ活さがそうキノコのコ")
+    );
 
     server.join().expect("join fake Unity TCP server");
 }

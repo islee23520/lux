@@ -94,6 +94,25 @@ namespace Linalab.UnityAiBridge.Editor.Tests
         }
 
         [Test]
+        public void Send_GetSceneAst_ReturnsSceneAstPayloadInJsonLine()
+        {
+            using (var server = StartServer())
+            {
+                var discovery = ReadDiscovery();
+                var request = CreateRequestJson("req-scene-ast", UnityAiBridgeProtocol.CommandGetSceneAst, discovery.token);
+
+                var responseText = TcpRequestHelper.Send(discovery.host, discovery.port, request + "\n");
+                var response = ParseSingleResponse(responseText);
+
+                Assert.That(response.ok, Is.True, responseText);
+                Assert.That(response.payload, Is.Not.Null);
+                Assert.That(response.payload.sceneAst, Is.Not.Null, responseText);
+                Assert.That(response.payload.sceneAst.sceneName, Is.Not.Empty);
+                Assert.That(responseText, Does.Contain("\"sceneAst\":"));
+            }
+        }
+
+        [Test]
         public void Send_GetProtocolInfo_ReturnsBackendVersionInJsonLine()
         {
             using (var server = StartServer())
