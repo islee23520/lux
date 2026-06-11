@@ -22,6 +22,7 @@ namespace Linalab.UnityAiBridge.Editor
         private const string BatchEventEndpointPath = "/api/lux/play/events/batch";
         private const int MinimumBatchSize = 1;
         private const double MinimumFlushIntervalSeconds = 0.25d;
+        private const double SubmissionWarningIntervalSeconds = 60.0d;
 
         private static readonly object PendingEventsLock = new object();
         private static readonly List<PlayEventDto> PendingEvents = new List<PlayEventDto>();
@@ -31,6 +32,7 @@ namespace Linalab.UnityAiBridge.Editor
         private static double nextFlushTime;
         private static LuxPlayLoggerRunner runner;
         private static bool flushInProgress;
+        private static double nextSubmissionWarningTime;
         private static string lastActiveSceneName;
 
         public static string ServerUrl
@@ -333,11 +335,22 @@ namespace Linalab.UnityAiBridge.Editor
                 if (request.result != UnityWebRequest.Result.Success)
                 {
                     RequeueFailedEvents(eventsToSend);
-                    Debug.LogWarning($"Lux play event submission failed: {request.error}");
+                    LogSubmissionWarning(request.error);
                 }
             }
 
             flushInProgress = false;
+        }
+
+        private static void LogSubmissionWarning(string error)
+        {
+            if (EditorApplication.timeSinceStartup < nextSubmissionWarningTime)
+            {
+                return;
+            }
+
+            nextSubmissionWarningTime = EditorApplication.timeSinceStartup + SubmissionWarningIntervalSeconds;
+            Debug.LogWarning($"Lux play event submission failed: {error}. Further warnings are suppressed for {SubmissionWarningIntervalSeconds:0} seconds.");
         }
 
         private static void SendEventsBlocking(List<PlayEventDto> eventsToSend)
