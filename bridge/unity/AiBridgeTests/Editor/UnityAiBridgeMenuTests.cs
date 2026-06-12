@@ -180,6 +180,55 @@ namespace Linalab.UnityAiBridge.Editor.Tests
             }
         }
 
+        [Test]
+        public void BuildPropertyContextPath_IncludesComponentAndSerializedPropertyPath()
+        {
+            var gameObject = new GameObject("LuxPropertyTarget");
+            var transform = gameObject.transform;
+            var serializedObject = new SerializedObject(transform);
+            var property = serializedObject.FindProperty("m_LocalPosition");
+
+            try
+            {
+                var path = UnityAiBridgeAstContextMenu.BuildPropertyContextPath(property);
+
+                Assert.That(path, Does.StartWith("lux://unity/property?"));
+                Assert.That(path, Does.Contain("kind=component"));
+                Assert.That(path, Does.Contain("hierarchy=%2FLuxPropertyTarget"));
+                Assert.That(path, Does.Contain("component=UnityEngine.Transform"));
+                Assert.That(path, Does.Contain("property=m_LocalPosition"));
+            }
+            finally
+            {
+                serializedObject.Dispose();
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void CopyPropertyContextJson_WritesPropertyContextToClipboard()
+        {
+            var previousClipboard = EditorGUIUtility.systemCopyBuffer;
+            var gameObject = new GameObject("LuxPropertyClipboardTarget");
+            var serializedObject = new SerializedObject(gameObject.transform);
+            var property = serializedObject.FindProperty("m_LocalScale");
+
+            try
+            {
+                UnityAiBridgeAstContextMenu.CopyPropertyContextJson(property);
+
+                Assert.That(EditorGUIUtility.systemCopyBuffer, Does.Contain("\"targetKind\": \"component\""));
+                Assert.That(EditorGUIUtility.systemCopyBuffer, Does.Contain("\"hierarchyPath\": \"/LuxPropertyClipboardTarget\""));
+                Assert.That(EditorGUIUtility.systemCopyBuffer, Does.Contain("\"propertyPath\": \"m_LocalScale\""));
+            }
+            finally
+            {
+                EditorGUIUtility.systemCopyBuffer = previousClipboard;
+                serializedObject.Dispose();
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
         private static string InvokeBuildMcpServerCommand(string projectPath)
         {
             var buildCommand = typeof(UnityAiBridgeMenu).GetMethod("BuildMcpServerCommand", BindingFlags.Static | BindingFlags.NonPublic, null, new[] { typeof(string) }, null);
